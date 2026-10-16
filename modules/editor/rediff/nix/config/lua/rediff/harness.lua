@@ -54,6 +54,11 @@ local function show_opening(request)
 	-- Keep the source window focused for checkout/selection validity checks.
 	-- Discard input rather than queueing commands for the eventual terminal.
 	vim.on_key(function()
+		-- Notifications after the picker can enter hit-enter/more prompts.
+		-- Their input must pass through: scheduled cleanup cannot run there.
+		if api.nvim_get_mode().mode:sub(1, 1) == "r" then
+			return
+		end
 		return ""
 	end, opening_keys)
 	local frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }

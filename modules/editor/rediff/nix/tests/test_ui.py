@@ -3237,7 +3237,25 @@ class EditorUI(unittest.TestCase):
         self.assertFalse(log.exists())
         self.keys(editor, ":harness open<CR>")
         self.wait_for(editor, "vim.api.nvim_get_mode().mode == 'c'")
+        # Real notifications after inputlist can raise a hit-enter prompt while
+        # harness startup is still pending. The loading guard must let it close.
+        editor.exec_lua("vim.notify = original_notify")
         self.keys(editor, "1<CR>")
+        self.assertEqual("r", editor.api.get_mode()["mode"])
+        try:
+            for _ in range(4):
+                if editor.api.get_mode()["mode"] != "r":
+                    break
+                self.keys(editor, "<CR>")
+            self.assertNotEqual("r", editor.api.get_mode()["mode"])
+        finally:
+            # A broken guard also blocks teardown commands; close the transport.
+            if editor.api.get_mode()["mode"] == "r":
+                editor.close()
+                self.editors.remove(editor)
+        editor.exec_lua(
+            "vim.notify = function(message) vim.g.startup_notice = message end"
+        )
         self.wait_for(editor, "vim.bo.buftype == 'terminal'")
         self.wait_for(editor, "table.concat(vim.api.nvim_buf_get_lines(0,0,-1,false),'\\n'):find('Amp test terminal ready',1,true) ~= nil")
         self.assertEqual(["[]"], log.read_text().splitlines())
