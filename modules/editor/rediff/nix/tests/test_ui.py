@@ -88,7 +88,8 @@ class EditorUI(unittest.TestCase):
             os.chdir(previous)
         self.editors.append(editor)
         if not headless:
-            editor.ui_attach(columns, 32, rgb=True, ext_linegrid=True)
+            # Keep highlight IDs stable when tests inspect rendered grid cells.
+            editor.ui_attach(columns, 32, rgb=True, ext_linegrid=True, ext_hlstate=True)
         pump(editor)
         if not headless and not file and Path(directory, ".git").exists():
             deadline = time.monotonic() + 5
@@ -2023,6 +2024,142 @@ class EditorUI(unittest.TestCase):
         self.assertEqual(
             index, subprocess.check_output(["git", "-C", self.root, "write-tree"])
         )
+
+    def test_go_highlighting_in_source_and_review_snapshots(self):
+        source = """package fixture
+
+import "fmt"
+
+// Service carries a named value.
+type Service[T any] struct {
+    Name string
+    Value T
+}
+
+func NewService[T any](name string, value T) *Service[T] {
+    return &Service[T]{Name: name, Value: value}
+}
+
+func (s *Service[T]) Run() string {
+    return fmt.Sprintf("%s: %v", s.Name, s.Value)
+}
+
+func greeting() string {
+    service := NewService("worker", 42)
+    return service.Run()
+}
+"""
+        path = Path(self.root, "example.go")
+        Path(self.root, "go.mod").write_text("module example.com/fixture\n\ngo 1.20\n")
+        path.write_text(source)
+        subprocess.run(["git", "-C", self.root, "add", "example.go"], check=True)
+        path.write_text(source.replace("42", "84"))
+        editor = self.launch(self.root, file="example.go")
+        show_go = "for i,e in ipairs(s.entries) do if e.path=='example.go' and e.group=='unstaged' then r.show(i); break end end"
+
+        def check_colors(win):
+            self.lua(
+                editor,
+                f"vim.api.nvim_win_call({win}, function() vim.cmd('normal! gg') end)",
+            )
+            editor.command("redraw!")
+            pump(editor)
+            colors = []
+            # Type, function, and method names used to be plain foreground text.
+            for row, col, letter in ((6, 6, "S"), (11, 6, "N"), (15, 22, "R")):
+                cell = self.lua(
+                    editor,
+                    f"local p=vim.fn.screenpos({win},{row},{col}); "
+                    "return vim.api.nvim__inspect_cell(1,p.row-1,p.col-1)",
+                )
+                self.assertEqual(letter, cell[0])
+                colors.append(cell[1]["foreground"])
+            expected = [
+                editor.api.get_hl(0, {"name": group, "link": False})["fg"]
+                for group in ("Type", "Function", "Function")
+            ]
+            self.assertEqual(expected, colors)
+
+        self.wait_for(
+            editor,
+            "#(vim.lsp.semantic_tokens.get_at_pos(0,18,5) or {}) > 0",
+            timeout=30,
+        )
+        check_colors("0")
+        self.keys(editor, ":Review<CR>")
+        self.lua(editor, "require('rediff.live').stop(s)")
+        # Snapshots have no LSP: both panes must still highlight. Reused buffers
+        # must recover when switching away to another language and back to Go.
+        for reload_theme in (False, True):
+            self.lua(editor, show_go)
+            if reload_theme:
+                editor.command("colorscheme rose-pine")
+            for win in ("s.old_win", "s.new_win"):
+                check_colors(win)
+            self.lua(
+                editor,
+                "for i,e in ipairs(s.entries) do if e.path=='auth.lua' then r.show(i); break end end",
+            )
+        self.lua(editor, show_go + "; r.view('merged')")
+        check_colors("s.new_win")
+
+    def test_python_and_rust_highlighting_in_source_and_review_snapshots(self):
+        cases = (
+            (
+                "example.py",
+                "class Service:\n"
+                "    def run(self, name: str) -> str:\n"
+                '        return f"hello {name}"\n'
+                "\n"
+                'Service().run("old")\n',
+                ((1, 7, "S"), (2, 9, "r")),
+            ),
+            (
+                "example.rs",
+                "struct Service { name: String }\n"
+                "impl Service {\n"
+                "    fn run(&self) -> &str { &self.name }\n"
+                "}\n"
+                "fn main() {\n"
+                '    let service = Service { name: String::from("old") };\n'
+                '    println!("{}", service.run());\n'
+                "}\n",
+                ((1, 8, "S"), (3, 8, "r")),
+            ),
+        )
+        for name, source, _ in cases:
+            Path(self.root, name).write_text(source)
+            subprocess.run(["git", "-C", self.root, "add", name], check=True)
+            Path(self.root, name).write_text(source.replace("old", "new"))
+        editor = self.launch(self.root)
+        self.lua(editor, "require('rediff.live').stop(s)")
+        for name, _, positions in cases:
+            with self.subTest(language=name):
+                self.lua(
+                    editor,
+                    f"r.view('split'); for i,e in ipairs(s.entries) do if e.path=='{name}' and e.group=='unstaged' then r.show(i); break end end",
+                )
+                for win in ("s.old_win", "s.new_win", "merged", "source"):
+                    if win == "merged":
+                        self.lua(editor, "r.view('merged')")
+                        win = "s.new_win"
+                    elif win == "source":
+                        self.keys(editor, f":tabedit {name}<CR>")
+                        win = "0"
+                    editor.command("redraw!")
+                    pump(editor)
+                    for row, col, letter in positions:
+                        cell = self.lua(
+                            editor,
+                            f"local p=vim.fn.screenpos({win},{row},{col}); "
+                            "return vim.api.nvim__inspect_cell(1,p.row-1,p.col-1)",
+                        )
+                        self.assertEqual(letter, cell[0])
+                        normal = editor.api.get_hl(
+                            0, {"name": "Normal", "link": False}
+                        )["fg"]
+                        self.assertNotEqual(normal, cell[1]["foreground"])
+                self.keys(editor, "gT")
 
     def test_bundled_language_servers_resolve_review_definitions(self):
         cases = (

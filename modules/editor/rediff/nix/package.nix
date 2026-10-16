@@ -41,6 +41,11 @@ let
     doCheck = false;
     doInstallCheck = false;
   };
+  treesitter = vimPlugins.nvim-treesitter.withPlugins (parsers: [
+    parsers.go
+    parsers.rust
+    parsers.python
+  ]);
   plugins = [
     codediff
     review
@@ -52,7 +57,8 @@ let
     vimPlugins.plenary-nvim
     vimPlugins.nvim-web-devicons
     vimPlugins.rose-pine
-  ];
+    treesitter
+  ] ++ treesitter.dependencies; # Our manual runtimepath must include parsers and queries.
   runtime = lib.concatMapStringsSep "," toString plugins;
 in
 stdenv.mkDerivation {

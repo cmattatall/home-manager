@@ -36,6 +36,16 @@ require("rose-pine").setup({
 vim.cmd.colorscheme("rose-pine")
 vim.fn.mkdir(vim.fn.stdpath("data"), "p")
 
+vim.api.nvim_create_autocmd("FileType", {
+	callback = function(event)
+		-- Review reuses its snapshot buffers when switching between languages.
+		vim.treesitter.stop(event.buf)
+		if vim.tbl_contains({ "go", "rust", "python" }, event.match) then
+			vim.treesitter.start(event.buf, event.match)
+		end
+	end,
+})
+
 require("gitsigns").setup({
 	attach_to_untracked = true,
 	signs_staged_enable = false,
@@ -225,6 +235,7 @@ vim.api.nvim_create_autocmd("VimEnter", {
 
 local review = require("rediff.review")
 vim.lsp.config("lua_ls", { settings = { Lua = { workspace = { checkThirdParty = false } } } })
+vim.lsp.config("gopls", { settings = { gopls = { semanticTokens = true } } })
 vim.lsp.enable({ "lua_ls", "nil_ls", "pyright", "ts_ls", "gopls", "rust_analyzer" })
 review.setup()
 require("rediff.annotations").setup()
