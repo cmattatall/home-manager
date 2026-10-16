@@ -54,10 +54,10 @@ and checks for competing NixOS ownership.
 ### Standalone development-node configuration
 
 `scripts/install-nix-home.sh` writes a pinned `~/home.nix` for the `developer`
-account on Linux. It requires access to the private source repository and refuses
-to overwrite an existing `~/home.nix`. It creates the standard Home Manager config
-symlink when absent, respecting `XDG_CONFIG_HOME`; existing files and dangling
-symlinks are preserved rather than replaced.
+account on Linux. It fetches the public repository over HTTPS without GitHub
+credentials and refuses to overwrite an existing `~/home.nix`. It creates the
+standard Home Manager config symlink when absent, respecting `XDG_CONFIG_HOME`;
+existing files and dangling symlinks are preserved rather than replaced.
 
 The generated configuration pins `programs.home-manager.path` to the same Home
 Manager input as this repository. The script prints a one-time bootstrap command
@@ -468,44 +468,25 @@ The script does not run on a timer, install a Git hook, or create GitHub reposit
 This script is not a secret scanner or sanitizer. Subsequent deletions do not remove
 files from earlier public mirror commits.
 
-## Publish the Home Manager snapshot
+## Public source repository
 
-The public `cmattatall/home-manager` repository is a one-way snapshot mirror.
-Develop and commit in the private source checkout, then publish with
-`scripts/publish-home-manager.sh`. Do not push or merge the private source history
-into the public repository. Bring changes from public contributions back to the
-private source before the next publication; direct mirror edits are overwritten.
+[`cmattatall/home-manager`](https://github.com/cmattatall/home-manager) is the
+authoritative source, not a snapshot mirror. Develop here and push reviewed
+commits directly. Its history starts from a clean snapshot; do not merge or push
+the former private repository's history into it. The editor-only `readiff` mirror
+described above remains separate.
 
-The publisher requires Bash, Git, tar, Gitleaks 8.30 or newer on `PATH`, and
-GitHub authentication. The personal Home Manager profiles install Gitleaks;
-activate an updated profile with `./scripts/install-home-manager.sh` if it is
-missing. Without Home Manager, install it with `brew install gitleaks` or run
-these commands inside `nix shell nixpkgs#gitleaks`:
+Existing clones of the former mirror or private repository have unrelated
+history. Clone this repository afresh rather than pulling with
+`--allow-unrelated-histories`. Existing standalone `~/home.nix` configurations
+must update both repository URLs to the public HTTPS URL and replace their old
+revision pin with a commit from this repository's `main`. Do not rerun the setup
+script over an existing configuration or discard local customizations.
 
-```sh
-# From the private checkout, after committing the changes:
-./scripts/publish-home-manager.sh
-# Review the preview, then explicitly publish:
-./scripts/publish-home-manager.sh --publish
-```
-
-Preview is the default and never writes to the remote. `--remote URL` overrides
-the destination for testing. Publication creates fresh commits using Carl's
-GitHub noreply identity, not private source authors, commit messages, or ancestry.
-Only the destination's snapshot history is retained. Unchanged snapshots are a
-no-op; updates use ordinary fast-forward pushes and never force-push.
-
-The script exports committed files only, refuses dirty/untracked source changes,
-submodules, and unreviewed top-level paths, and scans the outgoing snapshot before
-showing its diff. Existing public `main` history is also scanned. A missing or
-failing Gitleaks blocks publication. An existing destination must contain the
-publisher's `.home-manager-mirror` marker; there is deliberately no adoption option
-that could carry private history into the mirror. The source checkout is unchanged.
-
-**Every tracked file under the approved paths is public**, including files matched
-by `.gitignore`. The publisher does not sanitize content. Manually check passwords,
-private project names, and host details even when the scanner passes. It does not
-create repositories, change visibility, or publish automatically.
+The personal Home Manager profiles install Gitleaks. Without Home Manager,
+install it with `brew install gitleaks` or run it through
+`nix shell nixpkgs#gitleaks`. Scan and manually review changes before pushing;
+there is no longer a snapshot publisher that performs the scan for you.
 
 ## Keep credentials and private configuration outside Git
 

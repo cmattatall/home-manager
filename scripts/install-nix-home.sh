@@ -6,13 +6,13 @@ set -euC
 cat > "$HOME/home.nix" <<'EOF'
 let
   personal = builtins.getFlake (
-    "git+ssh://git@github.com/cmattatall/home-manager-private.git"
-    + "?rev=b7205aa7c70740e2487456c03622e8ba5b8b1ad5"
+    "git+https://github.com/cmattatall/home-manager.git"
+    + "?rev=85a2e6a2be519709571599795d1f945ab5e036f4"
   );
   pull = ''
     home-manager-pull() {
       local config_file="$HOME/home.nix"
-      local repository_url="ssh://git@github.com/cmattatall/home-manager-private.git"
+      local repository_url="https://github.com/cmattatall/home-manager.git"
       local remote_reference latest_revision
       local revision_pin_pattern matching_pin_count updated_config
 

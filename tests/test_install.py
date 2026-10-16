@@ -458,6 +458,15 @@ class SetupHomeManagerTest(unittest.TestCase):
                     result = run()
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertTrue((home / "home.nix").is_file())
+                    generated = (home / "home.nix").read_text()
+                    self.assertIn(
+                        '"git+https://github.com/cmattatall/home-manager.git"', generated,
+                    )
+                    self.assertIn(
+                        'repository_url="https://github.com/cmattatall/home-manager.git"',
+                        generated,
+                    )
+                    self.assertRegex(generated, r'\?rev=[0-9a-f]{40}"')
                     if existing == "file":
                         self.assertEqual(config.read_text(), "existing config\n")
                     elif existing == "dangling-link":
