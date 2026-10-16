@@ -1,0 +1,18 @@
+/result
+/result-*
+__pycache__/
+
+# Machine-local credentials and environment state must stay out of Git.
+.env
+.env.*
+!.env.example
+.direnv/
+.aws/
+.ssh/
+.pgpass
+.netrc
+*.pem
+*.key
+id_rsa
+id_ed25519
+*.local

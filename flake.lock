@@ -1,0 +1,122 @@
+{
+  "nodes": {
+    "codediff": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789430628,
+        "narHash": "sha256-7jJrPKEhJup9p0GJhb3W0NvIPpOOzwqcDRKj9/qaOkc=",
+        "owner": "esmuellert",
+        "repo": "codediff.nvim",
+        "rev": "09d9ebef2cc5a5c04db7a349cd6c61bdf84ecc8e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "esmuellert",
+        "repo": "codediff.nvim",
+        "rev": "09d9ebef2cc5a5c04db7a349cd6c61bdf84ecc8e",
+        "type": "github"
+      }
+    },
+    "home-manager": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790996401,
+        "narHash": "sha256-f+kOxEmOUnQazVAmGg0i8hzwgd1kX/geY+k/Dpheye8=",
+        "owner": "nix-community",
+        "repo": "home-manager",
+        "rev": "db7d5e2332710f5abb088f6b5de927d7f9511b35",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "ref": "release-26.05",
+        "repo": "home-manager",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1791254437,
+        "narHash": "sha256-qMSsgG+9tIdx282dMqGuJAUK3t6F36clM6efd0rXfes=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "b25309931cfda5f0b8805f462a29897eeae50168",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-26.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs-unstable": {
+      "locked": {
+        "lastModified": 1790769526,
+        "narHash": "sha256-5AIVFLRcx8YAwbFTVPTs7YhwJH7JyHfAQsvXmpovcXI=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "c9fe7d12cd78d1adcd12dd15e24432dde5b155a0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixpkgs-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "readiff": {
+      "inputs": {
+        "codediff": "codediff",
+        "home-manager": [
+          "home-manager"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "review": "review"
+      },
+      "locked": {
+        "path": "./modules/editor/rediff",
+        "type": "path"
+      },
+      "original": {
+        "path": "./modules/editor/rediff",
+        "type": "path"
+      },
+      "parent": []
+    },
+    "review": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789657151,
+        "narHash": "sha256-yt5/ixbXwKzxonbwQJGUd3dPIdDeZe9E0KPiMJOK4bA=",
+        "owner": "georgeguimaraes",
+        "repo": "review.nvim",
+        "rev": "f72a347538913ac558d2440dd3899426a2dd85ae",
+        "type": "github"
+      },
+      "original": {
+        "owner": "georgeguimaraes",
+        "repo": "review.nvim",
+        "rev": "f72a347538913ac558d2440dd3899426a2dd85ae",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "home-manager": "home-manager",
+        "nixpkgs": "nixpkgs",
+        "nixpkgs-unstable": "nixpkgs-unstable",
+        "readiff": "readiff"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

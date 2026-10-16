@@ -1,0 +1,1334 @@
+local M = {}
+local api = vim.api
+local feedback = require("rediff.feedback")
+local connections = require("rediff.connections")
+local sessions = {}
+local jobs = {} -- Only terminal jobs launched by this editor, never discovered sessions.
+local display_cwd, display_root
+local installing = false
+local opening
+local opening_keys = api.nvim_create_namespace("rediff-harness-opening")
+
+local function hide_opening(request)
+	if not request or opening ~= request then
+		return
+	end
+	vim.on_key(nil, opening_keys)
+	if request.timer then
+		request.timer:stop()
+		request.timer:close()
+		request.timer = nil
+	end
+	if request.win and api.nvim_win_is_valid(request.win) then
+		api.nvim_win_close(request.win, true)
+	end
+	request.win = nil
+end
+
+local function finish_opening(request)
+	if request and opening == request then
+		hide_opening(request)
+		opening = nil
+	end
+end
+
+local function show_opening(request)
+	if not request then
+		return
+	end
+	local buf = api.nvim_create_buf(false, true)
+	vim.bo[buf].bufhidden = "wipe"
+	local width = math.min(44, vim.o.columns - 2)
+	request.win = api.nvim_open_win(buf, false, {
+		relative = "editor",
+		row = math.max(0, math.floor((vim.o.lines - 4) / 2)),
+		col = math.max(0, math.floor((vim.o.columns - width) / 2)),
+		width = width,
+		height = 2,
+		style = "minimal",
+		border = "rounded",
+		title = " Harness ",
+		focusable = false,
+		zindex = 200,
+	})
+	-- Keep the source window focused for checkout/selection validity checks.
+	-- Discard input rather than queueing commands for the eventual terminal.
+	vim.on_key(function()
+		return ""
+	end, opening_keys)
+	local frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+	local started, frame = vim.uv.hrtime(), 0
+	local timer = vim.uv.new_timer()
+	local function tick()
+		if opening ~= request or request.timer ~= timer then
+			return
+		end
+		if (vim.uv.hrtime() - started) / 1e6 >= 5000 then
+			request.cancelled = true
+			finish_opening(request)
+			vim.notify("Harness open timed out after 5 seconds. Try :Harness open again.", vim.log.levels.ERROR)
+			return
+		end
+		frame = frame % #frames + 1
+		api.nvim_buf_set_lines(buf, 0, -1, false, {
+			" " .. frames[frame] .. " Opening harness…",
+			" Input paused · timeout 5s",
+		})
+	end
+	request.timer = timer
+	tick()
+	timer:start(100, 100, vim.schedule_wrap(tick))
+end
+
+local function choose_opening(request, items, opts, callback)
+	-- Human decisions are not loading time and must accept keyboard input.
+	hide_opening(request)
+	vim.ui.select(items, opts, function(choice)
+		if not choice then
+			finish_opening(request)
+			return
+		end
+		show_opening(request)
+		local ok, err = pcall(callback, choice)
+		if not ok then
+			finish_opening(request)
+			vim.notify(tostring(err), vim.log.levels.ERROR)
+		end
+	end)
+end
+
+local function notify(message, status)
+	vim.notify(message, status == "failed" and vim.log.levels.ERROR or vim.log.levels.INFO)
+end
+
+local function save(s)
+	feedback.write(s.directory .. "/harness.json", {
+		target = s.target,
+		provider = s.provider,
+		last = s.last,
+	})
+end
+
+local function delivery_status(s)
+	local ok, argv = pcall(feedback.command, s.target)
+	if not s.last or not ok or not vim.deep_equal(s.last.argv, argv) then
+		return "idle"
+	end
+	local status = feedback.read(s.directory .. "/" .. s.last.id .. ".status.json") or {}
+	return status.status == "running" and "uncertain" or (status.status or "idle")
+end
+
+function M.get(root)
+	if not sessions[root] then
+		local directory = feedback.directory(root)
+		local saved = feedback.read(directory .. "/harness.json") or {}
+		local draft = feedback.read(directory .. "/draft.json") or {}
+		local target = saved.target or draft.harness or { name = feedback.settings().harness or "none" }
+		sessions[root] = {
+			root = root,
+			directory = directory,
+			target = target,
+			provider = saved.provider or feedback.provider(target),
+			last = saved.last,
+			epoch = 0,
+		}
+		sessions[root].delivery = delivery_status(sessions[root])
+		if feedback.is_live(target) and target.session then
+			local s = sessions[root]
+			s.restoring = true
+			s.confirm_resume = true
+			s.delivery = "checking connection"
+			s.connection_error = "The previous "
+				.. feedback.provider(target)
+				.. " session is unavailable. Select a live harness with :harness connect."
+			local function restored(result)
+				vim.schedule(function()
+					if s.epoch ~= 0 then
+						return -- An explicit selection supersedes startup discovery.
+					end
+					s.restoring = false
+					local ok, matches = pcall(vim.json.decode, result.stdout or "")
+					if result.code == 0 and ok and type(matches) == "table" then
+						local local_matches, selected = {}, nil
+						for _, match in ipairs(matches) do
+							if
+								type(match) == "table"
+								and match.root == root
+								and type(match.session) == "string"
+								and type(match.connection) == "string"
+							then
+								table.insert(local_matches, match)
+								if match.session == target.session then
+									selected = match
+								end
+							end
+						end
+						s.confirm_resume = #local_matches > 1
+						selected = selected or (#local_matches == 1 and local_matches[1])
+						if selected then
+							target.session, target.connection, target.title, target.capabilities =
+								selected.session, selected.connection, selected.title, selected.capabilities
+							target.root = root
+							connections.connect(target)
+							s.connection_error = nil
+							save(s)
+						end
+					end
+					s.delivery = s.connection_error and "disconnected" or delivery_status(s)
+				end)
+			end
+			local ok = pcall(
+				vim.system,
+				{ "rediff-" .. target.name, "discover", root },
+				{ text = true, timeout = 5000 },
+				restored
+			)
+			if not ok then
+				restored({ code = 1 })
+			end
+		elseif target.session then
+			connections.connect(vim.tbl_extend("force", target, { root = root }))
+		end
+	end
+	return sessions[root]
+end
+
+local function current(cached)
+	if vim.b.rediff_harness_root then
+		return M.get(vim.b.rediff_harness_root)
+	end
+	local review = require("rediff.review").active() or require("rediff.annotations").context()
+	if review then
+		return M.get(review.root)
+	end
+	local cwd = vim.fn.getcwd()
+	if not cached or display_cwd ~= cwd then
+		display_cwd = cwd
+		local ok, root = pcall(require("rediff.git").root)
+		display_root = ok and root or nil
+	end
+	return M.get(assert(display_root, "Not in a Git worktree"))
+end
+
+function M.statusline(root)
+	local ok, s
+	if root then
+		ok, s = pcall(M.get, root)
+	else
+		ok, s = pcall(current, true) -- No Git processes or receipt reads on repeated redraws.
+	end
+	if not ok then
+		return "harness: unavailable"
+	end
+	local label = s.target.name == "none" and "local" or s.target.name
+	local id = s.target.session
+	if id then
+		label = label .. " · " .. (#id > 12 and ("…" .. id:sub(-8)) or id)
+	elseif s.target.name == "amp" or s.target.name == "omp" or s.target.name == "claude" then
+		label = label .. " · no session"
+	end
+	if id and feedback.is_live(s.target) then
+		local entry = connections.get(connections.key(vim.tbl_extend("force", s.target, { root = s.root })))
+		local activity = entry and entry.activity and entry.activity.state or "unknown"
+		if entry and entry.online == false then
+			activity = "offline"
+		end
+		label = label .. " · agent: " .. activity .. " · feedback: " .. s.delivery
+		return "harness: " .. vim.fn.strtrans(label):gsub("%%", "%%%%")
+	end
+	return "harness: " .. vim.fn.strtrans(label .. " · " .. s.delivery):gsub("%%", "%%%%")
+end
+
+function M.select(root, target)
+	local s = M.get(root)
+	assert(not feedback.busy(root), "Wait for the current feedback delivery before switching harnesses")
+	assert(not target.root or target.root == root, "Annotations must stay in their own worktree")
+	feedback.command(target)
+	target = {
+		name = target.name,
+		session = target.session,
+		root = target.root,
+		connection = target.connection,
+		title = target.title,
+		capabilities = target.capabilities,
+	}
+	-- Review holds this same target object; there is only one binding per root.
+	for key in pairs(s.target) do
+		s.target[key] = nil
+	end
+	for key, value in pairs(target) do
+		s.target[key] = value
+	end
+	if feedback.is_live(target) or target.name == "amp" or target.name == "claude" then
+		s.provider = feedback.provider(target)
+	end
+	s.epoch = s.epoch + 1
+	s.restoring, s.connection_error = nil, nil
+	s.delivery = delivery_status(s)
+	save(s)
+	if target.session then
+		connections.connect(vim.tbl_extend("force", target, { root = root }))
+	end
+	notify("Harness: " .. target.name .. (target.session and (" · " .. target.session) or "") .. "; nothing sent")
+end
+
+function M.use(name, root)
+	assert(name == "amp" or name == "omp" or name == "claude", "Usage: Harness use amp|omp|claude")
+	local s = M.get(root or current().root)
+	assert(not feedback.busy(s.root), "Wait for the current feedback delivery before switching harnesses")
+	local bound = feedback.provider(s.target)
+	if bound ~= name then
+		M.select(s.root, { name = "none" })
+	end
+	s.provider = name
+	save(s)
+	notify("Selected " .. name .. " for new worktrees; feedback connection is " .. s.target.name)
+end
+
+function M.launch_command(root)
+	local name = M.get(root).provider
+	assert(name == "amp" or name == "omp" or name == "claude", "Select a harness first: :harness use amp|omp|claude")
+	local executable = vim.fn.exepath(name)
+	assert(executable ~= "", "Install/authenticate the " .. name .. " CLI and put it on PATH first")
+	return { executable }
+end
+
+function M.is_open(target)
+	for _, win in ipairs(api.nvim_tabpage_list_wins(0)) do
+		local buf = api.nvim_win_get_buf(win)
+		local owned = (jobs[target.root] or {})[vim.b[buf].terminal_job_id]
+		if owned and owned.session == target.session and owned.provider == feedback.provider(target) then
+			return true
+		end
+	end
+	return false
+end
+
+local function terminal_pane(root, buf)
+	local pane
+	for _, win in ipairs(api.nvim_tabpage_list_wins(0)) do
+		if vim.b[api.nvim_win_get_buf(win)].rediff_harness_root then
+			pane = win
+			break
+		end
+	end
+	if pane then
+		api.nvim_set_current_win(pane)
+	else
+		vim.cmd("botright " .. math.max(6, math.min(16, math.floor(vim.o.lines / 3))) .. "split")
+	end
+	api.nvim_win_set_buf(0, buf)
+	vim.cmd.lcd({ args = { root }, mods = { silent = true } })
+	vim.wo.number = false
+	vim.wo.relativenumber = false
+	vim.wo.signcolumn = "no"
+	vim.wo.winfixheight = true
+	vim.wo.scrolloff = 0
+	vim.wo.winbar = " Harness · "
+		.. (vim.b[buf].rediff_harness_provider == "amp" and "Ctrl-L: cancel work · " or "")
+		.. "Esc: Neovim · i: input · Cmd-W: panes "
+end
+
+function M.move_pane(tab)
+	local current_win = api.nvim_get_current_win()
+	local windows = api.nvim_tabpage_list_wins(tab)
+	for _, win in ipairs(windows) do
+		local buf = api.nvim_win_get_buf(win)
+		if vim.b[buf].rediff_harness_root then
+			-- Keep an editing tab to return to even after :only in the harness.
+			if #windows == 1 then
+				local empty = api.nvim_open_win(api.nvim_create_buf(true, false), false, { split = "above", win = win })
+				vim.wo[empty].winbar = ""
+			end
+			api.nvim_win_set_config(win, {
+				split = "below",
+				win = -current_win,
+				height = api.nvim_win_get_height(win),
+			})
+			return
+		end
+	end
+end
+
+function M.launch(root, argv, target)
+	for _, owned in pairs(jobs[root] or {}) do
+		assert(
+			target and (owned.session ~= target.session or owned.provider ~= feedback.provider(target)),
+			"Harness already running in this editor; use :harness open"
+		)
+	end
+	argv = argv or M.launch_command(root)
+	local owned = {
+		buf = api.nvim_create_buf(false, true),
+		provider = target and feedback.provider(target) or M.get(root).provider,
+		session = target and target.session,
+	}
+	vim.bo[owned.buf].bufhidden = "hide"
+	vim.b[owned.buf].rediff_harness_root = root
+	vim.b[owned.buf].rediff_harness_provider = owned.provider
+	vim.keymap.set(
+		"t",
+		"<D-w>",
+		"<C-\\><C-n><C-w>",
+		{ buffer = owned.buf, desc = "Leave harness input for window command (Cmd-w)" }
+	)
+	vim.keymap.set(
+		"t",
+		"<Esc>",
+		"<C-\\><C-n>",
+		{ buffer = owned.buf, nowait = true, desc = "Return control to Neovim without interrupting harness" }
+	)
+	for _, direction in ipairs({ "Up", "Down", "Left", "Right" }) do
+		local key = "<ScrollWheel" .. direction .. ">"
+		vim.keymap.set("n", key, function()
+			if vim.fn.getmousepos().winid ~= api.nvim_get_current_win() then
+				return key
+			end
+			-- Let Neovim encode the mouse event using the child's requested protocol,
+			-- then return to Terminal-Normal without sending an Escape to the child.
+			return "i" .. key .. "<C-\\><C-n>"
+		end, { buffer = owned.buf, expr = true, desc = "Scroll harness without leaving Neovim control" })
+	end
+	-- Terminal buffers reject writes before BufWriteCmd can handle them.
+	for _, command in ipairs({ "w", "write" }) do
+		vim.keymap.set("ca", command, function()
+			local review = require("rediff.review").active()
+			if
+				vim.fn.getcmdtype() == ":"
+				and vim.fn.getcmdline() == command
+				and vim.fn.getcmdpos() == #command + 1
+				and review
+				and review.root == root
+			then
+				return "WriteFeedback"
+			end
+			return command
+		end, { buffer = owned.buf, expr = true, desc = "Send this Review's annotations" })
+	end
+	terminal_pane(root, owned.buf)
+	jobs[root] = jobs[root] or {}
+	-- This PTY ends at Neovim, not the outer tmux/Kitty terminal. Inheriting
+	-- their identity makes CLIs emit passthrough sequences libvterm cannot decode.
+	local env = vim.fn.environ()
+	for _, name in ipairs({
+		"TMUX",
+		"TMUX_PANE",
+		"TERM_PROGRAM",
+		"TERM_PROGRAM_VERSION",
+		"KITTY_WINDOW_ID",
+		"KITTY_PID",
+		"KITTY_LISTEN_ON",
+		-- Keep jobstart's normal terminal environment defaults and PTY dimensions.
+		"TERM",
+		"COLUMNS",
+		"LINES",
+		"NVIM",
+		"NVIM_LISTEN_ADDRESS",
+		"NVIM_LOG_FILE",
+		"VIM",
+		"VIMRUNTIME",
+	}) do
+		env[name] = nil
+	end
+	local job = vim.fn.jobstart(argv, {
+		cwd = root,
+		term = true,
+		clear_env = true,
+		env = env,
+		on_exit = function(id, code)
+			jobs[root][id] = nil
+			if code ~= 0 and not owned.stopping then
+				vim.schedule(function()
+					notify("Harness exited with status " .. code .. " in " .. root .. "; worktree retained", "failed")
+				end)
+			end
+		end,
+	})
+	assert(job > 0, "Could not start harness; worktree retained at " .. root)
+	jobs[root][job] = owned
+	vim.cmd.startinsert()
+	return job
+end
+
+local function reconnect(root, target, fallback, connected, request)
+	local s = M.get(root)
+	s.epoch = s.epoch + 1
+	s.restoring = nil
+	local epoch, win, tab = s.epoch, api.nvim_get_current_win(), api.nvim_get_current_tabpage()
+	local function valid()
+		local ok, context = pcall(current)
+		return ok
+			and not (request and request.cancelled)
+			and context.root == root
+			and s.epoch == epoch
+			and api.nvim_get_current_win() == win
+			and api.nvim_get_current_tabpage() == tab
+	end
+	connections.discover(function(err)
+		if not valid() then
+			finish_opening(request)
+			return
+		end
+		local ok, failure = pcall(function()
+			if err then
+				error(err, 0)
+			end
+			local matches = {}
+			local provider = target.session and feedback.provider(target) or s.provider
+			for _, entry in ipairs(connections.items()) do
+				if
+					feedback.is_live(entry)
+					and entry.online
+					and (provider == "none" or feedback.provider(entry) == provider)
+					and (not target.session or entry.session == target.session)
+				then
+					if entry.root == root then
+						table.insert(matches, entry)
+					elseif target.session then
+						error("Harness session is running in another worktree; not starting a second instance")
+					end
+				end
+			end
+			local function connect(entry)
+				if entry and valid() then
+					M.select(root, entry)
+					if connected then
+						connected(entry)
+					else
+						M.open(root, nil, request)
+					end
+				else
+					finish_opening(request)
+				end
+			end
+			if #matches == 0 then
+				fallback()
+			elseif #matches == 1 then
+				connect(matches[1])
+			else
+				choose_opening(request, matches, {
+					prompt = "Connect to a running harness:",
+					format_item = function(entry)
+						return (entry.alias or entry.title or "") .. " · " .. entry.session
+					end,
+				}, connect)
+			end
+		end)
+		if not ok then
+			finish_opening(request)
+			notify(tostring(failure), "failed")
+		end
+	end)
+end
+
+function M.open(root, startup, request, key)
+	root = root or current().root
+	-- Amp is the first adapter for the shared connect -> resume -> fresh policy.
+	-- Other providers should implement the same policy, not parallel startup rules.
+	if startup and M.get(root).provider == "amp" then
+		M.startup(root, nil, request)
+		return
+	end
+	local tab = api.nvim_get_current_tabpage()
+	local choices, included = {}, {}
+	for _, target in ipairs(connections.connected()) do
+		local choice = { root = target.root, target = target }
+		for id, owned in pairs(jobs[target.root] or {}) do
+			if owned.session == target.session and owned.provider == feedback.provider(target) then
+				choice.owned, choice.id = owned, id
+				included[id] = true
+				break
+			end
+		end
+		table.insert(choices, choice)
+	end
+	for directory, processes in pairs(jobs) do
+		for id, owned in pairs(processes) do
+			if not included[id] then
+				table.insert(choices, { root = directory, owned = owned, id = id })
+			end
+		end
+	end
+	choices = vim.tbl_filter(function(choice)
+		if key then
+			return choice.target and choice.target.key == key
+		end
+		return choice.root == root
+	end, choices)
+	assert(not key or #choices == 1, "Harness disconnected; select it again in :harness list")
+	local session = M.get(root)
+	local automatic = startup and #choices <= 1 and not session.confirm_resume
+	local selected = session.target
+	if startup and selected.session then
+		local preferred
+		for _, choice in ipairs(choices) do
+			local target = choice.target or choice.owned
+			local provider = choice.target and feedback.provider(target) or target.provider
+			if target.session == selected.session and provider == feedback.provider(selected) then
+				preferred = choice
+				break
+			end
+		end
+		choices = preferred and { preferred } or {}
+	end
+	if #choices == 0 then
+		reconnect(root, selected, function()
+			if session.provider == "amp" then
+				M.startup(root, not startup, request)
+			elseif selected.session then
+				M.resume(nil, automatic, request)
+			elseif session.provider == "none" then
+				local epoch, win = session.epoch, api.nvim_get_current_win()
+				choose_opening(
+					request,
+					{ "amp", "omp", "claude" },
+					{ prompt = "Open a new harness:" },
+					function(provider)
+						if not provider then
+							return
+						end
+						local ok, err = pcall(function()
+							assert(
+								session.epoch == epoch
+									and api.nvim_get_current_tabpage() == tab
+									and api.nvim_get_current_win() == win
+									and current().root == root,
+								"Checkout or harness changed; run :harness open again"
+							)
+							M.use(provider, root)
+							M.open(root, nil, request)
+						end)
+						if not ok then
+							finish_opening(request)
+							notify(tostring(err), "failed")
+						end
+					end
+				)
+			else
+				M.launch(root)
+				finish_opening(request)
+			end
+		end, nil, request)
+		return
+	end
+	for _, choice in ipairs(choices) do
+		local target = choice.target
+		choice.label = vim.fn.strtrans(
+			(target and (target.alias or target.session) or (choice.owned.session or choice.owned.provider))
+				.. (choice.owned and " [editor TUI]" or (feedback.is_live(target) and " [connection]" or " [resume]"))
+				.. " · "
+				.. choice.root
+		)
+	end
+	table.sort(choices, function(a, b)
+		return a.label < b.label
+	end)
+	local function open(choice)
+		if not choice then
+			return
+		end
+		local ok, err = pcall(function()
+			assert(api.nvim_get_current_tabpage() == tab and current().root == root, "Checkout changed; run :ho again")
+			local target = choice.target and connections.get(choice.target.key)
+			if choice.target then
+				assert(target and target.connected, "Harness disconnected; run :ho again")
+				local bound = M.get(choice.root).target
+				if target.name ~= bound.name or target.session ~= bound.session then
+					M.select(choice.root, target)
+				end
+			end
+			if choice.owned then
+				assert(jobs[choice.root][choice.id] == choice.owned, "Harness exited; run :ho again")
+				terminal_pane(choice.root, choice.owned.buf)
+				vim.cmd.startinsert()
+				finish_opening(request)
+			elseif not startup and feedback.provider(target) ~= "omp" then
+				-- Explicit open means an interactive terminal, including live sessions.
+				-- Resume asks before starting a new CLI; automatic discovery never does.
+				M.resume(target, false, request, true)
+			elseif feedback.is_live(target) then
+				-- A saved binding is not proof that its process is still alive.
+				reconnect(root, target, function()
+					if feedback.provider(target) == "amp" then
+						M.startup(root, not startup, request)
+					else
+						error(
+							"Harness is no longer running; use :harness disconnect, then :harness open to start again"
+						)
+					end
+				end, function(entry)
+					M.panel("list", feedback.provider(entry))
+					finish_opening(request)
+					notify(
+						"Live connection selected for annotations and activity; use its existing terminal for input. "
+							.. "No new CLI started."
+					)
+				end, request)
+			else
+				M.resume(target, automatic, request)
+			end
+		end)
+		if not ok then
+			finish_opening(request)
+			notify(tostring(err), "failed")
+		end
+	end
+	if #choices == 1 then
+		open(choices[1])
+	else
+		choose_opening(request, choices, {
+			prompt = "Open harness:",
+			format_item = function(choice)
+				return choice.label
+			end,
+		}, open)
+	end
+end
+
+function M.startup(root, explicit, request)
+	local s = M.get(root)
+	if s.starting == s.epoch or next(jobs[root] or {}) then
+		finish_opening(request)
+		return
+	end
+	local epoch, win, tab = s.epoch, api.nvim_get_current_win(), api.nvim_get_current_tabpage()
+	local function valid()
+		local ok, context = pcall(current)
+		return s.epoch == epoch
+			and not (request and request.cancelled)
+			and api.nvim_get_current_tabpage() == tab
+			and api.nvim_get_current_win() == win
+			and ok
+			and context.root == root
+			and (explicit or require("rediff.review").active() ~= nil)
+	end
+	-- An explicit open may supersede an in-flight automatic lookup.
+	s.starting = epoch
+	local function finished(result)
+		vim.schedule(function()
+			if s.starting == epoch then
+				s.starting = nil
+			end
+			if not valid() then
+				finish_opening(request)
+				return
+			end
+			local ok, err = pcall(function()
+				assert(
+					result.code ~= 124,
+					request and "Harness open timed out after 5 seconds. Try :Harness open again."
+						or "Amp startup discovery timed out"
+				)
+				assert(result.code == 0, vim.trim(result.stderr or "Amp startup discovery failed"))
+				local decision = vim.json.decode(result.stdout)
+				if decision.action == "connect" then
+					local function connect(target)
+						if not target or not valid() then
+							finish_opening(request)
+							return
+						end
+						M.select(root, vim.tbl_extend("force", target, { name = "amp-live" }))
+						if explicit then
+							M.open(root, nil, request)
+						else
+							finish_opening(request)
+							notify(
+								"Connected to Amp "
+									.. target.session
+									.. " in its existing terminal; no new process started"
+							)
+						end
+					end
+					if #decision.matches == 1 then
+						connect(decision.matches[1])
+					else
+						choose_opening(request, decision.matches, {
+							prompt = "Connect to a running Amp thread:",
+							format_item = function(target)
+								return (target.title or "") .. " · " .. target.session
+							end,
+						}, connect)
+					end
+				elseif decision.action == "resume" then
+					-- Reconnection must reject the old endpoint even after startup lookup.
+					local connection = s.target.session == decision.session and s.target.connection or ""
+					M.select(
+						root,
+						{ name = "amp-live", root = root, session = decision.session, connection = connection }
+					)
+					M.resume(nil, not explicit, request)
+				elseif decision.action == "new" then
+					for _, entry in ipairs(connections.connected()) do
+						if entry.root == root and feedback.provider(entry) == "amp" then
+							connections.disconnect(entry.key)
+						end
+					end
+					M.select(root, { name = "none" })
+					if decision.invalidated then
+						notify(
+							"Saved Amp thread no longer exists; cleared "
+								.. decision.invalidated
+								.. " and starting fresh"
+						)
+					end
+					M.launch(root)
+					finish_opening(request)
+				else
+					error("Invalid Amp startup decision")
+				end
+			end)
+			if not ok then
+				finish_opening(request)
+				notify("Could not open harness: " .. tostring(err), "failed")
+			end
+		end)
+	end
+	local ok, err = pcall(vim.system, {
+		"rediff-amp-live",
+		"startup",
+		root,
+		feedback.provider(s.target) == "amp" and s.target.session or "",
+	}, { text = true, timeout = request and 5000 or 30000 }, finished)
+	if not ok then
+		finished({ code = 1, stderr = tostring(err) })
+	end
+end
+
+local function resume(selected, automatic, request)
+	local source = current()
+	local target = vim.deepcopy(selected or source.target)
+	local root = target.root or source.root
+	local s = M.get(root)
+	local epoch, source_epoch = s.epoch, source.epoch
+	local provider = feedback.provider(target)
+	assert(not feedback.busy(root), "Wait for feedback delivery before resuming the harness")
+	assert(
+		provider == "amp" or provider == "claude",
+		"Resume supports selected Amp or Claude sessions; use :harness connect amp or :ReviewHarness claude SESSION_ID"
+	)
+	-- Validate the ID as a CLI target, including live bindings, before using it as an argument.
+	feedback.command({ name = provider, session = target.session })
+	local executable = vim.fn.exepath(provider)
+	assert(executable ~= "", "Install/authenticate the " .. provider .. " CLI and put it on PATH first")
+	hide_opening(request)
+	if
+		not automatic
+		and vim.fn.confirm(
+				"Resume "
+					.. provider
+					.. " session "
+					.. target.session
+					.. " in this editor? Stop using its other terminal first. This starts a new TUI, not an attachment to that process.",
+				"&Resume\n&Cancel",
+				2
+			)
+			~= 1
+	then
+		finish_opening(request)
+		return
+	end
+	assert(
+		current().root == source.root and source.epoch == source_epoch and s.epoch == epoch,
+		"Checkout or harness changed; run :harness resume again"
+	)
+	assert(vim.fn.isdirectory(root) == 1, "Harness worktree is unavailable: " .. root)
+	local argv = provider == "amp" and { executable, "threads", "continue", target.session }
+		or { executable, "--resume", target.session }
+	local job = M.launch(root, argv, target)
+	finish_opening(request)
+	if feedback.is_live(target) then
+		s.connection_error = "Waiting for the resumed " .. provider .. " session to connect. Try again shortly."
+		s.delivery = "checking connection"
+		local deadline = vim.uv.now() + 30000
+		local function reconnect()
+			if s.epoch ~= epoch then
+				return -- An explicit harness selection supersedes this resume.
+			end
+			if vim.uv.now() >= deadline then
+				s.connection_error = "Harness did not connect. Check its terminal for errors (including active elsewhere), then :harness connect "
+					.. provider
+					.. ". Saved thread retained; no replacement started."
+				s.delivery = "disconnected"
+				notify(s.connection_error, "failed")
+				return
+			end
+			if not jobs[root][job] then
+				s.connection_error = "Resumed harness exited before connecting. Run :harness connect "
+					.. provider
+					.. "."
+				s.delivery = "disconnected"
+				return
+			end
+			vim.system({ "rediff-" .. target.name, "discover", root }, { text = true, timeout = 5000 }, function(result)
+				vim.schedule(function()
+					if s.epoch ~= epoch then
+						return
+					end
+					if not jobs[root][job] then
+						reconnect()
+						return
+					end
+					local ok, matches = pcall(vim.json.decode, result.stdout or "")
+					if result.code == 0 and ok and type(matches) == "table" and not feedback.busy(root) then
+						for _, match in ipairs(matches) do
+							if
+								type(match) == "table"
+								and match.root == root
+								and match.session == target.session
+								and type(match.connection) == "string"
+								and match.connection ~= ""
+								and match.connection ~= target.connection
+							then
+								M.select(root, vim.tbl_extend("force", match, { name = target.name }))
+								return
+							end
+						end
+					end
+					vim.defer_fn(reconnect, 1000)
+				end)
+			end)
+		end
+		reconnect()
+	end
+end
+
+function M.resume(selected, automatic, request, interactive)
+	local s = current()
+	local target = vim.deepcopy(selected or s.target)
+	local root = target.root or s.root
+	for _, owned in pairs(jobs[root] or {}) do
+		if owned.provider == feedback.provider(target) and owned.session == target.session then
+			terminal_pane(root, owned.buf)
+			vim.cmd.startinsert()
+			finish_opening(request)
+			return
+		end
+	end
+	if not target.session then
+		M.open(root, nil, request)
+		return
+	end
+	if interactive then
+		resume(target, false, request)
+		return
+	end
+	reconnect(root, target, function()
+		resume(target, automatic, request)
+	end, automatic and function()
+		finish_opening(request)
+	end or nil, request)
+end
+
+function M.stop(root)
+	local ids, buffers = {}, {}
+	for id, owned in pairs(jobs[root] or {}) do
+		owned.stopping = true
+		table.insert(ids, id)
+		table.insert(buffers, owned.buf)
+		vim.fn.jobstop(id)
+	end
+	-- Wait for termination before Git removes the process's working directory.
+	for _, status in ipairs(vim.fn.jobwait(ids, 5000)) do
+		assert(status ~= -1 and status ~= -2, "Harness did not stop; worktree retained at " .. root)
+	end
+	for _, buf in ipairs(buffers) do
+		if api.nvim_buf_is_valid(buf) then
+			api.nvim_buf_delete(buf, { force = true })
+		end
+	end
+end
+
+function M.deliver(root, id, path, argv, retry, callback)
+	local s = M.get(root)
+	assert(not s.restoring, "Checking the saved harness session. Try again shortly.")
+	assert(not s.connection_error, s.connection_error)
+	assert(not feedback.busy(root), "A feedback delivery is already running for this repository")
+	s.last = { id = id, path = path, argv = vim.deepcopy(argv) }
+	save(s)
+	s.delivery = #argv == 0 and "queued" or "running"
+	local ok, err = pcall(feedback.deliver, root, id, path, argv, retry, function(status)
+		s.delivery = status.status
+		if status.status == "accepted" or status.status == "completed" then
+			require("rediff.review").clear_sent(root, path)
+		elseif status.status == "failed" or status.status == "uncertain" then
+			-- Keep long receiver diagnostics in the receipt/status view, not in
+			-- an asynchronous message that can interrupt editing with hit-enter.
+			local message = "Feedback " .. status.status .. "; notes kept. :Harness status for recovery."
+			if feedback.is_live(s.target) and vim.fn.filereadable(s.target.connection) == 0 then
+				message = feedback.provider(s.target)
+					.. " disconnected; notes kept. :harness connect "
+					.. feedback.provider(s.target)
+			end
+			vim.notify(message, vim.log.levels.WARN)
+		else
+			notify("Feedback kept in local outbox (:ReviewOutbox)")
+		end
+		if callback then
+			callback(status)
+		end
+		vim.cmd.redrawstatus()
+	end)
+	if not ok then
+		s.delivery = delivery_status(s)
+		error(err)
+	end
+end
+
+function M.retry()
+	local s = current()
+	local last = assert(s.last, "No previous submission in this checkout")
+	assert(
+		vim.deep_equal(last.argv, feedback.command(s.target)),
+		"Harness changed; reselect the original target before retrying"
+	)
+	M.deliver(s.root, last.id, last.path, last.argv, true)
+end
+
+function M.status()
+	local s = current()
+	local status = s.last and feedback.read(s.directory .. "/" .. s.last.id .. ".status.json")
+	notify(
+		"Selected type: "
+			.. s.provider
+			.. "\nFeedback harness: "
+			.. s.target.name
+			.. (s.target.session and (" · " .. s.target.session) or "")
+			.. "\nLast delivery: "
+			.. (status and status.status or "none")
+			.. (status and status.error and ("\nReason: " .. vim.trim(status.error)) or "")
+			.. (
+				status
+					and (status.status == "failed" or status.status == "running")
+					and "\nNotes retained. Check the agent before :ReviewRetry; reconnect first if the connection has closed."
+				or ""
+			)
+	)
+end
+
+function M.connect(provider, automatic)
+	provider = provider or "amp"
+	local s = M.get(current().root)
+	if automatic and (s.target.session or (provider ~= "amp" and provider ~= "omp" and provider ~= "none")) then
+		return
+	end
+	if s.restoring then
+		s.restoring = nil
+		s.delivery = "disconnected"
+	end
+	s.epoch = s.epoch + 1
+	local epoch = s.epoch
+	connections.discover(function(err)
+		local valid, context = pcall(current)
+		if s.epoch ~= epoch or not valid or context.root ~= s.root then
+			return
+		end
+		if err then
+			if not automatic then
+				notify(err, "failed")
+			end
+			return
+		end
+		local matches = vim.tbl_filter(function(entry)
+			return (entry.name == provider .. "-live" or (automatic and provider == "none"))
+				and entry.root == s.root
+				and entry.online
+		end, connections.items())
+		if automatic and #matches ~= 1 then
+			return -- Do not prompt or guess when switching worktrees.
+		end
+		if #matches == 0 then
+			if provider == "amp" then
+				notify(
+					"No live Amp session found for this checkout. Reload Amp's plugins, then run :harness connect amp."
+				)
+			else
+				notify(
+					"No live oh-my-pi session found for this checkout. Install with :harness install omp, restart OMP, then run :harness connect omp."
+				)
+			end
+		elseif #matches == 1 then
+			local ok, failure = pcall(M.select, s.root, matches[1])
+			if not ok then
+				notify(tostring(failure), "failed")
+			end
+		else
+			M.panel("connect", provider)
+		end
+	end)
+end
+
+local function find_connection(label)
+	local matches = vim.tbl_filter(function(entry)
+		return entry.key == label or entry.alias == label or entry.session == label
+	end, connections.items())
+	assert(#matches == 1, "Choose a unique harness alias or ID from :harness list")
+	return matches[1]
+end
+
+function M.disconnect(entry)
+	assert(not feedback.busy(current().root), "Wait for the current feedback delivery before disconnecting")
+	assert(not feedback.busy(entry.root), "Wait for this worktree's delivery before disconnecting")
+	connections.disconnect(entry.key)
+	for root, s in pairs(sessions) do
+		if root == entry.root and s.target.name == entry.name and s.target.session == entry.session then
+			M.select(root, { name = "none" })
+		end
+	end
+end
+
+local function open_requested(root, key)
+	if opening then
+		return
+	end
+	local request = {}
+	opening = request
+	local ok, err = pcall(function()
+		show_opening(request)
+		M.open(root, nil, request, key)
+	end)
+	if not ok then
+		finish_opening(request)
+		notify(tostring(err), "failed")
+	end
+end
+
+function M.panel(purpose, provider)
+	local panel = require("rediff.harness_panel")
+	panel.close()
+	local root = current().root
+	local source = M.get(root)
+	local epoch = source.epoch
+	local win = api.nvim_get_current_win()
+	return panel.open({
+		root = root,
+		provider = provider,
+		on_open = function(entry)
+			assert(api.nvim_win_is_valid(win) and api.nvim_win_call(win, function()
+				return current().root == root
+			end), "Checkout changed; run :harness list again")
+			entry = assert(connections.get(entry.key), "Harness is no longer available")
+			if not entry.connected then
+				connections.connect(entry)
+			end
+			panel.close()
+			api.nvim_set_current_win(win)
+			open_requested(root, entry.key)
+		end,
+		on_select = function(entry)
+			if purpose == "connect" and source.epoch ~= epoch then
+				return
+			end
+			if entry.connected then
+				M.disconnect(entry)
+				epoch = source.epoch
+			elseif entry.root == root then
+				M.select(root, {
+					name = entry.name,
+					session = entry.session,
+					root = entry.root,
+					connection = entry.connection,
+					title = entry.title,
+					capabilities = entry.capabilities,
+				})
+				epoch = source.epoch
+			else
+				connections.connect(entry)
+			end
+		end,
+		on_disconnect = M.disconnect,
+	})
+end
+
+function M.install(provider)
+	provider = provider or "amp"
+	assert(provider == "amp" or provider == "omp", "Usage: Harness install amp|omp")
+	assert(not installing, "Plugin installation is already running")
+	local has_session, session = pcall(current)
+	local target = has_session and vim.deepcopy(session.target) or {}
+	local reload = provider == "amp" and target.name == "amp-live"
+	local directory = assert(vim.env.HOME, "HOME must be set") .. "/.config/amp/plugins/"
+	local prompt = "Install the bundled readiff Amp plugin at "
+		.. directory
+		.. "readiff.ts?\n"
+		.. "Set Amp's interrupt shortcut to Ctrl+L instead of Esc Esc in ~/.config/amp/settings.json.\n"
+		.. "This does not install the Amp CLI.\n"
+		.. (
+			reload and ("Ask Amp thread " .. target.session .. " to reload its plugins after installation?")
+			or "No live Amp target selected; reload plugins manually once, then :harness connect amp."
+		)
+	if provider == "omp" then
+		prompt = "Install the bundled rediff.ts extension for oh-my-pi?\n"
+			.. "Uses OMP's profile/directory settings (default ~/.omp/agent/extensions).\n"
+			.. "This does not install the OMP CLI. Run /restart in OMP after installation."
+	end
+	if vim.fn.confirm(prompt, "&Install\n&Cancel", 2) ~= 1 then
+		return
+	end
+	local argv = { "rediff-install-" .. provider .. "-plugin" }
+	installing = true
+	local ok, err = pcall(vim.system, argv, { text = true }, function(result)
+		vim.schedule(function()
+			if result.code ~= 0 or not reload then
+				installing = false
+				notify(
+					vim.trim(result.code == 0 and result.stdout or result.stderr),
+					result.code ~= 0 and "failed" or nil
+				)
+				return
+			end
+			notify("Installed readiff; requesting plugin reload from Amp.")
+			local started, reload_err = pcall(vim.system, {
+				"rediff-amp-live",
+				"reload",
+				target.connection,
+				target.session,
+				target.root or session.root,
+			}, { text = true }, function(reply)
+				vim.schedule(function()
+					installing = false
+					notify(
+						vim.trim(reply.code == 0 and reply.stdout or reply.stderr),
+						reply.code ~= 0 and "failed" or nil
+					)
+				end)
+			end)
+			if not started then
+				installing = false
+				notify("Installed, but reload request failed: " .. tostring(reload_err), "failed")
+			end
+		end)
+	end)
+	if not ok then
+		installing = false
+		error(err)
+	end
+end
+
+function M.setup()
+	connections.on_change(function()
+		vim.cmd.redrawstatus()
+	end)
+	api.nvim_create_autocmd("WinScrolled", {
+		callback = function()
+			for id in pairs(vim.v.event) do
+				local win = tonumber(id)
+				if win and api.nvim_win_is_valid(win) then
+					local buf = api.nvim_win_get_buf(win)
+					local root, job = vim.b[buf].rediff_harness_root, vim.b[buf].terminal_job_id
+					if root and jobs[root] and jobs[root][job] then
+						-- Keep the live terminal grid on screen. The child TUI owns scrolling;
+						-- native mouse forwarding remains untouched, including its protocol.
+						api.nvim_win_call(win, function()
+							local view = vim.fn.winsaveview()
+							local height = vim.fn.getwininfo(win)[1].height
+							view.topline = math.max(1, api.nvim_buf_line_count(buf) - height + 1)
+							view.lnum = math.max(view.lnum, view.topline)
+							view.leftcol, view.skipcol = 0, 0
+							vim.fn.winrestview(view)
+						end)
+					end
+				end
+			end
+		end,
+	})
+	api.nvim_create_user_command("Harness", function(opts)
+		if opening then
+			return
+		end
+		local ok, err = pcall(function()
+			local args = opts.fargs
+			if args[1] == "connect" and (#args == 1 or (#args == 2 and (args[2] == "amp" or args[2] == "omp"))) then
+				if args[2] then
+					M.connect(args[2])
+				else
+					M.panel("connect")
+				end
+			elseif #args == 1 and (args[1] == "list" or args[1] == "panel") then
+				M.panel("manage")
+			elseif #args == 1 and args[1] == "open" then
+				open_requested(current().root)
+			elseif #args == 1 and args[1] == "resume" then
+				M.resume()
+			elseif #args == 2 and args[1] == "use" then
+				M.use(args[2])
+				if args[2] == "amp" or args[2] == "omp" then
+					M.connect(args[2])
+				end
+			elseif #args == 2 and args[1] == "install" and (args[2] == "amp" or args[2] == "omp") then
+				M.install(args[2])
+			elseif #args == 0 or (#args == 1 and args[1] == "status") then
+				M.status()
+			elseif #args >= 3 and args[1] == "rename" then
+				connections.rename(find_connection(args[2]).key, table.concat(args, " ", 3))
+			elseif #args == 1 and args[1] == "retry" then
+				M.retry()
+			elseif #args <= 2 and args[1] == "disconnect" then
+				local connected = connections.connected()
+				if args[2] then
+					M.disconnect(find_connection(args[2]))
+				elseif #connected > 1 then
+					M.panel("manage")
+				elseif #connected == 1 then
+					M.disconnect(connected[1])
+				else
+					M.select(current().root, { name = "none" })
+				end
+			else
+				error(
+					"Usage: Harness open | resume | list | connect [amp|omp] | use amp|omp|claude | rename ID ALIAS | disconnect [alias] | status | retry | install amp|omp"
+				)
+			end
+		end)
+		if not ok then
+			notify(tostring(err), "failed")
+		end
+	end, {
+		nargs = "*",
+		complete = function(_, line, pos)
+			local args = vim.split(line:sub(1, pos), "%s+")
+			if #args == 2 then
+				return {
+					"open",
+					"resume",
+					"list",
+					"panel",
+					"rename",
+					"install",
+					"connect",
+					"use",
+					"disconnect",
+					"status",
+					"retry",
+				}
+			elseif #args == 3 and args[2] == "use" then
+				return { "amp", "omp", "claude" }
+			elseif #args == 3 and (args[2] == "connect" or args[2] == "install") then
+				return { "amp", "omp" }
+			elseif #args == 3 and (args[2] == "disconnect" or args[2] == "rename") then
+				return vim.tbl_map(function(entry)
+					return entry.alias or entry.session
+				end, connections.connected())
+			end
+			return {}
+		end,
+	})
+	for from, to in pairs({
+		harness = "Harness",
+		hl = "Harness list",
+		hc = "Harness connect",
+		ho = "Harness open",
+	}) do
+		vim.cmd(
+			string.format(
+				"cnoreabbrev <expr> %s getcmdtype() == ':' && getcmdline() == '%s' && getcmdpos() == %d ? '%s' : '%s'",
+				from,
+				from,
+				#from + 1,
+				to,
+				from
+			)
+		)
+	end
+end
+
+return M

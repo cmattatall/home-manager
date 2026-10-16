@@ -1,0 +1,557 @@
+*rediff.txt*                    rediff help                          *rediff*
+                                                                 *help.txt*
+
+Space / f pages down; b pages up. d/u moves half a page; g/G goes to top/bottom.
+/ searches; n/N repeats. ? / Esc / q closes help. :Commands finds commands.
+Ctrl-] follows a topic link; Ctrl-t returns. Space is a pager key in help;
+outside help it remains the leader key.
+
+HOW TO REVIEW                                                *rediff-workflow*
+
+1. Open rediff in a Git checkout (or Space r). j/k in the tree previews files.
+   Tab enters the diff. ]/[ moves between hunks; :fs/:fu switches Git groups.
+2. Read red deletions and green additions. :view toggles split/merged layout.
+   Press i to add/edit a note, or select lines with V then a for a range note.
+3. Write the note, Esc then :w to save it locally. @ lists/searches saved notes.
+4. :harness use amp connects to your local agent (see |rediff-harness| for setup).
+   :w from the tree/diff sends saved notes. :ho opens an agent terminal.
+5. As the agent edits, files refresh. Violet ◆ means changed/unseen; cyan ◇ means
+   changed/seen after 1s in the focused diff. See |rediff-git| for baseline rules.
+6. Stage deliberately with s (hunk) or S (file); sending notes never stages code.
+   Space R refreshes now. Space q leaves Review for ordinary editing.
+
+REVIEW QUICK REFERENCE
+
+  Tab                 Switch tree/diff focus
+  Space e / Space d   Focus tree / diff or editor
+  Space j / Space k   Next/previous changed file
+  h / l in tree       Collapse/expand group (also Left/Right); restore selection
+  Enter in tree       Expand group only; keep tree focus
+  ] / [               Next/previous hunk within the current Git group
+  Ctrl+Shift+] / [    Next/previous unseen hunk within the current Git group
+  :fs / :fu           Focus STAGED / UNSTAGED
+  s / S               Stage/unstage hunk / whole file
+  i                   Edit annotation here, or create one
+  v / V / Ctrl-v, a   Annotate a character / line / block selection
+  @ / :al             Search annotations and jump to one
+  } / {               Next/previous annotation
+  d                   Delete annotation here (source panes only)
+  :w in annotation    Save note locally and close
+  :w in diff/tree     Send saved annotations
+  :ho                 Open/reopen a harness terminal
+  Space R             Refresh files and snapshots
+  :view               Toggle split/merged diff
+  Space r / Space q   Toggle / leave Review
+
+TOPICS
+  |rediff-review|      Annotations       |rediff-git|         Staging
+  |rediff-harness|     Agent harnesses   |rediff-worktrees|   Worktrees
+  |rediff-view|        Panes and layout  |rediff-editing|     Editing
+  |rediff-commands|    Command index     |rediff-drafts|      Delivery
+
+==============================================================================
+REVIEW AND ANNOTATIONS                                          *rediff-review*
+
+Interactive startup without file arguments opens Review inside Git, with tree
+focus and a diff preview. File arguments open directly for editing.
+Moving onto a file previews it. Tab enters the diff. Space q returns to editing,
+with the launch directory's explorer ready after automatic Review startup.
+Outside Git, startup stays in ordinary editing without a sidebar.
+Headless runs open neither Review nor the tree. Space r toggles Review.
+The bottom bar shows the branch (or detached @short-SHA), harness and delivery.
+
+ANNOTATING ORDINARY FILES
+
+Space a (or :AnnotationMode) toggles annotation mode for the current named file
+inside a Git checkout, including clean files and unsaved edits. The bottom bar
+shows ANNOTATE. While enabled, source text is protected and the same controls,
+note composer and harness delivery used by Review apply: i adds/edits a note;
+v/V/Ctrl-v then a annotates an exact selection; d deletes a note; @ lists notes.
+Esc in the source (Normal mode), or Space a again, restores normal editing and
+any previous buffer-local mappings when no note editor is open. Esc never closes
+an open note or exits annotation mode while that note is open.
+Review always has annotation mode on; Space a does not turn it off there.
+
+:w in the note saves the note locally. :w in an ordinary file STILL saves that
+file, even in annotation mode. Use :WriteFeedback to send saved notes through
+the selected harness (:harness use amp, etc.). Without a harness, feedback is
+queued locally. Notes are shared with Review in this editor process.
+
+Notes retain the exact buffer text at annotation time, including unsaved edits.
+Later edits never move their anchors. Jumping to a note on another or older
+snapshot opens its protected Review view; it does not overwrite the file.
+If an external reload changes the buffer text, annotation mode turns off; use
+Space a again to annotate the new text. Notes/drafts remain in this process.
+
+Source panes are protected snapshots. Editing commands open a note instead of
+changing code. i edits the note under the cursor; overlapping notes open a picker.
+:annotations new always creates a separate note. For an exact range, select with
+v/V/Ctrl-v, then a (also i or Space c). The harness receives the selection's range
+and character/block columns, not just the cursor line.
+
+The note editor floats below the selected range without resizing the diff panes.
+Notes use normal Neovim editing. Esc while typing returns to Normal mode.
+Further Escape presses leave the note open. Use :q to close and retain its draft.
+  :w / :wq        Save locally and close
+  :q / :q!        Close and keep the draft
+Reopen the same line/range to resume its draft.
+
+Saved notes appear as orange text under their source range. Orange >> in the gutter
+marks notes at the cursor. @ searches filenames and note text; Enter jumps, Esc
+cancels. i edits that note. } / { cycles in creation order across files/sides;
+counts work (3}). d deletes a note, not source or already-sent feedback. These
+bindings leave ordinary files/note text unchanged.
+
+A file with saved notes has an orange ● at the right edge of its tree row.
+Both rows are marked if the file appears in STAGED and UNSTAGED. The dot includes
+notes on older snapshots and disappears when the file's last note is deleted,
+archived, or cleared after successful delivery.
+
+A violet ◆ (changed since annotated) marks notes whose annotated lines changed
+on their selected side. Edits elsewhere, including line-number shifts, do not
+mark notes or trigger the submission warning. Insertions inside a selected range
+count as changes. The note border stays orange; restoring the source clears the
+badge. Checks also run while a note is open, without changing its text or anchor.
+
+Jumping to an older note shows its original snapshot and pauses refresh/staging.
+Space R returns to current files. Old-side notes switch merged view to split.
+Editing a note preserves its anchor. :w in diff/tree sends the saved notes.
+An empty batch shows "No agent notes to send to the harness".
+See |rediff-drafts| for retention and retry.
+
+==============================================================================
+GIT AND REFRESH                                                    *rediff-git*
+
+Ordinary files show Gitsigns gutter marks against Git's index, including unsaved
+edits: green for additions, yellow for modifications, and red for deletions.
+Untracked files get green dashed marks. Review snapshots keep their own diff
+rendering; Gitsigns does not attach to them. GitGud remains the blame provider.
+
+gitgud provides one interface in ordinary files and Review source panes:
+  Space g b / :GitGud blame-line   Show author, date and commit for this line
+  Space g B / :GitGud blame        Browse blame for every source line
+  Space g i / :GitGud toggle       Toggle inline blame for the focused line
+  Space g p / :GitGud pr           Show this line's associated PR links
+
+:gitgud is a typed alias for :GitGud. Tab completes subcommands. :GitGud without
+arguments toggles inline blame, just like :GitGud toggle. :GitGud blame-toggle
+remains an alias. In blame views, p shows the selected line's PRs; in full-file
+blame, Enter returns to that source line. q/Esc closes the view.
+Full-file blame is read-only and keeps your editor/Review layout intact.
+
+The popup displays HTTPS links with terminal hyperlinks (OSC 8). Use your local
+terminal's link-click modifier, usually Cmd-click on macOS; no browser command
+runs on the remote SSH host. q/Esc closes; y on a URL yanks it to Neovim's unnamed
+register. Terminal selection/copy works too. Wrapped links remain hyperlinks in
+terminals supporting OSC 8; terminal/tmux settings may affect click handling.
+PR lookups require gh authentication on the machine running Neovim (gh auth login).
+Missing PRs and lookup errors are reported in the popup, never silently ignored.
+
+Review blames the selected OLD/NEW snapshot, not the current on-disk file. Normal
+editing includes unsaved buffer contents. New/uncommitted lines have no commit
+or PR. Merged-view red deletions are virtual lines: switch to split view and use
+the OLD pane to blame them. Closing a loading popup discards late results.
+
+Inline blame is on by default. Use Space g i or :GitGud to toggle it. It follows
+the focused source line after CursorHold, clears when you move/edit, and discards
+stale asynchronous results. It annotates the end of the line without replacing
+source text.
+
+The local gitgud Lua plugin also works without Rediff: copy lua/gitgud/ into your
+Neovim config's lua/ directory and call require('gitgud').setup(). It is tested
+with the bundled Neovim 0.12 and Git 2.54; gh is needed only for PR lookups.
+Rediff supplies snapshot context through setup's context() callback: return
+{root,path,head,text,side?}, where path is repo-relative, head is a
+pinned commit SHA (empty for unborn HEAD), and text is the exact snapshot.
+Return nil to use normal file-buffer discovery. No Gitsigns dependency.
+
+STAGED compares HEAD/index; UNSTAGED compares index/worktree and includes untracked
+files. Badges: M modified, U untracked, R rename, A added, D deleted. Partially
+staged files appear in both groups. h/Left collapses a group (▸); l/Right or Enter
+expands it (▾) and restores its selected file. Enter never collapses a group.
+j/k or Up/Down moves between visible files
+and collapsed or empty group headers, skipping blank rows. The selected header
+is highlighted. Refresh preserves collapsed groups;
+:fs/:fu and hunk navigation reveal their target file.
+
+Change awareness (automatic, for this editor session):
+  Violet ◆       Changed since the last accepted send, not yet seen; pulses for 2s
+  Cyan ◇         Changed since that send, already seen
+  No diamond     Matches the baseline or was acknowledged by staging/unstaging
+Hunks use matching labels and line-number colors; red/green still mean delete/add.
+A hunk becomes seen after 1s visible in a focused diff pane, not a tree preview.
+A successful s/S clears the affected hunk indicators in either group. Moving them
+back does not restore purple; new edits do. Other unread hunks stay unread.
+A file stays unseen while any changed hunk is unseen. This records exposure, not
+approval. The baseline starts with Review's initial contents.
+Accepted local-harness sends reset the baseline to pre-send contents;
+failed/local-only sends do not. Changes are detected
+on refresh regardless of who edited them. Paths no longer in Git's diff leave the
+tree. Context-only line shifts do not count as new hunks. No manual marks to manage.
+
+] / [ wraps through hunks within the current group; counts work (3]). :fs / :fu
+switch groups without changing pane focus. Space j/k moves files across groups.
+Ctrl+Shift+] / Ctrl+Shift+[ does the same but skips seen and baseline hunks.
+It works in the tree and either diff pane, preserves focus, and reports when no
+unseen hunks remain. Use Space R first when viewing an older annotation snapshot.
+Kitty and tmux must forward the modified brackets. If needed, add to kitty.conf:
+>
+  map ctrl+shift+[ send_text all \x1b[91;6u
+  map ctrl+shift+] send_text all \x1b[93;6u
+<
+And to tmux.conf:
+>
+  bind-key -n C-S-[ send-keys -l "\033[91;6u"
+  bind-key -n C-S-] send-keys -l "\033[93;6u"
+<
+
+s in a source pane toggles its Git hunk; S toggles the selected/displayed file.
+UNSTAGED stages; STAGED unstages. These actions apply immediately, change only
+the index, and reject stale snapshots. Inside ordinary files/notes, s/S still
+edit text. An all-green new file is one hunk: s stages it and advances to the next
+unstaged hunk (or unstages it from STAGED). Empty/deleted files need S; renames
+use delete/add pairs.
+
+After staging, selection advances within the original group. Whole-file actions
+use the previous file at the end; hunk actions wrap to the next remaining hunk.
+An exhausted group stays empty instead of following the file into the other group.
+Git may combine nearby displayed changes into one staging hunk.
+
+Connected Amp file-edit events trigger refreshes in this worktree. Polling every
+three seconds catches other edits/index changes. Refresh runs with Normal-mode
+tree/diff focus, preserves selection/focus, and pauses for
+annotation editing, typing, selections, commands, pickers and delivery.
+Typing in an embedded harness terminal does not pause refresh.
+Notes keep their original snapshots.
+Space R / :ReviewRefresh refreshes immediately without sending feedback.
+Use it instead of :bufdo e: Review panes are snapshots, not ordinary file buffers.
+Outside Review, :checktime checks loaded files for external changes.
+
+Set programs.rediff.reviewRefreshInterval in Home Manager, or add
+"review_refresh_interval": 10 to settings.json in stdpath('config') (normally
+~/.config/rediff). Use a whole number of seconds; 0 disables fallback polling.
+Apply your Home Manager configuration, or save settings.json if not managed by
+Home Manager, then leave/re-enter Review (Space q, Space r).
+Amp file events and Space R still work with polling disabled.
+
+==============================================================================
+AGENT HARNESSES                                               *rediff-harness*
+
+For a running Amp session, use :harness install amp once, then :harness connect amp.
+The installer also sets thread.interrupt to Ctrl-L in ~/.config/amp/settings.json,
+replacing Esc Esc for all Amp sessions for this user. Other settings/keybindings
+are preserved. Home Manager-managed settings must be updated in Home Manager.
+For oh-my-pi (OMP), use :harness install omp, then /restart in OMP and
+:harness connect omp. Home Manager can manage the CLI (programs.harnesses.omp.enable)
+and extension (programs.rediff.ompPlugin.enable) independently. Upstream pi is not
+supported. OMP feedback is admitted asynchronously, not acknowledged as completed.
+Session switches replace its connection; select the new session in rediff.
+After a cancelled switch, /rediff-connect in OMP resumes feedback delivery.
+Use :harness use amp to select Amp and connect in this worktree. Connecting sends
+nothing. :harness use omp selects OMP. :hc opens the connection panel;
+:hl / :harness list opens the same
+searchable panel for all available sessions. Each row shows its worktree directory;
+long paths are shortened in the list, with the full path in the selected details.
+The open panel discovers sessions every second; closing it stops polling.
+Amp may run in another terminal emulator or tmux session on this machine under
+the same user account. Load the readiff plugin in each Amp instance. Remote
+machines and orbs are not discoverable through this local connection.
+  /           Filter by alias, provider, title, ID, worktree, or activity
+  Enter       Connect/disconnect; connecting locally selects the annotation target
+  o           Open highlighted harness in the harness pane
+  r / d       Rename locally / disconnect selected harness
+  c / R / q   Connected-only filter / rediscover / close
+
+The [open] badge marks the terminal visible in this tab, not the highlighted row
+or annotation target. Hidden terminals have no badge. Opening reuses an existing
+editor terminal and keeps other connections. A session from another worktree
+opens in its own directory without changing this review's annotation target.
+
+Multiple harnesses can stay connected. Annotations only go to this worktree's
+selected harness; :w from the tree/diff sends them. To type to an editor-owned
+agent, use :harness open (below); external Amp/Claude sessions ask before resuming
+in the editor. Connecting for feedback alone leaves their original terminal alone.
+Separate editors can watch the same agent.
+Amp streams running/idle/approval/error state and active tool names to the panel.
+Offline or unsupported activity is shown as such, never inferred from an ACK.
+Aliases persist locally; connection subscriptions end when this editor exits.
+
+:harness open (alias :ho) opens the current worktree's harness.
+While loading, a spinner appears and keyboard input is discarded (not queued).
+Loading times out after five seconds, restores input, and ignores late results;
+run :Harness open again to retry. Provider/session choices and resume confirmations
+remain interactive and do not count toward the loading timeout. Input resumes as
+soon as the terminal or activity panel opens; CLI login/startup happens there.
+A single connected/editor-owned harness opens directly. Multiple local candidates
+show a chooser even if one is already selected.
+Without a session or configured provider, it asks which harness to start and saves
+that provider for the worktree. Cancelling starts nothing.
+Other worktrees are excluded. Opening a connected session selects it for annotations.
+An editor-owned TUI reuses its terminal split, process and buffer. Explicitly
+opening an external Amp/Claude session asks before starting its CLI in the pane.
+Stop using its other terminal first: this resumes the thread in a new TUI, not
+an attachment to the existing process. Cancelling starts nothing.
+The bridge carries annotations and activity, not terminal screen or keyboard input;
+OMP remains activity-only because session resumption is unsupported.
+After disconnecting, open rediscovers live sessions even after an editor restart
+or when opening a file instead of Review. With no live match, the Amp adapter
+checks saved history before starting fresh; other adapters retain their launch behavior.
+After Amp exits (including Ctrl-C), open offers to resume the saved thread in a
+new TUI. Automatic startup only connects to an existing live session; it does not
+start another CLI for it.
+The shared startup policy for every harness is: connect to a live session in this
+directory/worktree, otherwise resume the last recorded session, otherwise start
+fresh. Discovery, validation, and resume commands are provider-adapter concerns.
+The full sequence currently has an Amp implementation; OMP/Claude support is
+pending, not an intended difference in policy.
+With the current Amp adapter, bare interactive startup connects to a live thread
+in this exact worktree without launching another CLI. Its terminal stays where
+it is. If several threads match, the last recorded one wins, or a picker asks
+you to choose.
+If none is live, startup resumes the last recorded thread; only missing/invalid
+history starts a fresh CLI. The Amp plugin stores history per canonical workspace
+under $XDG_STATE_HOME/rediff/amp (default ~/.local/state/rediff/amp), including
+threads started outside Neovim. Empty welcome screens have no thread ID yet.
+A confirmed missing ID is invalidated; auth/network/active-elsewhere errors retain
+history and stop startup. Resume errors stay visible in the terminal and never
+silently launch a replacement. Reconnection stops after 30 seconds; resolve the
+error and run :harness connect amp.
+Missing CLIs leave Review usable.
+File/directory arguments, headless runs, and none/custom harnesses do not auto-open.
+Space r moves an open harness pane between Review and editing, keeping its
+window, buffer, and process. Hiding it in either mode keeps it hidden across
+toggles until :ho reopens it.
+
+Escape returns control to Neovim in the same pane (Terminal-Normal mode), without
+sending Escape to the harness. Repeated Escape does not interrupt the agent.
+With the harness pane focused, the mouse wheel scrolls the harness UI in both
+input and Terminal-Normal modes, provided the harness enables mouse reporting.
+Scrolling in Terminal-Normal mode leaves Neovim in control; i still resumes input.
+Use Cmd-W then an arrow to switch panes, or i to resume harness input. In Amp
+input, Ctrl-L interrupts the agent after :harness install amp configures it.
+Cmd-W p returns to the previous editor window from Terminal mode, leaving the
+TUI running. Cmd-W also accepts other window commands, such as h/j/k/l. Ctrl-W
+passes through to the TUI for word deletion, including repeated presses.
+Ctrl-\ Ctrl-N enters Terminal-Normal mode; :hide hides the pane; :ho brings it back.
+
+In Review, press Escape then type :w (or :write) from its harness pane to send
+the saved annotation batch, just as from the tree or diff panes. This shortcut
+applies only to the active Review's own worktree, not to ordinary terminals.
+
+The bridge cannot move an external TUI into Neovim. :harness resume first
+rediscovers the selected session: a live local match reconnects without launching
+a CLI, and a match in another worktree blocks launch. Without a live match, it
+confirms before starting a TUI for a saved Amp or Claude session.
+Open also offers this confirmation for saved sessions without a live bridge.
+Stop using the other terminal first. This does not create a new thread, attach to
+or kill its process, or send a prompt. OMP session resumption is not supported here.
+Resumed live Amp sessions reconnect feedback when their plugin registers a fresh
+endpoint for the same thread and worktree. Until then, annotations remain saved;
+retry :w after the connection is ready.
+
+Plugin installation asks for confirmation, preserves Home Manager symlinks, and
+does not install/authenticate the Amp CLI. With a live target, it also requests
+an agent-mediated reload; queued does not mean reloaded. Without one, reload Amp
+manually once. Reconnect afterwards. Live install/connect supports Amp only.
+
+CLI continuation is a separate transport; select an explicit session:
+  :ReviewHarness amp T-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+  :ReviewHarness claude SESSION_ID
+  :ReviewHarness custom
+  :ReviewHarness none
+
+These bindings persist per worktree. Authenticate the CLI separately and stop any
+other process driving that session. This does not synchronize remote workspaces
+or bypass agent permissions. Custom receivers use programs.rediff.feedbackCommand
+or feedback_command in settings.json; they receive a JSON path and must acknowledge
+its submission ID. See nix/README.md for installation and receiver details.
+
+==============================================================================
+WORKTREES                                                  *rediff-worktrees*
+
+:worktree list opens the management pane. The current checkout is marked *.
+In the list:
+  j/k         Select worktree
+  Enter       Switch to selected worktree
+  n           Prompt for new branch, create worktree, and launch harness
+  dd          Confirm deletion and stop editor-owned harness jobs
+  R           Refresh list
+  q / Esc     Close list
+
+:worktree switch and :worktree delete open action-specific pickers when no
+branch/path is supplied. Enter switches or confirms deletion; j/k, R and q/Esc
+select, refresh and close. These pickers have no create/delete management shortcuts.
+
+:harness use amp|omp|claude selects the launch type for this worktree.
+
+:worktree new [branch [path]] creates from current HEAD and starts that harness in
+a bottom terminal split. Omitted branch prompts; omitted path uses a sibling directory.
+The CLI must already be installed/authenticated. Existing branches/paths are never
+forced. A launch failure keeps the worktree; inspect its terminal and :messages.
+Ctrl-\ Ctrl-N leaves Terminal mode; :hide hides the pane. Editor exit stops its
+terminal processes. Switching alone never launches a harness.
+
+:worktree delete [branch|path] deletes a linked checkout, keeping its branch and
+saved review metadata. It stops only harness jobs launched by this editor, never
+external or merely connected agents. The main checkout, locked/unavailable trees,
+another editor's live review, unsaved file buffers, and staged/unstaged/untracked
+files prevent deletion. Git removal is never forced (ignored files follow Git's
+normal behavior). Deleting the current checkout switches to the main one first.
+If Git refuses removal after a harness stops, the checkout is retained.
+
+New worktrees inherit launch type, not connections or drafts. Dirty files and
+saved notes stay with their checkout; save/close an open note before switching.
+Switching preserves a saved harness selection, or connects a single live session
+in that exact worktree for its selected type (either live provider if unset).
+No match or multiple matches never open a picker during switching.
+Changing harness type disconnects incompatible bindings but retains notes.
+
+==============================================================================
+PANES AND VIEW                                                   *rediff-view*
+
+:view split shows old/new panes; :view merged shows deleted rows above new text.
+:view toggles while retaining file/hunk and notes. Merged deletions are virtual:
+use split for exact old-side selections. Old-side search/note jumps do this for you.
+
+  Space E               Toggle filesystem tree; focus-only in Review
+  Cmd-w h/j/k/l         Focus adjacent pane (macOS); Cmd-w w cycles
+  gt / gT              Next/previous tab
+  :setlocal [no]number  Show/hide line numbers
+  :setlocal [no]wrap    Wrap/unwrap text
+
+In a Review diff pane, :set wrap / :set nowrap (also :setlocal) applies to both
+panes. The choice survives file changes, refreshes, and split/merged switches.
+Ordinary editing windows, the tree, and note editors keep their own wrap setting.
+
+Cmd-w is a prefix, then a direction (arrows or h/j/k/l), also from harness input.
+Kitty must forward Command keys explicitly. In kitty.conf: >
+  map cmd+w send_text all \x1b[119;9:1u
+<
+The explicit press event (:1) preserves Command through tmux 3.6 instead of
+normalizing it to Alt. Reload Kitty after changing its configuration.
+Normal/Visual Ctrl-w window navigation is disabled; Insert Ctrl-w still deletes
+a word. Closing a required source pane exits Review.
+
+Additions are green, deletions red. Difftastic supplies structural token highlights;
+text highlights remain on failure/timeout or files over 1 MB. Git defines staging
+hunks regardless of rendering. The bottom bar names the active diff tool.
+
+==============================================================================
+ORDINARY EDITING                                              *rediff-editing*
+
+Normal Neovim editing applies outside protected source panes. Space f searches
+project files; Space / searches saved contents. In Review these search changed
+entries and both snapshot sides, including deletions. Enter chooses; Esc cancels.
+/ and n/N search the current buffer. ? opens this guide; use :? for backward search.
+
+Opening a directory (for example, rediff src) uses the filesystem explorer.
+Its Git markers are green A for added, green U for untracked, and yellow M for
+modified. Directories summarize changes inside them, even when expanded. Deleted
+files are absent from this explorer; they remain available in Review.
+
+In a Review source pane, Option+Enter (Alt+Enter / gd) finds definitions of the
+symbol under the cursor using Neovim's LSP client. Results open in a separate
+editing tab; multiple matches also open the quickfix list. gT returns to Review
+without losing notes. Lookup is asynchronous and never edits source, stages,
+or sends feedback.
+
+Nix bundles nvim-lspconfig and servers for Lua, Nix, Python, JS/TypeScript,
+Go (gopls), and Rust (rust-analyzer). Go and Rust use your project's toolchain;
+provide go or cargo/rustc on PATH. Nix supplies Rust standard-library sources;
+set RUST_SRC_PATH to use sources matching a different project toolchain.
+Configure your terminal to send Option+Enter as Alt/Meta+Enter; use gd if it
+sends plain Enter instead. Insert-mode editing is unchanged.
+
+Ctrl-a / Ctrl-e moves to line start/end in Insert and command/search input.
+Option+Left/Up/h/k moves a word backward; Option+Right/Down/l/j moves forward.
+Set your terminal's Option key to Alt/Meta; Esc-b/Esc-f sequences also work.
+
+For native navigation/editing, see :help motion, :help editing, :help undo,
+:help registers and :help windows. File-tree actions: |neo-tree-mappings|.
+
+==============================================================================
+COMMAND INDEX                                                *rediff-commands*
+
+Space p / :Commands fuzzy-finds commands. Enter puts one on the command line;
+add arguments and press Enter again to run. Tab accepts inline suggestions or
+completes arguments; Ctrl-d lists matches. :command lists user/plugin commands.
+
+Scripts use uppercase names below. Typed aliases: :harness = :Harness,
+:ho = :Harness open, :hl = :Harness list, :hc = :Harness connect,
+:ft = :Explorer, :annotations = :Annotations,
+:al = :Annotations list, :worktree = :Worktree. In Review, :view = :View,
+:focus = :Focus, :fs = :Focus staged, :fu = :Focus unstaged.
+
+  :Review / :ReviewLeave       Enter/leave Review
+  :Explorer / :FocusDiff       Focus tree / diff or editor
+  :Files / :Search             Fuzzy file / text search
+  :Commands                   Find available commands
+  :GitGud blame[-line|-toggle] Full-file / current-line / inline blame
+  :GitGud pr                  Show links to this line's associated PRs
+  :View [split|merged]         Choose layout; no argument toggles
+  :Focus staged|unstaged      Select first file/hunk in that group
+  :ReviewRefresh              Refresh snapshots and file list
+  :ReviewStage hunk|file       Stage selected hunk/file
+  :ReviewUnstage hunk|file     Unstage selected hunk/file
+  :ReviewComments             Find annotations (same as :Annotations list)
+  :Annotations list|next|prev  Find notes / jump to next/previous
+  :Annotations new            Create a separate note at the cursor
+  :WriteFeedback              Send saved annotations
+  :ReviewHarness [name ID]    Show/select CLI or custom receiver
+  :ReviewRetry                Retry last immutable delivery
+  :ReviewOutbox               Browse payloads and receipts
+  :ReviewArchive              Clear round/drafts after confirmation
+  :Harness status             Show connection and delivery receipt
+  :Harness open / :ho         Choose/open/reopen a terminal harness pane
+  :Harness resume             Confirm resuming the selected Amp/Claude session
+  :Harness use amp|omp|claude Select type; Amp/OMP discover live sessions
+  :Harness install amp|omp    Install bridge; OMP needs an explicit /restart
+  :Harness connect [amp|omp]  Discover/select live session
+  :Harness list               Search and manage harnesses across worktrees
+  :Harness panel              Same panel with live activity
+  :Harness rename ID ALIAS     Set a local alias, without renaming the agent thread
+  :Harness retry              Retry last annotation delivery, not edited notes
+  :Harness disconnect [alias] Disconnect chosen harness; do not stop the agent
+  :Worktree list              Switch/create/delete worktrees
+  :Worktree switch [target]   Switch by branch/path, or choose
+  :Worktree new [branch [path]] Create worktree and launch harness
+  :Worktree delete target     Delete by branch/path and stop owned harness jobs
+
+:help {topic} opens native/plugin help. :messages shows errors/notifications.
+:qa exits; :qa! also discards unsaved ordinary files. Both lose session-only drafts.
+Shell commands (:!) can change files/index outside the editor's protections.
+
+==============================================================================
+DRAFTS AND DELIVERY                                            *rediff-drafts*
+
+Accepted/completed delivery deletes sent notes but preserves newer edits.
+Failed, pending and local-only batches stay in this process. Leaving/re-entering
+Review retains drafts; exiting discards them without an unsent-note quit guard.
+Every fresh editor starts empty. Submitted payloads/receipts persist in the outbox.
+
+You can keep editing while the agent responds.
+One delivery per worktree may be in flight. Typing drafts does not write to disk.
+Keep the editor running during delivery. "accepted" means queued; "completed"
+means the turn finished, not that its changes are correct. Inspect the session
+and receipt before retrying uncertain delivery. Retries use the original payload.
+Without a binding, submissions stay local. Credentials never belong in Nix/Git.
+
+After a failure, :w keeps the notes without resending or raising a Lua error.
+:Harness status shows the saved failure reason and recovery advice. Check the
+agent before :ReviewRetry; a closed connection requires :harness connect amp/omp.
+
+Built-in harnesses receive JSON: rules once, then context and annotations.
+There is no prose prefix or epilogue. Explicit Git/PR authorization in your
+feedback or earlier conversation messages carries forward within its scope;
+the agent must not ask again. A commit request includes staging relevant changes
+unless you limit it to already-staged changes. Other Git/PR actions still require
+authorization. Exact ranges and snapshot status remain. Source/patches stay in
+the private outbox, referenced by path; custom receivers get the full payload.
+Choose your receiver carefully.
+
+LIMITS                                                        *rediff-parity*
+Binary files, merge conflicts and files over 2 MiB are unsupported. Notes are
+not re-anchored automatically. File/hunk annotation scopes, LSP inspection
+and collapsed/compact diffs are not implemented. See FEATURES.md for the inventory.
+
+ vim:tw=78:ts=8:ft=help:norl:

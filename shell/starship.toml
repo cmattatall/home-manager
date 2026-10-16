@@ -1,0 +1,42 @@
+add_newline = false
+format = '$status([\[$hostname$os\]](220) )$directory$git_branch$nix_shell$aws$character'
+
+[hostname]
+ssh_only = false
+ssh_symbol = 'ssh:'
+format = '[$ssh_symbol](205)$hostname'
+
+[os]
+disabled = false
+format = ' \($name\)'
+
+[directory]
+format = '[$path]($style) '
+style = 'purple'
+truncation_length = 0
+truncate_to_repo = false
+
+[git_branch]
+format = '[\($branch\)]($style) '
+style = 'green'
+
+[nix_shell]
+format = '[\[nix\]]($style) '
+style = 'cyan'
+
+[aws]
+format = '([\($profile\)]($style) )'
+style = 'yellow'
+force_display = true
+
+[aws.profile_aliases]
+prod = '🚨 prod 🚨'
+
+[status]
+disabled = false
+format = '[\[$status\]]($style) '
+style = 'red'
+
+[character]
+success_symbol = '\$'
+error_symbol = '\$'
