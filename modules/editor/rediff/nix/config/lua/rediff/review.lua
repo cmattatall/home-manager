@@ -634,6 +634,9 @@ end
 local function read_changes(s, preferred)
 	local reference = git.reference(s.root)
 	local entries = git.entries(s.root)
+	if s.file_match then
+		retain(entries, s.file_match)
+	end
 	local index = math.min(s.index or 1, #entries)
 	if s.exhausted_group then
 		index = nil
@@ -677,6 +680,9 @@ function M.refresh(preferred, changes)
 	s.annotation_id = nil
 	s.entries, s.reference = changes.entries, changes.reference
 	local lines, rows = { " REVIEW · Git changes", "" }, {}
+	if s.file_filter and s.file_filter ~= "" then
+		lines[2] = " / " .. vim.fn.strtrans(s.file_filter)
+	end
 	s.group_rows = {}
 	for _, group in ipairs({ "staged", "unstaged" }) do
 		local count = 0
@@ -746,11 +752,21 @@ function M.refresh(preferred, changes)
 		for _, buf in ipairs({ s.old_buf, s.new_buf }) do
 			api.nvim_buf_clear_namespace(buf, -1, 0, -1)
 		end
-		if s.exhausted_group then
+		if #s.entries == 0 and s.file_filter and s.file_filter ~= "" then
+			vim.wo[s.new_win].winbar = " No matching files · / in tree to change filter"
+			if s.old_win then
+				vim.wo[s.old_win].winbar = ""
+			end
+		elseif s.exhausted_group then
 			api.nvim_win_set_cursor(s.tree_win, { s.group_rows[s.exhausted_group], 0 })
 			vim.wo[s.new_win].winbar = s.exhausted_group == "staged"
 					and " No staged changes · :fu to review unstaged changes"
 				or " No unstaged changes · :fs to review staged changes"
+			if s.old_win then
+				vim.wo[s.old_win].winbar = ""
+			end
+		else
+			vim.wo[s.new_win].winbar = " No changes"
 			if s.old_win then
 				vim.wo[s.old_win].winbar = ""
 			end
@@ -763,6 +779,44 @@ function M.refresh(preferred, changes)
 	render_tree_annotations(s)
 	awareness.scan(s.root)
 	save(s)
+end
+
+function M.filter_files()
+	local s = assert(M.active(), "Enter Review first")
+	vim.ui.input(
+		{ prompt = "Filter files (glob or re:regex; empty clears): ", default = s.file_filter or "" },
+		guard(function(query)
+			if query == nil or M.active() ~= s then
+				return
+			end
+			-- Compile before changing state so invalid patterns keep the current filter.
+			local pattern, regex, glob = query, nil, nil
+			if vim.startswith(pattern, "re:") then
+				pattern = pattern:sub(4)
+				regex = vim.regex("\\c\\v" .. pattern)
+			elseif pattern:find("[*?%[{]") then
+				glob = vim.glob.to_lpeg(vim.fn.tolower(pattern))
+			end
+			local match_path = pattern:find("/", 1, true) ~= nil
+			local literal = vim.fn.tolower(pattern)
+			local function matches(entry)
+				local target = match_path and entry.path or vim.fn.fnamemodify(entry.path, ":t")
+				if regex then
+					return regex:match_str(target) ~= nil
+				end
+				target = vim.fn.tolower(target)
+				if glob then
+					return glob:match(target) ~= nil
+				end
+				return target:find(literal, 1, true) ~= nil
+			end
+			s.file_match = query ~= "" and matches or nil
+			s.file_filter = query
+			s.exhausted_group = nil
+			M.refresh(s.current)
+			api.nvim_set_current_win(s.tree_win)
+		end)
+	)
 end
 
 function M.tree_fold(collapsed)
@@ -1712,6 +1766,7 @@ function M.open(root)
 	api.nvim_win_set_width(s.tree_win, math.min(28, math.floor(vim.o.columns / 5)))
 	vim.cmd("wincmd =")
 	map(s.tree_buf, "n", "q", M.leave, "Leave Review")
+	map(s.tree_buf, "n", "/", M.filter_files, "Filter changed file paths")
 	for _, key in ipairs({ "h", "<Left>" }) do
 		map(s.tree_buf, "n", key, function()
 			M.tree_fold(true)

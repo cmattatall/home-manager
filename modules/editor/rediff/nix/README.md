@@ -272,6 +272,30 @@ Untracked files belong to the UNSTAGED cycle. They work from
 either source pane or the sidebar, retain focus, and accept counts (e.g.
 **3]**). A gutter arrow/bar marks the selected hunk in both source panes.
 
+With focus in the file tree, **/** filters files in place. **Enter** applies;
+**Esc** cancels. Press **/**, **Ctrl-u**, **Enter** to clear it.
+Filters match **filenames**, unless they contain `/`, which selects the
+repository-relative **path**. Matching is case-insensitive by default:
+
+| Filter | Matches |
+| --- | --- |
+| `nix` | Filenames containing `nix`, not files merely inside a `nix/` directory |
+| `*.nix` | Filenames ending in `.nix` |
+| `nix/` | Paths containing `nix/` |
+| `nix/*.py` | Python files directly in `nix/` |
+| `nix/**/*.py` | Python files anywhere under `nix/` |
+| `re:\.nix$` | Regex matching filenames ending in `.nix` |
+| `re:^nix/.*\.py$` | Regex matching repository-relative paths |
+
+Globs support `*`, `**`, `?`, `[]`, and `{a,b}` and match the whole name/path.
+Other unprefixed text is a literal substring. `re:` uses Vim's very-magic
+(`\v`) regex syntax; escape metacharacters with a backslash. Invalid patterns
+leave the previous filter unchanged.
+The active filter appears below the tree title. Counts, file/hunk navigation,
+and Review pickers use matching entries; refresh and staging preserve the
+filter until Review closes.
+In source panes, **/** still searches text. **Space f** remains a separate picker.
+
 Use **:fs** / **:focus staged** or **:fu** / **:focus unstaged** to select the
 first visible file/hunk in that group without changing pane focus. If the group
 is empty, selection stays unchanged. Scripts use `:Focus staged` or

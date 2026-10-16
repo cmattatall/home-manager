@@ -174,6 +174,24 @@ and collapsed or empty group headers, skipping blank rows. The selected header
 is highlighted. Refresh preserves collapsed groups;
 :fs/:fu and hunk navigation reveal their target file.
 
+In the file tree, / filters files in place. Enter applies; Esc cancels.
+To clear, press /, Ctrl-u, Enter. Matching is case-insensitive by default:
+  nix                 Filename contains "nix"; parent directories do not count
+  *.nix               Filename glob; only files ending in .nix
+  nix/                Path contains "nix/"
+  nix/*.py            Path glob; Python files directly in nix/
+  nix/**/*.py         Path glob; Python files anywhere under nix/
+  re:\.nix$           Regex; filenames ending in .nix
+  re:^nix/.*\.py$     Regex against the repository-relative path
+Patterns containing / match paths; otherwise they match filenames only.
+Globs support *, **, ?, [], and {a,b}, matching the whole name/path. Other
+unprefixed text is a literal substring. re: uses Vim very-magic regex syntax
+(\v); escape regex metacharacters with a backslash. Invalid patterns leave the
+previous filter unchanged.
+The active filter appears below the tree title; counts and file/hunk navigation
+use matching entries. The filter survives refresh and staging until Review closes.
+/ in source panes still searches text. Space f opens a separate fuzzy picker.
+
 Change awareness (automatic, for this editor session):
   Violet ◆       Changed since the last accepted send, not yet seen; pulses for 2s
   Cyan ◇         Changed since that send, already seen
@@ -452,7 +470,8 @@ ORDINARY EDITING                                              *rediff-editing*
 Normal Neovim editing applies outside protected source panes. Space f searches
 project files; Space / searches saved contents. In Review these search changed
 entries and both snapshot sides, including deletions. Enter chooses; Esc cancels.
-/ and n/N search the current buffer. ? opens this guide; use :? for backward search.
+/ and n/N search the current buffer, except / in the Review file tree filters
+paths. ? opens this guide; use :? for backward search.
 
 Opening a directory (for example, rediff src) uses the filesystem explorer.
 Its Git markers are green A for added, green U for untracked, and yellow M for
