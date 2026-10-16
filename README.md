@@ -299,6 +299,16 @@ Amp binaries, settings, and credentials are not deleted; use `type -a amp` to
 check for a standalone installation ahead of `~/.nix-profile/bin` on `PATH`.
 Only Amp and Vagrant are allowed as unfree packages, not every unfree package.
 
+The shared Home Manager profile merges `amp.keymap.thread.interrupt =
+["ctrl+l", "esc esc"]` into `~/.config/amp/settings.json` at activation on both
+macOS and Linux. Other settings and keybindings stay machine-local and writable;
+credentials are never copied into the Nix store. Invalid settings or symlinks are
+refused rather than overwritten. Restart Amp after activation: Ctrl+L interrupts
+standalone Amp; in the readiff pane, Ctrl+L dismisses/backtracks and **Ctrl+L twice**
+interrupts. Pull and activate this configuration on each remote machine too
+(`hm_pull` for revision-pinned installations); a local activation does not update
+remote hosts. No plugin installation or reload is needed for this setting.
+
 These prerequisites remain outside Home Manager:
 
 - GitHub/AWS/Amp credentials and access to the target services.

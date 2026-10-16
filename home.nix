@@ -77,6 +77,15 @@ in
   programs.bash.initExtra = lib.mkAfter shellInit;
   programs.zsh.initContent = lib.mkAfter shellInit;
 
+  # Merge only these keys: Amp must retain a writable, machine-local settings file.
+  home.activation.ampKeymap = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    run ${pkgs.python3}/bin/python3 ${./scripts/configure-amp-keymap.py} \
+      ${lib.escapeShellArg "${config.home.homeDirectory}/.config/amp/settings.json"} \
+      ${lib.escapeShellArg (builtins.toJSON {
+        "thread.interrupt" = [ "ctrl+l" "esc esc" ];
+      })}
+  '';
+
   programs.home-manager.enable = true;
   programs.tmux = {
     enable = true;
