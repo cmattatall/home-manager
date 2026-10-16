@@ -10,7 +10,9 @@ let
     + "?rev=85a2e6a2be519709571599795d1f945ab5e036f4"
   );
   pull = ''
-    home-manager-pull() {
+    alias hm='home-manager'
+
+    hm_pull() {
       local config_file="$HOME/home.nix"
       local repository_url="https://github.com/cmattatall/home-manager.git"
       local remote_reference latest_revision
@@ -18,14 +20,14 @@ let
 
       # Look up main without cloning the repository or changing local files.
       if ! remote_reference=$(git ls-remote --exit-code "$repository_url" refs/heads/main); then
-        printf 'home-manager-pull: could not read main from %s\n' "$repository_url" >&2
+        printf 'hm_pull: could not read main from %s\n' "$repository_url" >&2
         return 1
       fi
 
       # ls-remote returns a commit SHA followed by a tab and the branch name.
       latest_revision=$(printf '%s\n' "$remote_reference" | cut -f1)
       if ! [[ "$latest_revision" =~ ^[0-9a-f]{40}$ ]]; then
-        printf 'home-manager-pull: main did not resolve to a valid commit SHA\n' >&2
+        printf 'hm_pull: main did not resolve to a valid commit SHA\n' >&2
         return 1
       fi
 
@@ -33,13 +35,13 @@ let
       revision_pin_pattern='^[[:space:]]*\+ "\?rev=[0-9a-f]{40}"$'
       matching_pin_count=$(grep -Ec "$revision_pin_pattern" "$config_file")
       if [ "$matching_pin_count" != 1 ]; then
-        printf 'home-manager-pull: expected exactly one revision pin in %s\n' "$config_file" >&2
+        printf 'hm_pull: expected exactly one revision pin in %s\n' "$config_file" >&2
         return 1
       fi
 
       # Prepare the update beside home.nix so a failed write leaves it intact.
       if ! updated_config=$(mktemp "$config_file.XXXXXX"); then
-        printf 'home-manager-pull: could not create a temporary configuration\n' >&2
+        printf 'hm_pull: could not create a temporary configuration\n' >&2
         return 1
       fi
 

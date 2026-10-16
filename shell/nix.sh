@@ -1,3 +1,5 @@
+alias hm='home-manager'
+
 unalias nxd 2>/dev/null || true
 
 nxd() {

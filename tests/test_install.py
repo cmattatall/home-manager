@@ -1,5 +1,6 @@
 """Tests for the installer scripts; every external command is mocked."""
 
+import json
 import os
 import shutil
 import subprocess
@@ -431,6 +432,42 @@ class InstallHomeManagerTest(SandboxTest):
 
 @unittest.skipUnless(BASH, "bash is not installed")
 class SetupHomeManagerTest(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("nix-instantiate"), "Nix is not installed")
+    def test_hm_commands_update_the_pin_and_preserve_switch_arguments(self):
+        revision = "1234567890abcdef" * 2 + "12345678"
+        for shell in filter(None, [BASH, shutil.which("zsh")]):
+            with self.subTest(shell=shell), tempfile.TemporaryDirectory(prefix="hm commands ") as directory:
+                home = Path(directory)
+                env = {**os.environ, "HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config")}
+                subprocess.run(
+                    [BASH, str(REPO / "scripts/install-nix-home.sh")],
+                    env=env, capture_output=True, text=True, check=True, timeout=10,
+                )
+                config = home / "home.nix"
+                original = config.read_text()
+                init = json.loads(subprocess.check_output(
+                    ["nix-instantiate", "--eval", "--strict", "--json", "--expr",
+                     f'(import (builtins.toPath {json.dumps(str(config))})).programs.bash.initExtra'],
+                    text=True, timeout=20,
+                ))
+                script = (
+                    'if [ -n "${BASH_VERSION:-}" ]; then shopt -s expand_aliases; fi\n'
+                    'home-manager() { printf "<%s>\\n" "$@"; }\n'
+                    f'git() {{ printf "{revision}\\trefs/heads/main\\n"; }}\n'
+                    + init + '\neval \'hm generations "argument with spaces"\'\nhm_pull\n'
+                )
+                result = subprocess.run(
+                    [shell, "-c", script], env=env,
+                    capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.splitlines(), [
+                    "<generations>", "<argument with spaces>",
+                    "<switch>", "<-b>", "<backup>", "<-f>", f"<{config}>",
+                ])
+                old_revision = original.split('"?rev=', 1)[1].split('"', 1)[0]
+                self.assertEqual(config.read_text(), original.replace(old_revision, revision))
+
     def test_configuration_link_and_existing_files_are_preserved(self):
         for custom_xdg in (False, True):
             for existing in (None, "file", "dangling-link"):

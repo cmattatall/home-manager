@@ -62,10 +62,10 @@ existing files and dangling symlinks are preserved rather than replaced.
 The generated configuration pins `programs.home-manager.path` to the same Home
 Manager input as this repository. The script prints a one-time bootstrap command
 using `-I home-manager=...` so an existing standalone CLI can activate it without
-a Home Manager channel. After activation, `home-manager switch` and
-`home-manager-pull` use the pinned source without a Home Manager entry in
+a Home Manager channel. After activation, `hm` aliases `home-manager`; `hm switch`
+and `hm_pull` use the pinned source without a Home Manager entry in
 `NIX_PATH`. The standalone workflow still needs a compatible `nixpkgs` entry.
-Start a new shell and run `home-manager-pull` to advance the bootstrap revision
+Start a new shell and run `hm_pull` to advance the bootstrap revision
 to the current published `main`. This setup script does not activate anything or
 check fleet ownership; use it only after a per-user Home Manager handoff.
 

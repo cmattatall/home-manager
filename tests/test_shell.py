@@ -227,6 +227,22 @@ class ZshStartupTest(StartupTestBase):
         self.assertIn("launchctl", result.stdout)
 
 
+class HomeManagerAliasTest(StartupTestBase):
+    def test_hm_forwards_arguments_and_exit_status(self) -> None:
+        _write_stub(self.stub_dir, "home-manager", 'printf "<%s>\\n" "$@"; exit 7')
+        for shell in filter(None, [BASH, ZSH]):
+            with self.subTest(shell=shell):
+                result = self.run_shell(
+                    shell, self.ordinary_dir, shell,
+                    'if [ -n "${BASH_VERSION:-}" ]; then shopt -s expand_aliases; fi\n'
+                    'eval \'hm switch -f "config with spaces.nix"\'\n',
+                )
+                self.assertEqual(result.returncode, 7, result.stderr)
+                self.assertEqual(result.stdout.splitlines(), [
+                    "<switch>", "<-f>", "<config with spaces.nix>",
+                ])
+
+
 class ReloadShellTest(StartupTestBase):
     def test_reload_replaces_shell_and_refreshes_session_variables(self) -> None:
         _write_stub(
