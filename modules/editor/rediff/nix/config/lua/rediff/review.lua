@@ -152,6 +152,14 @@ local function map_staging(buf)
 		map(buf, "n", "s", function()
 			M.stage(false)
 		end, "Stage/unstage Git hunk at cursor")
+		map(buf, "n", "r", function()
+			M.revert()
+		end, "Revert Git hunk at cursor")
+		map(buf, "x", "r", function()
+			local region = selection.capture(buf, vim.fn.mode(), vim.fn.getpos("v"), vim.fn.getpos("."))
+			vim.cmd.normal({ args = { api.nvim_replace_termcodes("<Esc>", true, false, true) }, bang = true })
+			M.revert(region.spans[1].line, region.spans[#region.spans].line)
+		end, "Revert selected Git hunks")
 	end
 	map(buf, "n", "S", function()
 		M.stage(true)
@@ -1150,6 +1158,40 @@ function M.stage(whole_file, unstage)
 	notify("Index updated; source files unchanged. Existing comments retain their original snapshots.")
 end
 
+function M.revert(first, last)
+	local s = assert(M.active(), "Enter Review first")
+	assert(not s.annotation_id, "Press Space R to return to current files before reverting")
+	assert(not s.composer, "Close the annotation before reverting")
+	local side = side_at_cursor()
+	local snapshot = assert(s.current, "No changed file selected")
+	local path = s.root .. "/" .. snapshot.path
+	for _, buf in ipairs(api.nvim_list_bufs()) do
+		assert(
+			not (api.nvim_buf_get_name(buf) == path and vim.bo[buf].modified),
+			"File has unsaved edits; save or discard them before reverting"
+		)
+	end
+	local target = vim.deepcopy(harness.get(s.root).target)
+	if target.name ~= "custom" and not target.session then
+		target = { name = "none" }
+	end
+	local argv = feedback.command(target)
+	local discards = require("rediff.discards")
+	discards.load(s.root)
+	first = first or api.nvim_win_get_cursor(0)[1]
+	local hunks = git.revert(s.root, snapshot, side, first, last)
+	local ok, err = pcall(discards.add, s.root, snapshot, hunks, target, argv)
+	if not ok then
+		notify("Hunks reverted, but notification could not be saved: " .. tostring(err), vim.log.levels.ERROR)
+	end
+	M.refresh(snapshot)
+	vim.cmd("checktime")
+	require("rediff.live").changed(s.root)
+	if ok then
+		notify("Reverted " .. #hunks .. " hunk(s); agent notification queued.")
+	end
+end
+
 function M.add_comment(anchor, text, existing_id)
 	local s = annotation_state()
 	assert(vim.trim(text) ~= "", "Comment cannot be empty")
@@ -1808,6 +1850,7 @@ function M.open(root)
 	api.nvim_set_current_win(s.tree_win)
 	harness.move_pane(s.previous_tab)
 	require("rediff.live").start(s)
+	require("rediff.discards").load(s.root)
 	awareness.start(s.root)
 	api.nvim_exec_autocmds("User", { pattern = "ReviewEnter" })
 end
@@ -2098,11 +2141,21 @@ function M.setup()
 			}
 		)
 	end
+	api.nvim_create_user_command(
+		"ReviewRevert",
+		guard(function(opts)
+			M.revert(opts.line1, opts.line2)
+		end),
+		{ range = true, desc = "Revert selected Git hunks and notify the agent" }
+	)
 	local commands = {
 		Review = M.open,
 		ReviewLeave = M.leave,
 		ReviewRefresh = M.refresh,
 		ReviewComments = M.list_comments,
+		ReviewRevertFlush = function()
+			require("rediff.discards").flush(state().root)
+		end,
 		WriteFeedback = M.submit,
 		ReviewRetry = harness.retry,
 		ReviewArchive = function()

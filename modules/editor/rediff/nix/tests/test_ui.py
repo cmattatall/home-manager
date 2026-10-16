@@ -4529,6 +4529,208 @@ func greeting() string {
                 )
                 self.lua(editor, "r.leave()")
 
+    def test_revert_hotkey_range_and_palette_command(self):
+        editor = self.launch(self.root)
+        path = Path(self.root, "auth.lua")
+        changed = path.read_bytes()
+        baseline = subprocess.check_output(
+            ["git", "-C", self.root, "show", "HEAD:auth.lua"]
+        )
+        for layout in ("split", "merged"):
+            path.write_bytes(changed)
+            self.lua(
+                editor,
+                "r.refresh({path='auth.lua',group='unstaged'}); "
+                f"r.view('{layout}'); vim.api.nvim_set_current_win(s.new_win)",
+            )
+            self.keys(editor, "17G0r")
+            self.wait_for(
+                editor, "vim.fn.readfile(s.root..'/auth.lua')[17] == '  return token'"
+            )
+            self.assertEqual(
+                baseline.replace(b"    return false", b"    return true"),
+                path.read_bytes(),
+                (layout, editor.vars.get("startup_notice")),
+            )
+            self.assertIsNone(self.lua(editor, "return s.composer"))
+            self.keys(editor, ":ReviewRevert<CR>")
+            self.wait_for(
+                editor, "vim.fn.readfile(s.root..'/auth.lua')[5] == '    return false'"
+            )
+            self.assertEqual(baseline, path.read_bytes())
+            path.write_bytes(changed)
+            self.lua(editor, "r.refresh({path='auth.lua',group='unstaged'})")
+            self.keys(editor, "5GV17Gr")
+            self.wait_for(
+                editor, "vim.fn.readfile(s.root..'/auth.lua')[17] == '  return token'"
+            )
+            self.assertEqual(baseline, path.read_bytes())
+            self.assertEqual("n", editor.api.get_mode()["mode"])
+            self.assertEqual(
+                baseline,
+                subprocess.check_output(["git", "-C", self.root, "show", ":auth.lua"]),
+            )
+        # The palette enumerates user commands; its selected command retains focus.
+        self.keys(editor, " p")
+        self.wait_for(editor, 'vim.bo.filetype == "fzf"')
+        self.keys(editor, "ReviewRevert$")
+        self.keys(editor, "<CR>")
+        self.wait_for(editor, 'vim.fn.getcmdline() == "ReviewRevert"')
+        self.keys(editor, "<Esc>")
+
+    def test_revert_notifications_batch_by_activity_and_retry_without_drafts(self):
+        editor = self.launch(self.root)
+        changed = Path(self.root, "auth.lua").read_bytes()
+        self.lua(
+            editor,
+            r"""
+            require('rediff.live').stop(s)
+            local system = vim.system
+            _G.sent = {}
+            vim.system = function(argv, opts, callback)
+                if argv[1] ~= 'rediff-amp-live' then return system(argv, opts, callback) end
+                if argv[2] == 'watch' then
+                    _G.stream = opts.stdout
+                    return {kill=function() end}
+                end
+                assert(argv[2] == 'send')
+                table.insert(sent, {payload=require('rediff.feedback').read(argv[#argv]), done=callback})
+            end
+            local sequence = 0
+            function _G.activity(value)
+                sequence = sequence + 1
+                stream(nil, vim.json.encode({version=1,root=s.root,thread='T-discard',
+                    sequence=sequence,state=value,title='Discard test'}) .. '\n')
+            end
+            function _G.ack(status)
+                local call = sent[#sent]
+                call.done({code=status=='failed' and 1 or 0,stderr='',stdout=vim.json.encode({
+                    submission_id=call.payload.submission_id,status=status})})
+            end
+            require('rediff.harness').select(s.root, {name='amp-live',session='T-discard',
+                connection='/fake/discard',capabilities={'activity'}})
+            activity('idle')
+            r.add_comment({file=s.current.path,side='new',snapshot_id=s.current.id,
+                selection=require('rediff.selection').line(s.new_buf,5)}, 'Unsent human note')
+            """,
+        )
+        self.keys(editor, "<Tab>r")
+        self.keys(editor, "r")
+        time.sleep(1)
+        self.assertEqual(0, self.lua(editor, "return #sent"))
+        self.lua(editor, "activity('running')")
+        self.wait_for(editor, "#sent == 1", timeout=3)
+        payload = self.lua(editor, "return sent[1].payload")
+        events = json.loads(payload["message"].split("\n", 1)[1])
+        self.assertEqual(["auth.lua", "auth.lua"], [e["file"] for e in events])
+        self.assertIn("-    return false", events[0]["discarded_patch_excerpt"])
+        self.assertIn("+  return nil", events[1]["discarded_patch_excerpt"])
+        self.assertIn("Re-read the affected files", payload["message"])
+        self.assertEqual([], payload["comments"])
+        self.assertEqual(1, self.lua(editor, "return #s.comments"))
+        self.lua(editor, "ack('failed')")
+        self.wait_for(editor, "not require('rediff.feedback').busy(s.root)")
+        time.sleep(1)
+        self.assertEqual(1, self.lua(editor, "return #sent"))
+        self.keys(editor, ":ReviewRevertFlush<CR>")
+        self.wait_for(editor, "#sent == 2")
+        self.assertEqual(payload, self.lua(editor, "return sent[2].payload"))
+        # A second batch formed during delivery must wait, including after leaving Review.
+        self.lua(
+            editor,
+            "r.refresh({path='removed.lua',group='unstaged'}); "
+            "vim.api.nvim_set_current_win(s.new_win)",
+        )
+        self.keys(editor, "r")
+        time.sleep(1)
+        self.assertEqual(2, self.lua(editor, "return #sent"))
+        self.lua(editor, "ack('accepted'); r.leave()")
+        self.wait_for(editor, "#sent == 3")
+        self.assertEqual(
+            "removed.lua",
+            json.loads(
+                self.lua(editor, "return sent[3].payload.message").split("\n", 1)[1]
+            )[0]["file"],
+        )
+        self.lua(editor, "ack('accepted'); r.open()")
+        self.assertEqual(1, self.lua(editor, "return #s.comments"))
+
+        # Remaining idle still flushes on timeout; it does not require a state event.
+        self.wait_for(editor, "not require('rediff.feedback').busy(s.root)")
+        Path(self.root, "auth.lua").write_bytes(changed)
+        self.lua(
+            editor,
+            "activity('idle'); r.refresh({path='auth.lua',group='unstaged'}); "
+            "vim.api.nvim_set_current_win(s.new_win)",
+        )
+        started = time.monotonic()
+        self.keys(editor, "r")
+        self.wait_for(editor, "#sent == 4")
+        self.assertGreater(time.monotonic() - started, 4)
+        self.lua(editor, "ack('accepted')")
+
+        # Reintroducing the same edit is a new discard, not a transport retry.
+        self.wait_for(editor, "not require('rediff.feedback').busy(s.root)")
+        Path(self.root, "auth.lua").write_bytes(changed)
+        self.lua(
+            editor,
+            "activity('running'); r.refresh({path='auth.lua',group='unstaged'}); "
+            "vim.api.nvim_set_current_win(s.new_win)",
+        )
+        self.keys(editor, "r")
+        self.wait_for(editor, "#sent == 5", timeout=3)
+        self.assertNotEqual(
+            self.lua(editor, "return sent[4].payload.submission_id"),
+            self.lua(editor, "return sent[5].payload.submission_id"),
+        )
+        self.lua(editor, "ack('accepted')")
+
+    def test_local_discard_notifications_survive_restart(self):
+        editor = self.launch(self.root)
+        self.keys(editor, "<Tab>r")
+        try:
+            editor.command("qa!")
+        except EOFError:
+            pass
+        editor.close()
+        self.editors.remove(editor)
+        editor = self.launch(self.root)
+        self.lua(
+            editor,
+            """
+            local system = vim.system
+            require('rediff.feedback').settings = function()
+                return {feedback_command={'discard-test-receiver'}}
+            end
+            vim.system = function(argv, opts, callback)
+                if argv[1] ~= 'discard-test-receiver' then return system(argv, opts, callback) end
+                local payload = require('rediff.feedback').read(argv[#argv])
+                vim.g.discard_payload = payload
+                callback({code=0,stderr='',stdout=vim.json.encode({submission_id=payload.submission_id,status='accepted'})})
+            end
+            require('rediff.harness').select(s.root, {name='custom'})
+            """,
+        )
+        time.sleep(1)
+        self.assertIsNone(editor.vars.get("discard_payload"))
+        self.keys(editor, ":ReviewRevertFlush<CR>")
+        self.wait_for(editor, "vim.g.discard_payload ~= nil")
+        events = json.loads(editor.vars["discard_payload"]["message"].split("\n", 1)[1])
+        self.assertEqual(["auth.lua"], [e["file"] for e in events])
+        self.assertIn("+    return true", events[0]["discarded_patch_excerpt"])
+
+    def test_revert_rejects_unsaved_file_buffer(self):
+        editor = self.launch(self.root)
+        original = Path(self.root, "auth.lua").read_bytes()
+        self.lua(
+            editor,
+            "local buf=vim.fn.bufadd(s.root..'/auth.lua'); vim.fn.bufload(buf); "
+            "vim.api.nvim_buf_set_lines(buf,0,1,false,{'unsaved user work'})",
+        )
+        self.keys(editor, "<Tab>r")
+        self.assertEqual(original, Path(self.root, "auth.lua").read_bytes())
+        self.assertIn("unsaved edits", editor.vars["startup_notice"])
+
     def test_tab_focuses_diff_for_hunk_staging(self):
         editor = self.launch(self.root)
         baseline = subprocess.check_output(

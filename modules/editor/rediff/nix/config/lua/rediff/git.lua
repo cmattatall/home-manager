@@ -191,4 +191,56 @@ function M.stage(root, snapshot, side, line, whole_file)
 	return chosen
 end
 
+-- Reverse only the selected Git hunks, never replace a whole-file snapshot.
+function M.revert(root, snapshot, side, first, last)
+	assert(snapshot.group ~= "buffer", "Refresh to current Git changes before reverting")
+	M.validate(root, snapshot)
+	local patch = snapshot.patch
+	if snapshot.group == "untracked" then
+		-- Git supplies correctly quoted paths and new-file metadata (including mode).
+		local code
+		patch, code = M.run(root, {
+			"diff",
+			"--no-ext-diff",
+			"--no-textconv",
+			"--no-color",
+			"--binary",
+			"--unified=3",
+			"--no-index",
+			"--",
+			"/dev/null",
+			snapshot.path,
+		}, nil, true)
+		assert(code == 1, "No text hunk to revert")
+		-- The patch was read from disk, unlike tracked snapshots' saved patches.
+		M.validate(root, snapshot)
+	end
+	local header, hunks = M.hunks(patch)
+	-- A text-hunk action must not discard a separate executable-bit change.
+	header = vim.tbl_filter(function(line)
+		return not line:match("^old mode ") and not line:match("^new mode ")
+	end, header)
+	local chosen, parts = {}, { table.concat(header, "\n") }
+	for _, hunk in ipairs(hunks) do
+		local start = math.max(1, hunk[side .. "_start"])
+		local finish = start + math.max(1, hunk[side .. "_count"]) - 1
+		if first <= finish and (last or first) >= start then
+			table.insert(chosen, hunk)
+			table.insert(parts, table.concat(hunk.lines, "\n"))
+		end
+	end
+	assert(#chosen > 0, "Move the cursor into a Git hunk to revert it")
+	patch = table.concat(parts, "\n") .. "\n"
+	local args = { "apply", "--reverse", "--whitespace=nowarn" }
+	if snapshot.group == "staged" then
+		assert(
+			worktree(root, snapshot.path) == snapshot.new,
+			"File has unstaged edits; unstage the hunk before reverting it"
+		)
+		table.insert(args, "--index")
+	end
+	M.run(root, args, patch)
+	return chosen
+end
+
 return M

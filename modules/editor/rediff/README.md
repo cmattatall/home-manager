@@ -196,6 +196,12 @@ PATH precedence, and integration with an existing home configuration.
    `:harness open` shows an agent terminal for typing to it directly.
 5. Review the next edits: violet **◆** means changed/unseen, cyan **◇** means
    changed/seen. **s** stages a hunk; **S** stages a file. **Space R** refreshes.
+6. **r** discards the hunk in a source pane; visual selection + **r** discards
+   all intersecting Git hunks. `:ReviewRevert` is also in **Space p**'s command
+   palette. Agent notifications batch for 750ms while active or 5s while idle,
+   and ask it to re-read the affected files. `:ReviewRevertFlush` sends now or
+   retries a failed batch. Staged hunks revert in both index and worktree;
+   files with unstaged edits must be unstaged first.
 
 For a live Amp session, install the readiff plugin with `:harness install amp`,
 or opt into `programs.rediff.ampPlugin.enable` in Home Manager. Reload Amp's

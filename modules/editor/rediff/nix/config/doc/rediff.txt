@@ -31,6 +31,7 @@ REVIEW QUICK REFERENCE
   Ctrl+Shift+] / [    Next/previous unseen hunk within the current Git group
   :fs / :fu           Focus STAGED / UNSTAGED
   s / S               Stage/unstage hunk / whole file
+  r / visual r        Revert hunk / selected hunks; batch-notify the agent
   i                   Edit annotation here, or create one
   v / V / Ctrl-v, a   Annotate a character / line / block selection
   @ / :al             Search annotations and jump to one
@@ -229,6 +230,31 @@ the index, and reject stale snapshots. Inside ordinary files/notes, s/S still
 edit text. An all-green new file is one hunk: s stages it and advances to the next
 unstaged hunk (or unstages it from STAGED). Empty/deleted files need S; renames
 use delete/add pairs.
+
+r in either source pane immediately discards the Git hunk at the cursor.
+Select a range with v/V/Ctrl-v then r to discard all Git hunks it intersects,
+including their context lines. :ReviewRevert does the same and accepts a line
+range; find it in Space p / :Commands. This is not partial-line deletion.
+UNSTAGED reverses changes on disk, leaving the index alone. STAGED reverses
+the selected hunks in both index and worktree, but refuses files with unstaged
+edits: unstage first in that case. New files are one hunk (discard deletes them);
+discarding a deleted-file hunk restores it. Empty/mode-only files have no text
+hunk. Unsaved file buffers, stale snapshots and historical annotation views
+block the action. Existing notes keep their original snapshots.
+
+Discard notifications are separate from annotation drafts. They batch for 750ms
+while the connected agent is running (also unknown/offline), or 5s while idle.
+The window starts at the first discard; further discards do not extend it.
+An agent becoming active shortens an idle window. A delivery already in flight
+finishes first. Notifications tell the agent which hunks were already discarded
+and to re-read the files instead of reapplying them.
+
+Pending discards survive leaving Review or restarting the editor; reopening
+Review resumes pending batches. Failed/uncertain sends are not retried silently.
+:ReviewRevertFlush sends now or explicitly retries the oldest pending batch;
+:ReviewOutbox contains its saved context and receipts. Batches stay bound to the
+original harness; reselect it before flushing after switching agents. Discards
+made with no harness stay local until you connect one and explicitly flush.
 
 After staging, selection advances within the original group. Whole-file actions
 use the previous file at the end; hunk actions wrap to the next remaining hunk.
@@ -522,6 +548,8 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
   :ReviewRefresh              Refresh snapshots and file list
   :ReviewStage hunk|file       Stage selected hunk/file
   :ReviewUnstage hunk|file     Unstage selected hunk/file
+  :[range]ReviewRevert         Discard selected Git hunks and notify the agent
+  :ReviewRevertFlush           Flush/retry pending discard notifications
   :ReviewComments             Find annotations (same as :Annotations list)
   :Annotations list|next|prev  Find notes / jump to next/previous
   :Annotations new            Create a separate note at the cursor
