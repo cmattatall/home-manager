@@ -9,6 +9,7 @@ local tree_ns = api.nvim_create_namespace("rediff.tree")
 local active_ns = api.nvim_create_namespace("rediff.active-file")
 local hunk_ns = api.nvim_create_namespace("rediff.hunk")
 local annotation_ns = api.nvim_create_namespace("rediff.annotations")
+local composer_ns = api.nvim_create_namespace("rediff.composer")
 local reviews = {} -- Pending annotations belong to this editor process, not the next launch.
 local saved_guicursor
 local status_highlights = {
@@ -1265,6 +1266,11 @@ local function release_composer(s)
 	end
 	s.draft = nil
 	s.composer, s.composer_win = nil, nil
+	for _, source in pairs({ s.old_buf, s.new_buf }) do
+		if api.nvim_buf_is_valid(source) then
+			api.nvim_buf_clear_namespace(source, composer_ns, 0, -1)
+		end
+	end
 	save(s)
 	api.nvim_buf_delete(buf, { force = true })
 end
@@ -1277,6 +1283,25 @@ local function composer_config(s)
 	local spans = anchor.selection.spans
 	local last = spans[#spans].line
 	local height = math.max(1, math.min(6, api.nvim_win_get_height(win) - 4))
+	-- The editable float occupies virtual rows, never the source text below it.
+	-- Keep this separate from saved notes so refreshing them preserves the gap.
+	local padding = {}
+	for _ = 1, height + 2 do
+		table.insert(padding, { { "" } })
+	end
+	local function reserve(buf, line)
+		api.nvim_buf_set_extmark(buf, composer_ns, math.max(0, math.min(line, api.nvim_buf_line_count(buf)) - 1), 0, {
+			id = 1,
+			virt_lines = padding,
+			virt_lines_above = line < 1,
+			-- Sort before saved notes at the same position, even after refresh.
+			right_gravity = false,
+		})
+	end
+	reserve(anchor.side == "old" and s.old_buf or s.new_buf, last)
+	if s.old_win then
+		reserve(anchor.side == "old" and s.new_buf or s.old_buf, opposite_line(last, anchor.side, s.diff.changes))
+	end
 	local rows = api.nvim_win_text_height(win, { start_row = last - 1, start_vcol = 0, end_row = last - 1 }).all
 	local pos = vim.fn.screenpos(win, last, 1)
 	local bottom = api.nvim_win_get_position(win)[1] + api.nvim_win_get_height(win)

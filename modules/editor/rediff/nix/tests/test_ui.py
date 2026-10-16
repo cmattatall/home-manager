@@ -2430,11 +2430,13 @@ func greeting() string {
         self.assertEqual([3, 16], [item["lnum"] for item in editor.funcs.getqflist()])
 
     def test_annotation_editor_is_anchored_below_source(self):
+        path = Path(self.root, "auth.lua")
+        path.write_text("-- inserted line one\n-- inserted line two\n" + path.read_text())
         editor = self.launch(self.root)
         index = subprocess.check_output(["git", "-C", self.root, "write-tree"])
-        original = Path(self.root, "auth.lua").read_bytes()
+        original = path.read_bytes()
 
-        def below(side, last):
+        def below(side, last, opposite_last):
             geometry = self.lua(
                 editor,
                 f"""
@@ -2461,11 +2463,32 @@ func greeting() string {
             self.assertEqual(col - 1, pos[1])
             self.assertLessEqual(pos[1] + width + 2, source[1] + sw)
             self.assertLessEqual(pos[0] + height + 2, source[0] + sh)
+            following = self.lua(
+                editor,
+                f"return vim.fn.screenpos(s.{side}_win, {last + 1}, 1).row",
+            )
+            if sh > 20:
+                self.assertGreater(following, 0, "Following source must remain visible")
+            if following > 0:
+                self.assertGreater(
+                    following, pos[0] + height + 2,
+                    "Source text after the anchor must be below the entire panel",
+                )
+            if layout == "split":
+                opposite = "old" if side == "new" else "new"
+                self.assertEqual(
+                    following,
+                    self.lua(
+                        editor,
+                        f"return vim.fn.screenpos(s.{opposite}_win, {opposite_last + 1}, 1).row",
+                    ),
+                    "Opening a panel must keep matching source lines aligned",
+                )
 
-        for layout, side, line, opening, last in (
-            ("split", "new", 5, "i", 5),
-            ("split", "old", 8, "Vkka", 8),
-            ("merged", "new", 17, "i", 17),
+        for layout, side, line, opening, last, opposite_last in (
+            ("split", "new", 7, "i", 7, 5),
+            ("split", "old", 8, "Vkka", 8, 10),
+            ("merged", "new", 19, "i", 19, None),
         ):
             with self.subTest(layout=layout, side=side):
                 editor.command("View " + layout)
@@ -2474,7 +2497,7 @@ func greeting() string {
                 panes = editor.eval("winlayout()")
                 height = editor.current.window.height
                 self.keys(editor, opening + "Review this range<Esc>")
-                below(side, last)
+                below(side, last, opposite_last)
                 self.assertEqual(panes, editor.eval("winlayout()"))
                 self.assertEqual(
                     height,
@@ -2486,7 +2509,7 @@ func greeting() string {
                 if layout == "merged":
                     editor.ui_try_resize(79, 14)
                     pump(editor)
-                    below(side, last)
+                    below(side, last, opposite_last)
                     self.assertEqual(["Review this range"], editor.current.buffer[:])
                     self.assertTrue(
                         self.lua(
@@ -2500,6 +2523,15 @@ func greeting() string {
                 self.keys(editor, ":q<CR>")
                 self.wait_for(editor, "s.composer == nil")
                 self.assertEqual(0, self.lua(editor, "return #s.comments"))
+                self.assertEqual(
+                    1,
+                    self.lua(
+                        editor,
+                        f"return vim.fn.screenpos(s.{side}_win, {last + 1}, 1).row "
+                        f"- vim.fn.screenpos(s.{side}_win, {last}, 1).row",
+                    ),
+                    "Closing the panel must remove its reserved space",
+                )
                 self.assertTrue(
                     self.lua(
                         editor, f"return vim.api.nvim_get_current_win() == s.{side}_win"
@@ -2507,8 +2539,25 @@ func greeting() string {
                 )
         self.keys(editor, "i<Esc>gg0cGSaved note<Esc>:w<CR>")
         self.wait_for(editor, "s.composer == nil")
+        editor.ui_try_resize(132, 32)
+        pump(editor)
         self.keys(editor, "iUnsaved edit<Esc>")
         self.assertIsNotNone(self.lua(editor, "return s.composer"))
+        editor.command("redraw!")
+        self.assertIn(
+            "Saved note",
+            self.lua(
+                editor,
+                """
+                local cfg = vim.api.nvim_win_get_config(s.composer_win)
+                local row = vim.api.nvim_win_get_position(s.composer_win)[1] + cfg.height + 3
+                local text = ''
+                for col = 1, vim.o.columns do text = text .. vim.fn.screenstring(row, col) end
+                return text
+                """,
+            ),
+            "Reopening a note must push its saved text below the panel too",
+        )
         self.keys(editor, ":q<CR>")
         self.wait_for(editor, "s.composer == nil")
         self.assertEqual("Saved note", self.lua(editor, "return s.comments[1].text"))
