@@ -338,6 +338,12 @@ TUI running. Cmd-W also accepts other window commands, such as h/j/k/l. Ctrl-W
 passes through to the TUI for word deletion, including repeated presses.
 Ctrl-\ Ctrl-N enters Terminal-Normal mode; :hide hides the pane; :ho brings it back.
 
+Amp text copying uses Neovim's clipboard provider via terminal OSC 52 writes,
+not the SSH server's desktop clipboard. Copy-only xclip/wl-copy/pbcopy wrappers
+are scoped to Amp panes, not ordinary shells or Neovim's own PATH. Over SSH,
+the host terminal must support clipboard writes (directly or through tmux).
+Reading the local clipboard from the remote process is not enabled.
+
 In Review, press Escape then type :w (or :write) from its harness pane to send
 the saved annotation batch, just as from the tree or diff panes. This shortcut
 applies only to the active Review's own worktree, not to ordinary terminals.

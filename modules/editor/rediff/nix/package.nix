@@ -99,6 +99,11 @@ stdenv.mkDerivation {
       --add-flags "$out/share/rediff/amp_live.py" --add-flags '--provider omp'
     makeWrapper ${python3}/bin/python3 "$out/bin/rediff-live" \
       --add-flags "$out/share/rediff/amp_live.py" --add-flags '--provider all'
+    cp ${./clipboard.py} "$out/share/rediff/clipboard.py"
+    for tool in xclip wl-copy pbcopy; do
+      makeWrapper ${python3}/bin/python3 "$out/share/rediff/clipboard-bin/$tool" \
+        --add-flags "$out/share/rediff/clipboard.py" --add-flags "$tool"
+    done
     mkdir -p "$out/share/rediff/amp"
     cp ${../plugins/amp/readiff.ts} "$out/share/rediff/amp/readiff.ts"
     cp ${../plugins/amp/install.sh} "$out/share/rediff/amp/install.sh"

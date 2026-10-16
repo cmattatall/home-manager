@@ -5520,6 +5520,52 @@ class EditorUI(unittest.TestCase):
             "table.concat(vim.api.nvim_buf_get_lines(0,0,-1,false),'\\n'):find('Reply: typing still works',1,true) ~= nil",
         )
 
+    def test_amp_clipboard_commands_copy_through_neovim(self):
+        editor = self.launch(self.root, before_init="""
+            vim.g.clipboard = {
+                name = 'test clipboard', cache_enabled = 0,
+                copy = {
+                    ['+'] = function(lines, regtype) vim.g.copied = {lines, regtype} end,
+                    ['*'] = function() error('unexpected primary selection') end,
+                },
+                paste = { ['+'] = function() return {{}, 'v'} end,
+                          ['*'] = function() return {{}, 'v'} end },
+            }
+        """)
+        fixture = """
+import json, subprocess, sys
+print('CLIPBOARD READY', flush=True)
+for line in sys.stdin:
+    command, text = json.loads(line)
+    result = subprocess.run(command, input=text.encode(), capture_output=True)
+    print('RESULT ' + command[0] + ' ' + json.dumps([result.returncode, result.stdout.decode(), result.stderr.decode()]), flush=True)
+"""
+        # A regression must fail rather than touch the test runner's real clipboard.
+        desktop = Path(self.directory.name, "desktop-tools")
+        desktop.mkdir()
+        for name in ("xclip", "wl-copy", "pbcopy"):
+            tool = desktop / name
+            tool.write_text("#!/bin/sh\nexit 93\n")
+            tool.chmod(0o755)
+        editor.exec_lua("vim.env.PATH = ... .. ':' .. vim.env.PATH", str(desktop))
+        parent_path = editor.exec_lua("return vim.env.PATH")
+        job = editor.exec_lua(
+            "local h = require('rediff.harness'); local root = require('rediff.review').state.root; "
+            "h.get(root).provider = 'amp'; return h.launch(root, ...)",
+            [sys.executable, "-u", "-c", fixture],
+        )
+        self.wait_for(editor, "table.concat(vim.api.nvim_buf_get_lines(0,0,-1,false),'\\n'):find('CLIPBOARD READY',1,true) ~= nil")
+        for command in (["xclip", "-selection", "clipboard"], ["wl-copy"], ["pbcopy"]):
+            with self.subTest(command=command):
+                editor.exec_lua("vim.g.copied = nil")
+                value = command[0] + ': café\nsecond\tline\n'
+                editor.funcs.chansend(job, json.dumps([command, value]) + "\n")
+                self.wait_for(editor, "vim.g.copied ~= nil")
+                self.assertEqual([value.split("\n"), "v"], editor.exec_lua("return vim.g.copied"))
+                self.wait_for(editor, f"table.concat(vim.api.nvim_buf_get_lines(0,0,-1,false),'\\n'):find('RESULT {command[0]} [0, \"\", \"\"]',1,true) ~= nil")
+        self.assertEqual(parent_path, editor.exec_lua("return vim.env.PATH"))
+        self.assertEqual("t", editor.api.get_mode()["mode"])
+
     def test_amp_ctrl_l_sends_escape_in_input_and_normal_modes(self):
         log = Path(self.directory.name, "harness-input")
         fixture = """

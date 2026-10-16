@@ -402,6 +402,11 @@ Press **Ctrl-L twice** to interrupt the agent after running `:harness install am
 returns directly to the previous editor window, leaving the harness running.
 **Cmd-W** also accepts other window commands such as **h/j/k/l**. **Ctrl-W**
 passes through to the harness for word deletion, including repeated presses.
+Amp's text-copy commands use Neovim's clipboard provider instead of the remote
+desktop clipboard. Only Amp panes receive the copy-only `xclip`, `wl-copy`, and
+`pbcopy` wrappers; ordinary shells and Neovim's own PATH are unchanged. Over SSH,
+Neovim needs a working terminal clipboard provider (OSC 52 or tmux forwarding).
+This does not enable reading your local clipboard from the remote Amp process.
 Toggling Review with **Space r** moves an open harness pane between Review and
 editing, using the same window, process, and terminal buffer. Hiding the pane in
 either mode keeps it hidden across toggles until **:ho** reopens it.

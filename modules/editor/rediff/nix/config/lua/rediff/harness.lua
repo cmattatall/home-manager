@@ -437,6 +437,12 @@ function M.launch(root, argv, target)
 	}) do
 		env[name] = nil
 	end
+	if owned.provider == "amp" then
+		-- Copy through this Neovim terminal's clipboard provider, not xclip or
+		-- wl-copy on an SSH server. Keep these wrappers out of the editor's PATH
+		-- so its own clipboard provider cannot recursively invoke them.
+		env.PATH = vim.env.REDIFF_RUNTIME .. "/clipboard-bin:" .. env.PATH
+	end
 	local job = vim.fn.jobstart(argv, {
 		cwd = root,
 		term = true,
