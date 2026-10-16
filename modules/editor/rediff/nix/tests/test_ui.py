@@ -5520,6 +5520,51 @@ class EditorUI(unittest.TestCase):
             "table.concat(vim.api.nvim_buf_get_lines(0,0,-1,false),'\\n'):find('Reply: typing still works',1,true) ~= nil",
         )
 
+    def test_amp_ctrl_l_sends_escape_in_input_and_normal_modes(self):
+        log = Path(self.directory.name, "harness-input")
+        fixture = """
+import os, sys, tty
+tty.setraw(0)
+with open(sys.argv[1], 'wb', buffering=0) as log:
+    os.write(1, b'HARNESS READY')
+    while True:
+        data = os.read(0, 1024)
+        if not data: break
+        log.write(data)
+"""
+        editor = self.launch(self.root)
+        for provider in ("amp", "claude", "omp"):
+            editor.exec_lua(
+                "local h = require('rediff.harness'); local root = require('rediff.review').state.root; "
+                "local provider, argv = ...; h.get(root).provider = provider; h.launch(root, argv)",
+                provider,
+                [sys.executable, "-u", "-c", fixture, str(log)],
+            )
+            self.wait_for(
+                editor,
+                "table.concat(vim.api.nvim_buf_get_lines(0,0,-1,false),'\\n'):find('HARNESS READY',1,true) ~= nil",
+            )
+            buf = editor.current.buffer.number
+            self.keys(editor, "<C-l>")
+            expected = b"\x1b" if provider == "amp" else b"\x0c"
+            self.assertEqual(expected, log.read_bytes(), provider)
+            self.assertEqual("t", editor.api.get_mode()["mode"])
+            self.keys(editor, "<Esc><Esc>")
+            self.assertEqual("nt", editor.api.get_mode()["mode"])
+            self.assertEqual(expected, log.read_bytes(), "Escape belongs to Neovim")
+            if provider == "amp":
+                self.keys(editor, "<C-l><C-l>")
+                expected += b"\x1b\x1b"
+                self.assertEqual(expected, log.read_bytes())
+                self.assertEqual("nt", editor.api.get_mode()["mode"])
+            self.keys(editor, "i<C-l><C-l>x")
+            expected += (b"\x1b\x1bx" if provider == "amp" else b"\x0c\x0cx")
+            self.assertEqual(expected, log.read_bytes(), provider)
+            self.assertEqual(buf, editor.current.buffer.number)
+            self.assertEqual("t", editor.api.get_mode()["mode"])
+            self.lua(editor, "require('rediff.harness').stop(s.root)")
+            pump(editor)
+
     def test_harness_wheel_keeps_live_view_and_forwards_tui_mouse_events(self):
         import sys
 

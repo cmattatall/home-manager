@@ -41,9 +41,9 @@ return function(root, equal, fails, keys)
 		local bundled = vim.env.REDIFF_RUNTIME .. "/amp/readiff.ts"
 		equal(vim.fn.readfile(bundled), vim.fn.readfile(plugin), "Editor installs its exact bundled plugin")
 		equal(
-			"ctrl+l",
+			{ "ctrl+l", "esc esc" },
 			vim.json.decode(table.concat(vim.fn.readfile(install_home .. "/.config/amp/settings.json"), "\n"))["amp.keymap"]["thread.interrupt"],
-			"Harness install configures Amp interruption away from Escape"
+			"Harness install supports native and editor-translated interrupt keys"
 		)
 		vim.fn.delete(plugin)
 		assert(vim.uv.fs_symlink(bundled, plugin))

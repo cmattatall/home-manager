@@ -14,7 +14,7 @@ python3 - "$settings" <<'PY'
 import json, sys
 from pathlib import Path
 path = Path(sys.argv[1])
-assert json.loads(path.read_text()) == {"amp.keymap": {"thread.interrupt": "ctrl+l"}}
+assert json.loads(path.read_text()) == {"amp.keymap": {"thread.interrupt": ["ctrl+l", "esc esc"]}}
 path.write_text(json.dumps({"amp.gauge": "cost", "amp.keymap": {
     "thread.interrupt": ["esc esc", "ctrl+k"], "thread.copyURL": "<leader> u"
 }}))
@@ -32,7 +32,21 @@ import json, sys
 from pathlib import Path
 assert json.loads(Path(sys.argv[1]).read_text()) == {
     "amp.gauge": "cost", "amp.keymap": {
-        "thread.interrupt": "ctrl+l", "thread.copyURL": "<leader> u"
+        "thread.interrupt": ["ctrl+l", "esc esc"], "thread.copyURL": "<leader> u"
+    }
+}
+# An installation from the old editor needs Escape restored too.
+settings = json.loads(Path(sys.argv[1]).read_text())
+settings["amp.keymap"]["thread.interrupt"] = "ctrl+l"
+Path(sys.argv[1]).write_text(json.dumps(settings))
+PY
+bash "$installer"
+python3 - "$settings" <<'PY'
+import json, sys
+from pathlib import Path
+assert json.loads(Path(sys.argv[1]).read_text()) == {
+    "amp.gauge": "cost", "amp.keymap": {
+        "thread.interrupt": ["ctrl+l", "esc esc"], "thread.copyURL": "<leader> u"
     }
 }
 PY

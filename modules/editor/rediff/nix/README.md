@@ -395,8 +395,10 @@ creates and switches to the new Review, then starts a fresh interactive `amp` or
 Install/authenticate the CLI separately. **Escape** returns control to Neovim in
 the same pane without forwarding Escape to the harness; **i** resumes harness input.
 Then **Cmd-W + arrow** switches panes, or **:hide** hides the pane without stopping
-the process. In Amp input, **Ctrl-L** interrupts the agent after running
-`:harness install amp`. **Cmd-W p**
+the process. In an Amp pane, **Ctrl-L** sends Escape to Amp to dismiss a menu,
+picker, or dialog, in both input and Terminal-Normal modes without changing modes.
+Press **Ctrl-L twice** to interrupt the agent after running `:harness install amp`
+(rerun it if installed with an older editor). **Cmd-W p**
 returns directly to the previous editor window, leaving the harness running.
 **Cmd-W** also accepts other window commands such as **h/j/k/l**. **Ctrl-W**
 passes through to the harness for word deletion, including repeated presses.
@@ -518,10 +520,12 @@ Without Home Manager, install directly from the editor:
 ```
 
 This asks for confirmation before installing the bundled **readiff plugin**
-(not the Amp CLI) and setting **Ctrl-L** as Amp's interrupt shortcut instead of
-**Esc Esc**. It merges `amp.keymap.thread.interrupt = "ctrl+l"` into
+(not the Amp CLI) and enabling **Ctrl-L** and **Esc Esc** as Amp's interrupt shortcuts.
+It merges `amp.keymap.thread.interrupt = ["ctrl+l", "esc esc"]` into
 `~/.config/amp/settings.json`, preserving other settings and keybindings. This
-affects all Amp sessions for this user, not only embedded ones. Invalid JSON and
+affects all Amp sessions for this user, not only embedded ones. In an embedded Amp
+pane, Neovim translates Ctrl-L to Escape, so one press dismisses UI and two
+interrupt work. Standalone Amp retains single Ctrl-L interruption. Invalid JSON and
 managed settings symlinks are left untouched and installation stops.
 Cancel is the default. No Git
 repository is required. With a selected live Amp target, the confirmation also

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Install the Amp plugin and its interrupt key. The editor is installed with Nix.
+# Install the Amp plugin and its interrupt keys. The editor is installed with Nix.
 set -euo pipefail
 
 case "${1:-}" in
     --help|-h)
         echo "Usage: $0"
         echo "Installs readiff for this user; backs up the old rediff plugin; never reloads Amp."
-        echo "Sets amp.keymap thread.interrupt to ctrl+l, preserving other settings. Requires Python 3."
+        echo "Sets amp.keymap thread.interrupt to ctrl+l and esc esc, preserving other settings. Requires Python 3."
         exit 0 ;;
 esac
 if [ "$#" -ne 0 ]; then echo "Unexpected argument: $1" >&2; exit 2; fi
@@ -46,8 +46,11 @@ try:
     keymap = settings.setdefault("amp.keymap", {})
     if not isinstance(keymap, dict):
         raise ValueError("amp.keymap must be a JSON object")
-    if keymap.get("thread.interrupt") != "ctrl+l":
-        keymap["thread.interrupt"] = "ctrl+l"
+    # Neovim sends Escape for Ctrl-L so Amp's dialogs handle it as well.
+    # Keep Ctrl-L for standalone Amp and older editor versions.
+    interrupt = ["ctrl+l", "esc esc"]
+    if keymap.get("thread.interrupt") != interrupt:
+        keymap["thread.interrupt"] = interrupt
         fd, temporary = tempfile.mkstemp(prefix=".readiff-keymap-", dir=path.parent)
         try:
             with os.fdopen(fd, "w") as output:
@@ -69,6 +72,7 @@ if [ -f "$legacy" ]; then
 fi
 mv -f "$temporary" "$destination"
 printf 'Installed %s\n' "$destination"
-printf 'Configured Ctrl+L to interrupt Amp (replaces Esc Esc); other settings and keybindings preserved.\n'
+printf 'Configured Ctrl+L and Esc Esc to interrupt Amp; other settings and keybindings preserved.\n'
+printf 'In the Amp pane, Ctrl+L sends Escape: once to dismiss/back, twice to interrupt.\n'
 printf 'Restart Amp or reload its plugins, then run :harness connect amp in rediff.\n'
 printf 'No other plugins were changed. No reload was performed.\n'

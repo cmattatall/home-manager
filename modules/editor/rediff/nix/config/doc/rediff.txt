@@ -238,9 +238,10 @@ Amp file events and Space R still work with polling disabled.
 AGENT HARNESSES                                               *rediff-harness*
 
 For a running Amp session, use :harness install amp once, then :harness connect amp.
-The installer also sets thread.interrupt to Ctrl-L in ~/.config/amp/settings.json,
-replacing Esc Esc for all Amp sessions for this user. Other settings/keybindings
-are preserved. Home Manager-managed settings must be updated in Home Manager.
+The installer enables Ctrl-L and Esc Esc for thread.interrupt in
+~/.config/amp/settings.json for all Amp sessions for this user. Rerun it after
+upgrading from the Ctrl-L-only setup. Other settings/keybindings are preserved.
+Home Manager-managed settings must be updated in Home Manager.
 For oh-my-pi (OMP), use :harness install omp, then /restart in OMP and
 :harness connect omp. Home Manager can manage the CLI (programs.harnesses.omp.enable)
 and extension (programs.rediff.ompPlugin.enable) independently. Upstream pi is not
@@ -327,8 +328,11 @@ sending Escape to the harness. Repeated Escape does not interrupt the agent.
 With the harness pane focused, the mouse wheel scrolls the harness UI in both
 input and Terminal-Normal modes, provided the harness enables mouse reporting.
 Scrolling in Terminal-Normal mode leaves Neovim in control; i still resumes input.
-Use Cmd-W then an arrow to switch panes, or i to resume harness input. In Amp
-input, Ctrl-L interrupts the agent after :harness install amp configures it.
+Use Cmd-W then an arrow to switch panes, or i to resume harness input. In Amp panes,
+Ctrl-L sends Escape to dismiss menus, pickers, and dialogs, in both input and
+Terminal-Normal modes without changing modes. Press Ctrl-L twice to interrupt
+the agent after :harness install amp configures it. Standalone Amp still accepts
+single Ctrl-L to interrupt. Other harnesses keep their native Ctrl-L behavior.
 Cmd-W p returns to the previous editor window from Terminal mode, leaving the
 TUI running. Cmd-W also accepts other window commands, such as h/j/k/l. Ctrl-W
 passes through to the TUI for word deletion, including repeated presses.

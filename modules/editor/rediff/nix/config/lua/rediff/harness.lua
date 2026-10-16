@@ -325,7 +325,7 @@ local function terminal_pane(root, buf)
 	vim.wo.winfixheight = true
 	vim.wo.scrolloff = 0
 	vim.wo.winbar = " Harness · "
-		.. (vim.b[buf].rediff_harness_provider == "amp" and "Ctrl-L: cancel work · " or "")
+		.. (vim.b[buf].rediff_harness_provider == "amp" and "Ctrl-L: back · twice: interrupt · " or "")
 		.. "Esc: Neovim · i: input · Cmd-W: panes "
 end
 
@@ -378,6 +378,13 @@ function M.launch(root, argv, target)
 		"<C-\\><C-n>",
 		{ buffer = owned.buf, nowait = true, desc = "Return control to Neovim without interrupting harness" }
 	)
+	if owned.provider == "amp" then
+		vim.keymap.set({ "n", "t" }, "<C-l>", function()
+			-- Send a literal Escape, bypassing Neovim's mode-switch mapping.
+			-- Amp handles this in menus/dialogs too, unlike thread.interrupt.
+			vim.fn.chansend(vim.b[owned.buf].terminal_job_id, "\27")
+		end, { buffer = owned.buf, desc = "Amp: dismiss/back (twice to interrupt)" })
+	end
 	for _, direction in ipairs({ "Up", "Down", "Left", "Right" }) do
 		local key = "<ScrollWheel" .. direction .. ">"
 		vim.keymap.set("n", key, function()
@@ -1150,7 +1157,8 @@ function M.install(provider)
 	local prompt = "Install the bundled readiff Amp plugin at "
 		.. directory
 		.. "readiff.ts?\n"
-		.. "Set Amp's interrupt shortcut to Ctrl+L instead of Esc Esc in ~/.config/amp/settings.json.\n"
+		.. "Enable Ctrl+L and Esc Esc to interrupt Amp in ~/.config/amp/settings.json.\n"
+		.. "In the Amp pane, Ctrl+L sends Escape: once to go back, twice to interrupt.\n"
 		.. "This does not install the Amp CLI.\n"
 		.. (
 			reload and ("Ask Amp thread " .. target.session .. " to reload its plugins after installation?")
