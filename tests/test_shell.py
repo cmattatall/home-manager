@@ -228,6 +228,37 @@ class ZshStartupTest(StartupTestBase):
 
 
 class HomeManagerAliasTest(StartupTestBase):
+    def test_hm_pull_updates_only_the_pin_and_preserves_failed_switch_for_retry(self) -> None:
+        old, new = "a" * 40, "b" * 40
+        original = f'let\n  unrelated = "{old}";\n  source = "git+https://example.test"\n    + "?rev={old}"\n; in {{}}\n'
+        _write_stub(self.stub_dir, "git", f'printf "{new}\\trefs/heads/main\\n"')
+        _write_stub(self.stub_dir, "home-manager", 'printf "<%s>\\n" "$@"; exit 7')
+        config = self.home / "home.nix"
+        for shell in filter(None, [BASH, ZSH]):
+            with self.subTest(shell=shell):
+                config.write_text(original)
+                result = self.run_shell(shell, self.ordinary_dir, shell, "hm_pull\n")
+                self.assertEqual(result.returncode, 7, result.stderr)
+                self.assertEqual(config.read_text(), original.replace(f"?rev={old}", f"?rev={new}"))
+                self.assertEqual(result.stdout.splitlines(), [
+                    "<switch>", "<-b>", "<backup>", "<-f>", f"<{config}>",
+                ])
+
+    def test_hm_pull_rejects_invalid_revisions_and_ambiguous_pins(self) -> None:
+        _write_stub(self.stub_dir, "home-manager", 'echo unexpected-activation; exit 0')
+        config = self.home / "home.nix"
+        pin = '  + "?rev=' + "a" * 40 + '"\n'
+        for shell in filter(None, [BASH, ZSH]):
+            for revision, original in (("bad-revision", pin), ("b" * 40, pin * 2)):
+                with self.subTest(shell=shell, revision=revision, original=original):
+                    config.write_text(original)
+                    _write_stub(self.stub_dir, "git", f'printf "{revision}\\trefs/heads/main\\n"')
+                    result = self.run_shell(shell, self.ordinary_dir, shell, "hm_pull\n")
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("hm_pull:", result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertEqual(config.read_text(), original)
+
     def test_hm_forwards_arguments_and_exit_status(self) -> None:
         _write_stub(self.stub_dir, "home-manager", 'printf "<%s>\\n" "$@"; exit 7')
         for shell in filter(None, [BASH, ZSH]):

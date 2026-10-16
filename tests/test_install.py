@@ -69,12 +69,23 @@ NIX_IMPL = """
         exit 0 ;;
     esac
     log nix "$0"
+    case " $* " in
+      *" eval "*)
+        if [ -n "${HM_REVISION:-}" ]; then
+            [ -z "${MOCK_GENERATE_FAIL:-}" ] || exit 1
+            exec "$REAL_NIX" "$@"
+        fi
+        [ -z "${MOCK_RESOLVE_FAIL:-}" ] || exit 1
+        printf '%s\\n' "$MOCK_REVISION"
+        exit 0 ;;
+    esac
     printf '%s\\0' "$@" >"$MOCK_DIR/nix-build.args"
     {
       echo "HM_FLAKE_DIR=$HM_FLAKE_DIR"
       echo "HM_PROFILE=$HM_PROFILE"
       echo "HM_USERNAME=$HM_USERNAME"
       echo "HM_HOME=$HM_HOME"
+      echo "HM_CONFIG_FILE=$HM_CONFIG_FILE"
     } >"$MOCK_DIR/nix-build.env"
     [ -z "${MOCK_BUILD_FAIL:-}" ] || exit 1
     out=
@@ -126,6 +137,8 @@ class Sandbox:
             "MOCK_ARCH": "x86_64",
             "MOCK_LOADSTATE": "not-found",
             "MOCK_GENERATION": "gen-a",
+            "MOCK_REVISION": "1234567890abcdef" * 2 + "12345678",
+            "REAL_NIX": shutil.which("nix") or "",
         }
 
     def _script(self, path: Path, body: str):
@@ -430,51 +443,85 @@ class InstallHomeManagerTest(SandboxTest):
         self.assertEqual(self.sb.calls("activate"), [])
 
 
-@unittest.skipUnless(BASH, "bash is not installed")
-class SetupHomeManagerTest(unittest.TestCase):
-    @unittest.skipUnless(shutil.which("nix-instantiate"), "Nix is not installed")
-    def test_hm_commands_update_the_pin_and_preserve_switch_arguments(self):
-        revision = "1234567890abcdef" * 2 + "12345678"
-        for shell in filter(None, [BASH, shutil.which("zsh")]):
-            with self.subTest(shell=shell), tempfile.TemporaryDirectory(prefix="hm commands ") as directory:
-                home = Path(directory)
-                env = {**os.environ, "HOME": str(home), "XDG_CONFIG_HOME": str(home / ".config")}
-                subprocess.run(
-                    [BASH, str(REPO / "scripts/install-nix-home.sh")],
-                    env=env, capture_output=True, text=True, check=True, timeout=10,
-                )
-                config = home / "home.nix"
-                original = config.read_text()
-                init = json.loads(subprocess.check_output(
-                    ["nix-instantiate", "--eval", "--strict", "--json", "--expr",
-                     f'(import (builtins.toPath {json.dumps(str(config))})).programs.bash.initExtra'],
-                    text=True, timeout=20,
-                ))
-                script = (
-                    'if [ -n "${BASH_VERSION:-}" ]; then shopt -s expand_aliases; fi\n'
-                    'home-manager() { printf "<%s>\\n" "$@"; }\n'
-                    f'git() {{ printf "{revision}\\trefs/heads/main\\n"; }}\n'
-                    + init + '\neval \'hm generations "argument with spaces"\'\nhm_pull\n'
-                )
-                result = subprocess.run(
-                    [shell, "-c", script], env=env,
-                    capture_output=True, text=True, timeout=10,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stdout.splitlines(), [
-                    "<generations>", "<argument with spaces>",
-                    "<switch>", "<-b>", "<backup>", "<-f>", f"<{config}>",
-                ])
-                old_revision = original.split('"?rev=', 1)[1].split('"', 1)[0]
-                self.assertEqual(config.read_text(), original.replace(old_revision, revision))
+@unittest.skipUnless(BASH and shutil.which("nix"), "Bash and Nix are required")
+class RemoteHomeManagerTest(SandboxTest):
+    def setUp(self):
+        super().setUp()
+        self.sb.nixos()
+        self.sb.nix_on_path()
+        # Only the downloaded script exists here, not a checkout or sibling helpers.
+        self.installer = self.sb.root / "install-home-manager.sh"
+        shutil.copy(INSTALL_HM, self.installer)
+
+    def test_remote_installs_pinned_configuration_without_checkout(self):
+        # Nix interpolation and quotes in HOME must survive as literal values.
+        home = self.sb.home / 'quotes " and ${notNix}'
+        home.mkdir()
+        r = self.sb.run(self.installer, "--remote", HOME=str(home))
+        self.assertOk(r)
+        config = home / "home.nix"
+        identity = json.loads(subprocess.check_output([
+            shutil.which("nix"), "--extra-experimental-features", "nix-command flakes",
+            "eval", "--impure", "--json", "--expr",
+            '(import (builtins.toPath (builtins.getEnv "TEST_CONFIG"))).home',
+        ], env={**os.environ, "TEST_CONFIG": str(config)}, text=True, timeout=20))
+        self.assertEqual(identity, {"username": "carl", "homeDirectory": str(home)})
+        self.assertIn('personal.homeModules.development-node', config.read_text())
+        self.assertIn('?rev=' + self.sb.env["MOCK_REVISION"], config.read_text())
+        self.assertEqual((home / ".config/home-manager/home.nix").resolve(), config.resolve())
+        self.assertEqual(self.sb.build_env()["HM_CONFIG_FILE"], str(config))
+        self.assertEqual(self.sb.build_env()["HM_FLAKE_DIR"],
+                         "git+https://github.com/cmattatall/home-manager.git?rev=" + self.sb.env["MOCK_REVISION"])
+        self.assertEqual(len(self.sb.calls("activate")), 1)
+        self.assertEqual(list(self.sb.tmp.iterdir()), [])
+        self.assertEqual(list(home.glob(".home.nix.*")), [])
+
+    def test_remote_keeps_fleet_ownership_check(self):
+        for state in ("loaded", "error"):
+            with self.subTest(state=state):
+                r = self.sb.run(self.installer, "--remote", MOCK_LOADSTATE=state)
+                self.assertEqual(r.returncode == 0, state == "loaded")
+                self.assertFalse((self.sb.home / "home.nix").exists())
+                self.assertEqual(self.sb.calls("nix"), [])
+                self.assertEqual(self.sb.calls("activate"), [])
+
+    def test_remote_refuses_existing_configurations(self):
+        config = self.sb.home / "home.nix"
+        for kind in ("file", "dangling-link", "directory"):
+            with self.subTest(kind=kind):
+                if kind == "file":
+                    config.write_text("personal edits\n")
+                elif kind == "dangling-link":
+                    config.symlink_to(self.sb.home / "missing")
+                else:
+                    config.mkdir()
+                r = self.sb.run(self.installer, "--remote")
+                self.assertFailed(r, "already exists")
+                self.assertEqual(self.sb.calls("nix"), [])
+                if kind == "file":
+                    self.assertEqual(config.read_text(), "personal edits\n")
+                elif kind == "dangling-link":
+                    self.assertTrue(config.is_symlink())
+                if kind == "directory":
+                    config.rmdir()
+                else:
+                    config.unlink()
+
+    def test_resolution_and_generation_failures_do_not_create_config(self):
+        for env in ({"MOCK_RESOLVE_FAIL": "1"}, {"MOCK_REVISION": "not-a-revision"}, {"MOCK_GENERATE_FAIL": "1"}):
+            with self.subTest(env=env):
+                r = self.sb.run(self.installer, "--remote", **env)
+                self.assertNotEqual(r.returncode, 0)
+                self.assertFalse((self.sb.home / "home.nix").exists())
+                self.assertEqual(list(self.sb.home.glob(".home.nix.*")), [])
+                self.assertEqual(self.sb.calls("activate"), [])
 
     def test_configuration_link_and_existing_files_are_preserved(self):
         for custom_xdg in (False, True):
             for existing in (None, "file", "dangling-link"):
                 with self.subTest(xdg=custom_xdg, existing=existing), tempfile.TemporaryDirectory() as directory:
                     home = Path(directory)
-                    env = {**os.environ, "HOME": str(home)}
-                    env.pop("XDG_CONFIG_HOME", None)
+                    env = {"HOME": str(home)}
                     config_root = home / ".config"
                     if custom_xdg:
                         config_root = home / "custom config"
@@ -487,10 +534,7 @@ class SetupHomeManagerTest(unittest.TestCase):
                         config.symlink_to(home / "missing.nix")
 
                     def run():
-                        return subprocess.run(
-                            [BASH, str(REPO / "scripts/install-nix-home.sh")],
-                            env=env, capture_output=True, text=True, timeout=10,
-                        )
+                        return self.sb.run(self.installer, "--remote", **env)
 
                     result = run()
                     self.assertEqual(result.returncode, 0, result.stderr)
@@ -498,10 +542,6 @@ class SetupHomeManagerTest(unittest.TestCase):
                     generated = (home / "home.nix").read_text()
                     self.assertIn(
                         '"git+https://github.com/cmattatall/home-manager.git"', generated,
-                    )
-                    self.assertIn(
-                        'repository_url="https://github.com/cmattatall/home-manager.git"',
-                        generated,
                     )
                     self.assertRegex(generated, r'\?rev=[0-9a-f]{40}"')
                     if existing == "file":
