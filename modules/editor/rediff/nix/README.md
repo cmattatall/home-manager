@@ -56,6 +56,12 @@ context menu to copy its repository-relative path to the system clipboard.
 Outside Git, paths are relative to the filesystem explorer's root. Opening or
 dismissing the menu does not copy anything; headers and blank rows omit the option.
 
+In Normal mode, **Cmd+C** copies the relative path and **Ctrl+Shift+C** copies the
+full path from either tree or a Review diff pane. Tree shortcuts use the selected
+row; diff shortcuts use the displayed file. Headers and blank tree rows do nothing.
+The terminal must forward these keys to Neovim rather than handle them as terminal
+text-copy shortcuts.
+
 **Ctrl-A / Ctrl-E** move to the start/end of the line in Insert mode (files
 and annotations) and in command/search input. Normal-mode
 Vim bindings remain unchanged. Typed **:ft** expands to `:Explorer` and focuses

@@ -5,6 +5,24 @@ local git = require("rediff.git")
 local definition_generation = 0
 local context_path
 
+local function tree_path(win, row)
+	local s = review.active()
+	if s and win == s.tree_win then
+		local entry = s.entries[s.rows[row]]
+		if entry then
+			return entry.path, vim.fs.joinpath(s.root, entry.path)
+		end
+	elseif vim.bo[api.nvim_win_get_buf(win)].filetype == "neo-tree" then
+		local tree = require("neo-tree.sources.manager").get_state_for_window(win)
+		local node = tree and tree.tree and tree.tree:get_node(row)
+		if node and (node.type == "file" or node.type == "directory" or node.type == "link") then
+			local root, code = git.run(tree.path, { "rev-parse", "--show-toplevel" }, nil, true)
+			root = code == 0 and vim.trim(root) or tree.path
+			return vim.fs.relpath(root, node.path), node.path
+		end
+	end
+end
+
 function M.tree_menu()
 	context_path = nil
 	pcall(vim.cmd, [[nunmenu PopUp.Copy\ Relative\ Path]])
@@ -12,19 +30,7 @@ function M.tree_menu()
 	if mouse.winid == 0 or mouse.line == 0 then
 		return
 	end
-	local s = review.active()
-	if s and mouse.winid == s.tree_win then
-		local entry = s.entries[s.rows[mouse.line]]
-		context_path = entry and entry.path
-	elseif vim.bo[api.nvim_win_get_buf(mouse.winid)].filetype == "neo-tree" then
-		local tree = require("neo-tree.sources.manager").get_state_for_window(mouse.winid)
-		local node = tree and tree.tree and tree.tree:get_node(mouse.line)
-		if node and (node.type == "file" or node.type == "directory" or node.type == "link") then
-			local root, code = git.run(tree.path, { "rev-parse", "--show-toplevel" }, nil, true)
-			root = code == 0 and vim.trim(root) or tree.path
-			context_path = vim.fs.relpath(root, node.path)
-		end
-	end
+	context_path = tree_path(mouse.winid, mouse.line)
 	if context_path then
 		vim.cmd(
 			[[nnoremenu <silent> 1.10 PopUp.Copy\ Relative\ Path <Cmd>lua require('rediff.navigation').copy_tree_path()<CR>]]
@@ -35,6 +41,20 @@ end
 function M.copy_tree_path()
 	if context_path then
 		vim.fn.setreg("+", context_path, "v")
+	end
+end
+
+function M.copy_path(absolute)
+	local win = api.nvim_get_current_win()
+	local relative, full = tree_path(win, api.nvim_win_get_cursor(win)[1])
+	local s = review.active()
+	if s and s.current and (win == s.old_win or win == s.new_win) then
+		relative = s.current.path
+		full = vim.fs.joinpath(s.root, relative)
+	end
+	local path = absolute and full or relative
+	if path then
+		vim.fn.setreg("+", path, "v")
 	end
 end
 

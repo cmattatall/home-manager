@@ -3844,7 +3844,7 @@ func greeting() string {
             self.lua(outside, "return s == nil and #vim.api.nvim_list_wins() == 1")
         )
 
-    def test_right_click_offers_copy_relative_path_in_context_menu(self):
+    def test_path_copy_menu_and_keyboard_shortcuts(self):
         nested = Path(self.root, "nested dir")
         nested.mkdir()
         (nested / "plan [1].md").write_text("nested plan\n")
@@ -3859,6 +3859,18 @@ func greeting() string {
                           ['*'] = function() return {{}, 'v'} end },
             }
         """
+
+        def copy_keys(editor, relative, full):
+            win, cursor = editor.current.window.handle, editor.current.window.cursor
+            for key, expected in (("<D-c>", relative), ("<C-S-c>", full)):
+                editor.vars["copied"] = [["unchanged"], "v"]
+                self.keys(editor, key)
+                self.assertEqual(
+                    [[expected if expected is not None else "unchanged"], "v"],
+                    editor.vars["copied"],
+                )
+                self.assertEqual(win, editor.current.window.handle)
+                self.assertEqual(cursor, editor.current.window.cursor)
 
         def click(editor, win, row, expected):
             position = editor.funcs.screenpos(win, row, 1)
@@ -3902,9 +3914,21 @@ func greeting() string {
                 end
             """, path)
             click(editor, tree, row, path)
+            self.lua(editor, f"r.show(s.rows[{row}])")
+            for layout in ("split", "merged", "split"):
+                self.lua(editor, f"r.view('{layout}')")
+                windows = self.lua(editor, "return {s.tree_win, s.new_win, s.old_win}")
+                for win in windows:
+                    editor.api.set_current_win(win)
+                    pump(editor)
+                    copy_keys(editor, path, str(Path(self.root, path)))
         # Headers and blank rows must not offer a stale path from the previous menu.
         for row in (1, 2, self.lua(editor, "return s.group_rows.unstaged")):
             click(editor, tree, row, None)
+            editor.api.set_current_win(tree)
+            editor.api.win_set_cursor(tree, [row, 0])
+            pump(editor)
+            copy_keys(editor, None, None)
 
         # Launch from outside the repo and show only a subdirectory: paths still
         # refer to the worktree root, not cwd or the visible explorer root.
@@ -3937,6 +3961,9 @@ func greeting() string {
                 )
                 self.keys(explorer, "gg")
                 click(explorer, tree, row, expected)
+                explorer.api.win_set_cursor(tree, [row, 0])
+                pump(explorer)
+                copy_keys(explorer, expected, str((root / "plan [1].md").resolve()))
                 # A mapping local to the tree would fail when the editor has focus.
                 explorer.command("wincmd l")
                 pump(explorer)

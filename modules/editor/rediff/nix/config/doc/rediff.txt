@@ -28,6 +28,8 @@ REVIEW QUICK REFERENCE
   h / l in tree       Collapse/expand group (also Left/Right); restore selection
   Enter in tree       Expand group only; keep tree focus
   Right-click path    Menu with Copy Relative Path option (either tree)
+  Cmd+C               Copy relative file path (tree or diff, Normal mode)
+  Ctrl+Shift+C        Copy full file path (tree or diff, Normal mode)
   ] / [               Next/previous hunk within the current Git group
   Ctrl+Shift+] / [    Next/previous unseen hunk within the current Git group
   :fs / :fu           Focus STAGED / UNSTAGED
@@ -66,6 +68,11 @@ Right-click a path in either tree and choose Copy Relative Path from the context
 menu to copy its repository-relative path to the system clipboard. Outside Git,
 paths are relative to the filesystem explorer's root. Opening or dismissing the
 menu does not copy anything; headers and blank rows omit the option.
+
+In Normal mode, Cmd+C copies the relative path and Ctrl+Shift+C copies the full
+path from either tree or a Review diff pane. Trees use the selected row; diff
+panes use the displayed file. Headers and blank tree rows do nothing. Your terminal
+must forward these keys to Neovim instead of using them for terminal text copying.
 
 ANNOTATING ORDINARY FILES
 

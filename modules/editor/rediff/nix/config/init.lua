@@ -160,6 +160,12 @@ require("neo-tree").setup({
 			["?"] = function()
 				vim.cmd("help rediff")
 			end,
+			["<D-c>"] = function()
+				require("rediff.navigation").copy_path(false)
+			end,
+			["<C-S-c>"] = function()
+				require("rediff.navigation").copy_path(true)
+			end,
 		},
 	},
 })
