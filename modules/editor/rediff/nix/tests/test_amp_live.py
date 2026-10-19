@@ -313,13 +313,15 @@ class AmpLiveTests(unittest.TestCase):
 
     def test_only_204_accepts_and_retry_reuses_id(self):
         self.payload_write()
-        Handler.post_status = 500
-        with self.assertRaisesRegex(RuntimeError, "HTTP 500"):
-            amp_live.send(self.connection, THREAD, self.payload)
-        first_id = Handler.requests[-1][2]["id"]
+        for status, diagnostic in ((500, "HTTP 500"), (202, "not yet visible")):
+            Handler.post_status = status
+            with self.assertRaisesRegex(RuntimeError, diagnostic):
+                amp_live.send(self.connection, THREAD, self.payload)
+            receipt = json.loads(Path(str(self.payload) + ".amp-live-receipt.json").read_text())
+            self.assertEqual("uncertain", receipt["status"])
         Handler.post_status = 204
         amp_live.send(self.connection, THREAD, self.payload)
-        self.assertEqual(first_id, Handler.requests[-1][2]["id"])
+        self.assertEqual(["one"] * 3, [body["id"] for method, _, body in Handler.requests if method == "POST"])
 
     def test_review_sends_references_not_full_files_and_keeps_archive(self):
         note = {"file": "src/space name.lua", "side": "old", "line": 17, "line_end": 19,

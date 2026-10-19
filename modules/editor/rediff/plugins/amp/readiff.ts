@@ -21,7 +21,7 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-import type { PluginAPI, PluginCommandContext, PluginThread } from '@ampcode/plugin'
+import type { PluginAPI, PluginCommandContext, PluginThread, ThreadMessageID } from '@ampcode/plugin'
 
 import { createHash, randomBytes } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises'
@@ -50,10 +50,23 @@ type Activity = {
   dispose(): void
 }
 type Connection = { server: Server; directory: string; descriptor: string; root: string; activity: Activity }
-type Outcome = { content: string; result: Promise<void> }
+type Outcome = { content: string; result: Promise<Set<ThreadMessageID>>; confirmed: boolean }
 
 const HEARTBEAT_MS = 15_000
 const MAX_STREAM_BUFFER = 64 * 1024
+
+async function containsFeedback(thread: PluginThread, content: string, before: Set<ThreadMessageID>): Promise<boolean> {
+  // Read full history so compaction and later tool results cannot hide delivery.
+  for (let offset = 0; ; offset += 20) {
+    const messages = await thread.messages({ full: true, from: 'end', offset, limit: 20, roles: ['user'] })
+    // Remember a whole page so the boundary does not depend on page ordering.
+    const newer = messages.filter(message => !before.has(message.id))
+    if (newer.some(message => message.role === 'user' && message.content.some(block => block.type === 'text' && block.text === content))) {
+      return true
+    }
+    if (newer.length !== messages.length || messages.length < 20) return false
+  }
+}
 
 async function createActivity(amp: PluginAPI, thread: PluginThread, root: string): Promise<Activity> {
   let state: ActivityState = 'unknown'
@@ -292,16 +305,27 @@ export default async function readiffPlugin(amp: PluginAPI): Promise<void> {
           response.writeHead(409).end('id was already used with different content')
           return
         }
+        // Resolve an explicit thread handle, not a saved invocation context.
+        const target = amp.threads.get(thread.id)
         const outcome = previous ?? {
           content,
-          result: thread.appendUserMessage(
-            { type: 'user-message', content },
-            { steer: true },
-          ),
+          confirmed: false,
+          result: (async () => {
+            const before = await target.messages({ full: true, from: 'end', limit: 20, roles: ['user'] })
+            await target.appendUserMessage({ type: 'user-message', content }, { steer: true })
+            return new Set(before.map(message => message.id))
+          })(),
         }
         if (!previous) outcomes.set(id, outcome)
         try {
-          await outcome.result
+          const before = await outcome.result
+          // appendUserMessage can resolve while feedback is only queued. Never
+          // let that alone clear editor notes. Retries inspect, never re-append.
+          if (!outcome.confirmed && await containsFeedback(target, content, before)) outcome.confirmed = true
+          if (!outcome.confirmed) {
+            response.writeHead(202).end('feedback is not yet visible in the target thread; retry the same submission to check delivery')
+            return
+          }
           response.writeHead(204).end()
         } catch (error) {
           amp.logger.log('readiff feedback append failed; id remains cached', id, error)

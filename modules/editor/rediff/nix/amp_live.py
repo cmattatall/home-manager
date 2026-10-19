@@ -310,6 +310,11 @@ def send(connection_path, expected_thread, submission_path, provider="amp"):
         status, _ = _request(desc, port, "POST", body, timeout=15)
     except (OSError, http.client.HTTPException) as error:
         raise RuntimeError(f"{label} delivery is unconfirmed; retry the same submission") from error
+    if status == 202:
+        raise RuntimeError(
+            f"{label} feedback is not yet visible in the target thread; notes retained. "
+            "Use :ReviewRetry to check the same submission without sending it again."
+        )
     if status != 204:
         raise RuntimeError(f"{label} delivery is unconfirmed (HTTP {status}); retry the same submission")
     ack = {"submission_id": payload["submission_id"], "status": "accepted", "harness": f"{provider}-live",

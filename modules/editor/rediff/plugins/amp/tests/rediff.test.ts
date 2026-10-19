@@ -60,9 +60,18 @@ function fakeAmp(root = process.cwd()) {
   }
   const context = (id: string, append?: (...args: any[]) => Promise<void>) => ({
     thread: threads.get(id) ?? threads.set(id, {
-      id, title: new ObservableMock<string | null>(null), state: new ObservableMock('idle'), appendUserMessage: async (...args: any[]) => {
-      (messages.get(id) ?? messages.set(id, []).get(id)!).push(args)
-      if (args[1]?.steer) await append?.(...args)
+      id, title: new ObservableMock<string | null>(null), state: new ObservableMock('idle'),
+      messages: async ({ offset = 0, limit = 10 } = {}) => {
+        const history = (messages.get(id) ?? []).map(([message], index) => ({
+          id: index, role: 'user', content: [{ type: 'text', text: message.content }],
+        }))
+        const end = Math.max(0, history.length - offset)
+        return history.slice(Math.max(0, end - limit), end)
+      },
+      appendUserMessage: async (...args: any[]) => {
+        if (args[1]?.steer) await append?.(...args)
+        const history = messages.get(id) ?? messages.set(id, []).get(id)!
+        history.push(args)
       },
     }).get(id),
     system: { workspaceRoot: pathToFileURL(root) },
@@ -390,6 +399,34 @@ test('deduplicates concurrent feedback, detects conflicts, and caches ambiguous 
   assert.equal((await post(d.descriptor, { id: 'failed', content: 'note' })).status, 500)
   assert.equal(failures, 1)
   await Promise.all([...f.disposers, ...bad.disposers].map((dispose) => dispose()))
+})
+
+test('an append that resolves without a new transcript message cannot acknowledge delivery', async (t) => {
+  const f = fakeAmp(); await plugin(f.amp)
+  t.after(() => Promise.all(f.disposers.map((dispose) => dispose())))
+  const c = await connect(f, 'T-queued')
+  const thread = f.threads.get('T-queued')
+  const content = 'Check this annotation'
+  const old = [{ type: 'user-message', content }]
+  f.messages.get(thread.id)!.push(old, [{ type: 'user-message', content: 'Later message' }])
+  let queued: any[] | undefined
+  let appends = 0
+  thread.appendUserMessage = async (...args: any[]) => { appends++; queued = args }
+  const body = { id: 'queued', content }
+  assert.equal((await post(c.descriptor, body)).status, 202, 'old identical feedback is not proof of delivery')
+  assert.equal((await post(c.descriptor, body)).status, 202, 'a cached append is still unconfirmed')
+  assert.equal(appends, 1, 'checking a queued or silently dropped append must not duplicate it')
+
+  const read = thread.messages
+  thread.messages = async () => { throw new Error('disconnected') }
+  assert.equal((await post(c.descriptor, body)).status, 500, 'a failed transcript read must retain notes')
+  thread.messages = read
+  f.messages.get(thread.id)!.push(queued!)
+  for (let i = 0; i < 25; i++) f.messages.get(thread.id)!.push([{ content: `Unrelated ${i}` }])
+  assert.equal((await post(c.descriptor, body)).status, 204, 'retry finds delivery beyond the newest page')
+  assert.equal(appends, 1, 'delayed delivery is acknowledged without resending')
+  thread.messages = async () => { throw new Error('disconnected again') }
+  assert.equal((await post(c.descriptor, body)).status, 204, 'confirmed delivery remains idempotent')
 })
 
 test('session start registers silently, probes authenticate, and disconnect stays disabled', async (t) => {

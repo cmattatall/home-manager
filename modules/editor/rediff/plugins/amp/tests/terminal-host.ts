@@ -9,7 +9,20 @@ const observable = (value: string) => ({
   get: async () => value,
   subscribe: () => ({ unsubscribe() {} }),
 })
+const messages: any[] = []
+const thread = {
+  id, title: observable(id), state: observable('idle'),
+  messages: async ({ offset = 0, limit = 10 } = {}) => {
+    const end = Math.max(0, messages.length - offset)
+    return messages.slice(Math.max(0, end - limit), end)
+  },
+  appendUserMessage: async (message: { content: string }) => {
+    messages.push({ id: messages.length, role: 'user', content: [{ type: 'text', text: message.content }] })
+    process.send!({ message })
+  },
+}
 await plugin({
+  threads: { get: () => thread },
   helpers: { filePathFromURI: (uri: URL) => decodeURIComponent(uri.pathname) },
   logger: { log() {} },
   on(event: string, handler: (event: unknown, context: any) => unknown) {
@@ -24,10 +37,7 @@ await plugin({
 } as any)
 await handlers.get('session.start')!({}, {
   system: { workspaceRoot: pathToFileURL(root) },
-  thread: {
-    id, title: observable(id), state: observable('idle'),
-    appendUserMessage: async (message: unknown) => { process.send!({ message }) },
-  },
+  thread,
 })
 process.send!({ ready: true })
 process.once('message', async () => {
