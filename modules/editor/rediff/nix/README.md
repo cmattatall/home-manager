@@ -51,6 +51,11 @@ ordinary editing without a sidebar.
 If Review is locked by another editor or cannot open, startup reports the
 reason and leaves ordinary editing available. Startup never sends feedback.
 
+**Right-click a path** in either tree and choose **Copy Relative Path** from the
+context menu to copy its repository-relative path to the system clipboard.
+Outside Git, paths are relative to the filesystem explorer's root. Opening or
+dismissing the menu does not copy anything; headers and blank rows omit the option.
+
 **Ctrl-A / Ctrl-E** move to the start/end of the line in Insert mode (files
 and annotations) and in command/search input. Normal-mode
 Vim bindings remain unchanged. Typed **:ft** expands to `:Explorer` and focuses

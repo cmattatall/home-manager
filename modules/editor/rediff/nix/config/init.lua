@@ -250,6 +250,7 @@ require("fzf-lua").setup({
 	grep = { file_icons = false, git_icons = false },
 })
 local navigation = require("rediff.navigation")
+vim.api.nvim_create_autocmd("MenuPopup", { callback = navigation.tree_menu })
 for _, binding in ipairs({
 	{ "<leader>e", "Explorer", navigation.explorer, "Focus explorer" },
 	{ "<leader>d", "FocusDiff", navigation.diff, "Focus diff/editor" },

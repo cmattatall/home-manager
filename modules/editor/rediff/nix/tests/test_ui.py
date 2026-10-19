@@ -3844,6 +3844,105 @@ func greeting() string {
             self.lua(outside, "return s == nil and #vim.api.nvim_list_wins() == 1")
         )
 
+    def test_right_click_offers_copy_relative_path_in_context_menu(self):
+        nested = Path(self.root, "nested dir")
+        nested.mkdir()
+        (nested / "plan [1].md").write_text("nested plan\n")
+        clipboard = """
+            vim.g.clipboard = {
+                name = 'test clipboard', cache_enabled = 0,
+                copy = {
+                    ['+'] = function(lines, regtype) vim.g.copied = {lines, regtype} end,
+                    ['*'] = function() error('unexpected primary selection') end,
+                },
+                paste = { ['+'] = function() return {{}, 'v'} end,
+                          ['*'] = function() return {{}, 'v'} end },
+            }
+        """
+
+        def click(editor, win, row, expected):
+            position = editor.funcs.screenpos(win, row, 1)
+            self.assertGreater(position["row"], 0)
+            editor.options["mousetime"] = 0
+            editor.vars["copied"] = [["unchanged"], "v"]
+            editor.api.input_mouse(
+                "right", "press", "", 0, position["row"] - 1, position["col"] + 4
+            )
+            editor.api.input_mouse(
+                "right", "release", "", 0, position["row"] - 1, position["col"] + 4
+            )
+            pump(editor)
+            self.assertTrue(editor.api.get_mode()["blocking"])
+            self.keys(editor, "<Esc>")
+            self.assertEqual([["unchanged"], "v"], editor.vars["copied"])
+            menu = editor.funcs.menu_info("PopUp", "n")["submenus"]
+            self.assertIn("Inspect", menu)
+            self.assertEqual(expected is not None, "Copy Relative Path" in menu)
+            if expected is None:
+                return
+            editor.api.input_mouse(
+                "right", "press", "", 0, position["row"] - 1, position["col"] + 4
+            )
+            editor.api.input_mouse(
+                "right", "release", "", 0, position["row"] - 1, position["col"] + 4
+            )
+            pump(editor)
+            self.keys(editor, "<Down><CR>")
+            self.assertEqual([[expected], "v"], editor.vars["copied"])
+            self.assertEqual("n", editor.api.get_mode()["mode"])
+
+        editor = self.launch(self.root, before_init=clipboard)
+        tree = self.lua(editor, "return s.tree_win")
+        self.keys(editor, "<Tab>")
+        for path in ("nested dir/plan [1].md", "removed.lua"):
+            row = editor.exec_lua("""
+                local s = require('rediff.review').state
+                for row, index in pairs(s.rows) do
+                    if s.entries[index].path == ... then return row end
+                end
+            """, path)
+            click(editor, tree, row, path)
+        # Headers and blank rows must not offer a stale path from the previous menu.
+        for row in (1, 2, self.lua(editor, "return s.group_rows.unstaged")):
+            click(editor, tree, row, None)
+
+        # Launch from outside the repo and show only a subdirectory: paths still
+        # refer to the worktree root, not cwd or the visible explorer root.
+        for root, expected in (
+            (nested, "nested dir/plan [1].md"),
+            (Path(self.directory.name, "outside"), "plan [1].md"),
+        ):
+            with self.subTest(root=root):
+                root.mkdir(exist_ok=True)
+                (root / "plan [1].md").write_text("plan\n")
+                explorer = self.launch(
+                    self.directory.name, file=str(root), before_init=clipboard
+                )
+                self.wait_for(explorer, "vim.bo.filetype == 'neo-tree'")
+                explorer.exec_lua("""
+                    require('neo-tree.command').execute({
+                        action = 'focus', source = 'filesystem', position = 'left', dir = ...,
+                    })
+                """, str(root))
+                pump(explorer)
+                self.wait_for(
+                    explorer,
+                    "table.concat(vim.api.nvim_buf_get_lines(0,0,-1,false),'\\n')"
+                    ":find('plan [1].md',1,true) ~= nil",
+                )
+                tree = explorer.current.window.handle
+                row = next(
+                    i for i, line in enumerate(explorer.current.buffer[:], 1)
+                    if "plan [1].md" in line
+                )
+                self.keys(explorer, "gg")
+                click(explorer, tree, row, expected)
+                # A mapping local to the tree would fail when the editor has focus.
+                explorer.command("wincmd l")
+                pump(explorer)
+                self.assertNotEqual(tree, explorer.current.window.handle)
+                click(explorer, tree, row, expected)
+
     def test_directory_argument_explorer_git_markers(self):
         root = Path(self.root)
         (root / "modified-dir").mkdir()

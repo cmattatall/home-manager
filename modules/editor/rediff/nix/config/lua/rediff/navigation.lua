@@ -3,6 +3,40 @@ local api = vim.api
 local review = require("rediff.review")
 local git = require("rediff.git")
 local definition_generation = 0
+local context_path
+
+function M.tree_menu()
+	context_path = nil
+	pcall(vim.cmd, [[nunmenu PopUp.Copy\ Relative\ Path]])
+	local mouse = vim.fn.getmousepos()
+	if mouse.winid == 0 or mouse.line == 0 then
+		return
+	end
+	local s = review.active()
+	if s and mouse.winid == s.tree_win then
+		local entry = s.entries[s.rows[mouse.line]]
+		context_path = entry and entry.path
+	elseif vim.bo[api.nvim_win_get_buf(mouse.winid)].filetype == "neo-tree" then
+		local tree = require("neo-tree.sources.manager").get_state_for_window(mouse.winid)
+		local node = tree and tree.tree and tree.tree:get_node(mouse.line)
+		if node and (node.type == "file" or node.type == "directory" or node.type == "link") then
+			local root, code = git.run(tree.path, { "rev-parse", "--show-toplevel" }, nil, true)
+			root = code == 0 and vim.trim(root) or tree.path
+			context_path = vim.fs.relpath(root, node.path)
+		end
+	end
+	if context_path then
+		vim.cmd(
+			[[nnoremenu <silent> 1.10 PopUp.Copy\ Relative\ Path <Cmd>lua require('rediff.navigation').copy_tree_path()<CR>]]
+		)
+	end
+end
+
+function M.copy_tree_path()
+	if context_path then
+		vim.fn.setreg("+", context_path, "v")
+	end
+end
 
 function M.definition()
 	local s = assert(review.active(), "Enter Review first")

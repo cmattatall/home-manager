@@ -27,6 +27,7 @@ REVIEW QUICK REFERENCE
   Space j / Space k   Next/previous changed file
   h / l in tree       Collapse/expand group (also Left/Right); restore selection
   Enter in tree       Expand group only; keep tree focus
+  Right-click path    Menu with Copy Relative Path option (either tree)
   ] / [               Next/previous hunk within the current Git group
   Ctrl+Shift+] / [    Next/previous unseen hunk within the current Git group
   :fs / :fu           Focus STAGED / UNSTAGED
@@ -60,6 +61,11 @@ with the launch directory's explorer ready after automatic Review startup.
 Outside Git, startup stays in ordinary editing without a sidebar.
 Headless runs open neither Review nor the tree. Space r toggles Review.
 The bottom bar shows the branch (or detached @short-SHA), harness and delivery.
+
+Right-click a path in either tree and choose Copy Relative Path from the context
+menu to copy its repository-relative path to the system clipboard. Outside Git,
+paths are relative to the filesystem explorer's root. Opening or dismissing the
+menu does not copy anything; headers and blank rows omit the option.
 
 ANNOTATING ORDINARY FILES
 
