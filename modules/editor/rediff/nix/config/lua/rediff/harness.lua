@@ -1094,6 +1094,25 @@ function M.disconnect(entry)
 	end
 end
 
+function M.delete(entry)
+	entry = assert(connections.get(entry.key), "Harness is no longer available")
+	if
+		vim.fn.confirm(
+			"Delete harness "
+				.. vim.fn.strtrans(entry.alias or entry.session)
+				.. " from this editor's list?\n"
+				.. "Disconnects feedback and removes its local alias. Threads and terminals are not deleted.\n"
+				.. "Use R in the list to rediscover live instances.",
+			"&Delete\n&Cancel",
+			2
+		) ~= 1
+	then
+		return
+	end
+	M.disconnect(entry)
+	connections.delete(entry.key)
+end
+
 local function open_requested(root, key)
 	if opening then
 		return
@@ -1154,6 +1173,10 @@ function M.panel(purpose, provider)
 			end
 		end,
 		on_disconnect = M.disconnect,
+		on_delete = function(entry)
+			M.delete(entry)
+			epoch = source.epoch
+		end,
 	})
 end
 

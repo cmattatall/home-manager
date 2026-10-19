@@ -318,7 +318,15 @@ machines and orbs are not discoverable through this local connection.
   Enter       Connect/disconnect; connecting locally selects the annotation target
   o           Open highlighted harness in the harness pane
   r / d       Rename locally / disconnect selected harness
+  D           Delete selected instance from this editor's list (asks first)
   c / R / q   Connected-only filter / rediscover / close
+
+Deletion disconnects feedback, clears its local alias, and removes the row. It
+does not stop the agent terminal, delete its thread, or touch worktree files or
+annotations. Automatic discovery will not restore that connection in this editor;
+R explicitly rediscovers deleted live instances. A new connection (after an agent
+restart) or a new editor can also discover it again. Deletion is blocked while
+feedback is being sent from the current or selected worktree.
 
 The [open] badge marks the terminal visible in this tab, not the highlighted row
 or annotation target. Hidden terminals have no badge. Opening reuses an existing

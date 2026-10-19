@@ -3,6 +3,7 @@ local feedback = require("rediff.feedback")
 local entries = {}
 local watchers = {}
 local listeners = {}
+local deleted = {} -- Suppress deleted instances until explicit rediscovery or a new connection.
 local discovering
 local closed = false
 local MAX_LINE = 65536
@@ -242,6 +243,7 @@ end
 
 function M.connect(target)
 	local entry = merge(target, true)
+	deleted[entry.key] = nil
 	entry.online = true
 	if not feedback.is_live(entry) then
 		entry.activity = { state = "unknown" }
@@ -285,10 +287,24 @@ function M.rename(key, alias)
 	return copy(entry)
 end
 
-function M.discover(callback)
+function M.delete(key)
+	local entry = assert(entries[key], "Unknown connection: " .. tostring(key))
+	if entry.alias then
+		M.rename(key, "")
+	end
+	stop(key)
+	deleted[key] = entry.connection or true
+	entries[key] = nil
+	changed()
+end
+
+function M.discover(callback, restore_deleted)
 	assert(type(callback) == "function", "Discovery requires a callback")
 	if closed then
 		return
+	end
+	if restore_deleted then
+		deleted = {}
 	end
 	if discovering then
 		table.insert(discovering, callback)
@@ -338,11 +354,15 @@ function M.discover(callback)
 					then
 						row = vim.deepcopy(row)
 						row.name = row.provider .. "-live"
-						local entry = merge(row)
-						entry.online = true
-						seen[entry.key] = true
-						if entry.connected then
-							start(entry)
+						local key = M.key(row)
+						if deleted[key] ~= true and deleted[key] ~= row.connection then
+							deleted[key] = nil
+							local entry = merge(row)
+							entry.online = true
+							seen[entry.key] = true
+							if entry.connected then
+								start(entry)
+							end
 						end
 					end
 				end

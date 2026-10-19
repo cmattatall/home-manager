@@ -1300,7 +1300,7 @@ class EditorUI(unittest.TestCase):
                 if argv[1] ~= 'rediff-amp-live' and argv[1] ~= 'rediff-omp-live' and argv[1] ~= 'rediff-live' then return system(argv,opts,callback) end
                 if argv[2] == 'discover' then
                     callback({code=0,stdout=vim.json.encode({
-                        {provider='amp',root=s.root,session='T-local',title='Local review',connection='/fake/local',capabilities={'activity'}},
+                        {provider='amp',root=s.root,session='T-local',title='Local review',connection=vim.g.local_connection or '/fake/local',capabilities={'activity'}},
                         {provider='omp',root=vim.g.external_root,session='T-remote',title='Remote worker',connection='/fake/remote',capabilities={'activity'}},
                     })})
                 elseif argv[2] == 'watch' then
@@ -1444,6 +1444,84 @@ class EditorUI(unittest.TestCase):
                 "for _,e in ipairs(require('rediff.connections').connected()) do if e.alias=='backend' then return e.online end end",
             )
         )
+        self.assertEqual("T-local", self.lua(editor, "return s.harness.session"))
+        self.assertEqual(1, self.lua(editor, "return #_G.sent_feedback"))
+
+        # Deleting is distinct from disconnecting: cancellation is safe, and a
+        # deleted external row stays absent through polling and panel reopening.
+        self.keys(editor, ":hl<CR>/backend<CR>D<CR>")
+        self.assertEqual(
+            1, self.lua(editor, "return #require('rediff.harness_panel').state.entries")
+        )
+        self.keys(editor, "Dd")
+        self.assertEqual(
+            0, self.lua(editor, "return #require('rediff.harness_panel').state.entries")
+        )
+        self.assertEqual("T-local", self.lua(editor, "return s.harness.session"))
+        self.lua(editor, "emit_activity('T-remote',vim.g.external_root,2,'running')")
+        self.keys(editor, "q:hl<CR>")
+        time.sleep(1.2)
+        pump(editor)
+        self.assertEqual(
+            ["T-local"],
+            self.lua(
+                editor,
+                "return vim.tbl_map(function(e) return e.session end, require('rediff.harness_panel').state.entries)",
+            ),
+        )
+        self.keys(editor, "R")
+        self.wait_for(editor, "#require('rediff.harness_panel').state.entries == 2")
+        self.assertTrue(
+            self.lua(
+                editor,
+                "for _,e in ipairs(require('rediff.connections').items()) do if e.session=='T-remote' then return e.alias==nil and not e.connected end end",
+            )
+        )
+
+        # The current target cannot be deleted mid-send. Once allowed, removal
+        # clears its persisted binding but retains the user's unsent annotations.
+        self.keys(editor, "q")
+        self.lua(
+            editor,
+            "r.add_comment({file=s.current.path,side='new',snapshot_id=s.current.id,selection=require('rediff.selection').line(s.new_buf,5)},'Keep this note')",
+        )
+        self.lua(
+            editor,
+            "_G.original_busy=require('rediff.feedback').busy; require('rediff.feedback').busy=function() return true end",
+        )
+        self.keys(editor, ":hc<CR>/Local<CR>Dd")
+        self.assertEqual("T-local", self.lua(editor, "return s.harness.session"))
+        self.assertEqual(
+            1, self.lua(editor, "return #require('rediff.harness_panel').state.entries")
+        )
+        self.lua(editor, "require('rediff.feedback').busy=_G.original_busy")
+        self.keys(editor, "Dd")
+        self.assertEqual("none", self.lua(editor, "return s.harness.name"))
+        self.assertEqual(
+            "none",
+            self.lua(
+                editor,
+                "return require('rediff.feedback').read(require('rediff.harness').get(s.root).directory..'/harness.json').target.name",
+            ),
+        )
+        self.assertEqual(
+            "Keep this note", self.lua(editor, "return s.comments[1].text")
+        )
+        self.assertEqual(
+            0, self.lua(editor, "return #require('rediff.harness_panel').state.entries")
+        )
+        # A replacement connection is a new instance and may appear automatically.
+        self.lua(editor, "vim.g.local_connection='/fake/restarted'")
+        self.wait_for(editor, "#require('rediff.harness_panel').state.entries == 1")
+        self.assertEqual(
+            "/fake/restarted",
+            self.lua(
+                editor,
+                "return require('rediff.harness_panel').state.entries[1].connection",
+            ),
+        )
+        self.assertEqual("none", self.lua(editor, "return s.harness.name"))
+        self.keys(editor, "<CR>")
         self.assertEqual("T-local", self.lua(editor, "return s.harness.session"))
         self.assertEqual(1, self.lua(editor, "return #_G.sent_feedback"))
 
