@@ -546,6 +546,15 @@ function M.show(index, snapshot, keep_fold)
 	local ft = vim.filetype.match({ filename = snapshot.path }) or ""
 	vim.bo[s.old_buf].filetype = ft
 	vim.bo[s.new_buf].filetype = ft
+	-- Filetype plugins can create closed folds that survive snapshot reuse.
+	-- Keep source panes fully visible; the tree owns its separate group folds.
+	for _, win in ipairs({ s.new_win, s.old_win }) do
+		vim.wo[win].foldmethod = "manual"
+		vim.wo[win].foldenable = false
+		api.nvim_win_call(win, function()
+			vim.cmd("normal! zE")
+		end)
+	end
 	-- <nowait> only wins when defined after competing buffer-local prefixes.
 	-- Filetype plugins (e.g. Markdown's [[/]]) install these on every switch.
 	map_hunks(s.old_buf)

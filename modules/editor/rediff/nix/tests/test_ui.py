@@ -4465,6 +4465,60 @@ func greeting() string {
             index, subprocess.check_output(["git", "-C", self.root, "write-tree"])
         )
 
+    def test_review_keeps_source_visible_across_filetype_and_layout_changes(self):
+        files = {
+            "test.pkl": ['name = "sample"', '', 'output {', '  value = 123', '}'],
+            "test.nix": ['{ pkgs }:', '', 'pkgs.test {', '  value = 123;', '}'],
+        }
+        for name, lines in files.items():
+            Path(self.root, name).write_text("\n".join(lines) + "\n")
+        subprocess.run(
+            ["git", "-C", self.root, "add", *files], check=True
+        )
+        for name, lines in files.items():
+            Path(self.root, name).write_text(
+                "\n".join(lines).replace("123", "456") + "\n"
+            )
+        editor = self.launch(self.root)
+        for layout in ("split", "merged", "split"):
+            self.lua(editor, f"r.view('{layout}')")
+            for name in ("test.pkl", "test.nix"):
+                with self.subTest(layout=layout, file=name):
+                    editor.exec_lua("""
+                        local r = require('rediff.review')
+                        for i, entry in ipairs(r.state.entries) do
+                            if entry.path == ... and entry.group == 'unstaged' then
+                                r.show(i)
+                                return
+                            end
+                        end
+                        error('Missing test file')
+                    """, name)
+                    for refresh in (False, True):
+                        if refresh:
+                            self.lua(editor, "r.refresh()")
+                        pump(editor)
+                        panes = self.lua(editor, """
+                            local panes = {}
+                            for _, win in ipairs({s.new_win, s.old_win}) do
+                                table.insert(panes, vim.api.nvim_win_call(win, function()
+                                    return {
+                                        closed = vim.fn.foldclosed(3),
+                                        level = vim.fn.foldlevel(3),
+                                        lines = vim.api.nvim_buf_get_lines(0, 0, -1, false),
+                                    }
+                                end))
+                            end
+                            return panes
+                        """)
+                        for i, pane in enumerate(panes):
+                            self.assertEqual(-1, pane["closed"])
+                            self.assertEqual(0, pane["level"])
+                            expected = files[name]
+                            if i == 0:
+                                expected = [line.replace("123", "456") for line in expected]
+                            self.assertEqual(expected, pane["lines"])
+
     def test_tree_groups_collapse_and_restore_file_selection(self):
         # Two staged and two unstaged entries, with different remembered files.
         subprocess.run(
