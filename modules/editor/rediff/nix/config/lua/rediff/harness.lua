@@ -68,16 +68,16 @@ local function show_opening(request)
 		if opening ~= request or request.timer ~= timer then
 			return
 		end
-		if (vim.uv.hrtime() - started) / 1e6 >= 5000 then
+		if (vim.uv.hrtime() - started) / 1e6 >= 10000 then
 			request.cancelled = true
 			finish_opening(request)
-			vim.notify("Harness open timed out after 5 seconds. Try :Harness open again.", vim.log.levels.ERROR)
+			vim.notify("Harness open timed out after 10 seconds. Try :Harness open again.", vim.log.levels.ERROR)
 			return
 		end
 		frame = frame % #frames + 1
 		api.nvim_buf_set_lines(buf, 0, -1, false, {
 			" " .. frames[frame] .. " Opening harness…",
-			" Input paused · timeout 5s",
+			" Input paused · timeout 10s",
 		})
 	end
 	request.timer = timer
@@ -734,7 +734,7 @@ function M.startup(root, explicit, request)
 			local ok, err = pcall(function()
 				assert(
 					result.code ~= 124,
-					request and "Harness open timed out after 5 seconds. Try :Harness open again."
+					request and "Harness open timed out after 10 seconds. Try :Harness open again."
 						or "Amp startup discovery timed out"
 				)
 				assert(result.code == 0, vim.trim(result.stderr or "Amp startup discovery failed"))
@@ -806,7 +806,7 @@ function M.startup(root, explicit, request)
 		"startup",
 		root,
 		feedback.provider(s.target) == "amp" and s.target.session or "",
-	}, { text = true, timeout = request and 5000 or 30000 }, finished)
+	}, { text = true, timeout = request and 10000 or 30000 }, finished)
 	if not ok then
 		finished({ code = 1, stderr = tostring(err) })
 	end

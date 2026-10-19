@@ -344,7 +344,7 @@ Aliases persist locally; connection subscriptions end when this editor exits.
 
 :harness open (alias :ho) opens the current worktree's harness.
 While loading, a spinner appears and keyboard input is discarded (not queued).
-Loading times out after five seconds, restores input, and ignores late results;
+Loading times out after ten seconds, restores input, and ignores late results;
 run :Harness open again to retry. Provider/session choices and resume confirmations
 remain interactive and do not count toward the loading timeout. Input resumes as
 soon as the terminal or activity panel opens; CLI login/startup happens there.

@@ -3531,6 +3531,7 @@ func greeting() string {
         self.keys(editor, ":Harness open<CR>")
         self.wait_for(editor, "loading_text() ~= nil")
         frame = self.lua(editor, "return loading_text()")
+        self.assertIn("timeout 10s", frame)
         self.wait_for(
             editor, f"loading_text() ~= {json.dumps(frame, ensure_ascii=False)}"
         )
@@ -3541,10 +3542,10 @@ func greeting() string {
         self.assertEqual("n", editor.api.get_mode()["mode"])
         self.assertEqual(original, editor.current.buffer[:])
         self.assertFalse(self.lua(editor, "return vim.g.leaked ~= nil"))
-        self.wait_for(editor, "loading_text() == nil")
-        self.assertGreaterEqual(time.monotonic() - started, 4.8)
-        self.assertLess(time.monotonic() - started, 6.5)
-        self.assertIn("timed out after 5 seconds", editor.vars["startup_notice"])
+        self.wait_for(editor, "loading_text() == nil", timeout=12)
+        self.assertGreaterEqual(time.monotonic() - started, 9.8)
+        self.assertLess(time.monotonic() - started, 11.5)
+        self.assertIn("timed out after 10 seconds", editor.vars["startup_notice"])
         self.keys(editor, ":let g:unlocked=1<CR>")
         self.assertEqual(1, editor.vars["unlocked"])
         # Release the old discovery before retrying: timeout alone must cancel it.
@@ -3567,7 +3568,7 @@ func greeting() string {
         self.keys(editor, ":ho<CR>")
         self.lua(editor, "discovery_results[3]({code=0,stdout='[]'})")
         self.wait_for(editor, "#startup_results == 2")
-        self.wait_for(editor, "loading_text() == nil")
+        self.wait_for(editor, "loading_text() == nil", timeout=12)
         self.lua(
             editor,
             "startup_results[2]({code=0,stdout=vim.json.encode({action='new'})})",
