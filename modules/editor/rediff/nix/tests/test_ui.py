@@ -2517,10 +2517,9 @@ func greeting() string {
                             "return vim.api.nvim_get_current_win() == s.composer_win",
                         )
                     )
-                self.keys(editor, "<Esc>")
                 self.assertEqual(["Review this range"], editor.current.buffer[:])
                 self.assertIsNotNone(self.lua(editor, "return s.composer"))
-                self.keys(editor, ":q<CR>")
+                self.keys(editor, "<Esc>")
                 self.wait_for(editor, "s.composer == nil")
                 self.assertEqual(0, self.lua(editor, "return #s.comments"))
                 self.assertEqual(
@@ -2702,7 +2701,7 @@ func greeting() string {
         self.assertEqual(annotated, path.read_text())
         self.assertFalse(source.options["modified"])
         # Deletion and draft handling use the same controls as Review.
-        self.keys(editor, "diUnsent draft<Esc><Esc>")
+        self.keys(editor, "diUnsent draft<Esc>")
         composer = editor.current.buffer.number
         self.assertNotEqual(source.number, composer)
         self.assertEqual(["Unsent draft"], editor.current.buffer[:])
@@ -2711,8 +2710,9 @@ func greeting() string {
         self.keys(editor, "<Esc>")
         self.assertFalse(source.options["modifiable"])
         self.assertEqual(composer, editor.exec_lua("return require('rediff.annotations').context().composer"))
-        self.keys(editor, "i<Esc>:q<CR>")
+        self.keys(editor, "i<Esc><Esc>")
         self.assertEqual(source.number, editor.current.buffer.number)
+        self.assertFalse(source.options["modifiable"])
         self.keys(editor, "i<Esc>")
         self.assertEqual(["Unsent draft"], editor.current.buffer[:])
         self.keys(editor, ":w<CR>")

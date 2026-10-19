@@ -1391,6 +1391,7 @@ function M.compose(visual, keys, comment)
 	vim.wo[s.composer_win].wrap = true
 	vim.wo[s.composer_win].linebreak = true
 	vim.wo[s.composer_win].winhighlight = "FloatBorder:ReviewAnnotation,FloatTitle:ReviewAnnotation"
+	vim.keymap.set("n", "<Esc>", "<Cmd>quit<CR>", { buffer = composer, desc = "Close annotation and keep draft" })
 	api.nvim_create_autocmd("QuitPre", {
 		buffer = composer,
 		callback = function()
