@@ -27,7 +27,10 @@ def pump(editor):
 
 class EditorUI(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
+        # Match Git/Neovim's canonical paths (macOS /var -> /private/var).
+        self.directory = tempfile.TemporaryDirectory(
+            dir=Path(tempfile.gettempdir()).resolve()
+        )
         self.environment = os.environ.copy()
         os.environ["HOME"] = self.directory.name
         for name in (
@@ -6128,6 +6131,8 @@ func greeting() string {
                 "rediff-worktrees", editor.current.buffer.options["filetype"]
             )
             self.keys(editor, "dd2<CR>")
+            # Input pumping is not a completion barrier for Git and job shutdown.
+            self.wait_for(editor, f"vim.fn.isdirectory({json.dumps(str(target))}) == 0")
             self.assertFalse(
                 target.exists(), self.lua(editor, "return vim.g.startup_notice")
             )
@@ -6163,6 +6168,9 @@ func greeting() string {
             self.keys(editor, "nsecond<CR>")
             self.wait_for(editor, "#vim.fn.readfile(vim.env.HARNESS_TEST_LOG) == 3")
             self.keys(editor, "<C-\\><C-n>:worktree delete second<CR>")
+            self.wait_for(
+                editor, f"vim.fn.isdirectory({json.dumps(self.root + '-second')}) == 0"
+            )
             self.assertFalse(Path(self.root + "-second").exists())
             self.assertEqual(self.root, self.lua(editor, "return s.root"))
             os.kill(main_pid, 0)
@@ -6182,6 +6190,9 @@ func greeting() string {
                 "rediff-worktrees", editor.current.buffer.options["filetype"]
             )
             self.keys(editor, "<CR>2<CR>")
+            self.wait_for(
+                editor, f"vim.fn.isdirectory({json.dumps(self.root + '-third')}) == 0"
+            )
             self.assertFalse(Path(self.root + "-third").exists())
             self.assertEqual(self.root, self.lua(editor, "return s.root"))
             self.assertNotEqual(
