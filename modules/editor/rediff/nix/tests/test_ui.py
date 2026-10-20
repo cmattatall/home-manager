@@ -1477,6 +1477,17 @@ class EditorUI(unittest.TestCase):
                 "for _,e in ipairs(require('rediff.connections').items()) do if e.session=='T-remote' then return e.alias==nil and not e.connected end end",
             )
         )
+        # The command also deletes disconnected entries, with the same confirmation.
+        self.assertIn("T-remote", editor.funcs.getcompletion("Harness delete ", "cmdline"))
+        self.keys(editor, ":harness delete T-remote<CR><CR>")
+        self.assertEqual(
+            2, self.lua(editor, "return #require('rediff.harness_panel').state.entries")
+        )
+        self.keys(editor, ":harness delete T-remote<CR>d")
+        self.assertEqual(
+            1, self.lua(editor, "return #require('rediff.harness_panel').state.entries")
+        )
+        self.assertEqual("T-local", self.lua(editor, "return s.harness.session"))
 
         # The current target cannot be deleted mid-send. Once allowed, removal
         # clears its persisted binding but retains the user's unsent annotations.
@@ -6703,6 +6714,125 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
             self.lua(editor, "return vim.g.startup_notice"),
         )
         self.assertFalse(log.exists())
+
+    def test_harness_new_prompts_and_starts_fresh_without_stopping_other_jobs(self):
+        binary = Path(self.directory.name, "bin")
+        binary.mkdir()
+        log = Path(self.directory.name, "new-harnesses")
+        for provider in ("amp", "omp", "claude"):
+            cli = binary / provider
+            cli.write_text(
+                '#!/bin/sh\nprintf "%s|%s|%s\\n" "$0" "$PWD" "$*" >> "$HARNESS_TEST_LOG"\n'
+                'echo "Fresh harness ready"\nexec sleep 600\n'
+            )
+            cli.chmod(0o755)
+        os.environ["PATH"] = str(binary) + os.pathsep + os.environ["PATH"]
+        os.environ["HARNESS_TEST_LOG"] = str(log)
+        editor = self.launch(self.root)
+        self.lua(
+            editor,
+            "require('rediff.harness').select(s.root, {name='claude',session='saved-session'})",
+        )
+        self.keys(editor, ":harness new<CR><CR>")
+        self.assertFalse(log.exists(), "Cancelling must not launch anything")
+        self.assertEqual("saved-session", self.lua(editor, "return s.harness.session"))
+        self.keys(editor, ":harness new invalid<CR>")
+        self.assertFalse(log.exists())
+        self.assertEqual("saved-session", self.lua(editor, "return s.harness.session"))
+        self.assertEqual(
+            ["amp", "claude", "omp"],
+            sorted(editor.funcs.getcompletion("Harness new ", "cmdline")),
+        )
+        self.keys(editor, ":harness new claude<CR>")
+        self.wait_for(editor, "vim.fn.filereadable(vim.env.HARNESS_TEST_LOG)==1")
+        first = editor.current.buffer.vars["terminal_job_id"]
+        self.assertEqual("none", self.lua(editor, "return s.harness.name"))
+        self.assertEqual(
+            1, self.lua(editor, "return #require('rediff.connections').connected()")
+        )
+        self.keys(editor, "<Esc>:harness close<CR>:hl<CR>n2<CR>")
+        self.wait_for(editor, "#vim.fn.readfile(vim.env.HARNESS_TEST_LOG)==2")
+        second = editor.current.buffer.vars["terminal_job_id"]
+        self.assertNotEqual(first, second)
+        self.keys(editor, "<Esc>:harness new<CR>1<CR>")
+        self.wait_for(editor, "#vim.fn.readfile(vim.env.HARNESS_TEST_LOG)==3")
+        third = editor.current.buffer.vars["terminal_job_id"]
+        self.assertNotEqual(second, third)
+        self.assertEqual(
+            [str(binary / p) + "|" + self.root + "|" for p in ("claude", "omp", "amp")],
+            log.read_text().splitlines(),
+        )
+        self.assertEqual([-1, -1, -1], editor.funcs.jobwait([first, second, third], 0))
+        # Creation is available even without any rows to select.
+        self.keys(editor, "<Esc>:harness delete saved-session<CR>d:hl<CR>")
+        self.assertEqual(
+            0, self.lua(editor, "return #require('rediff.harness_panel').state.entries")
+        )
+        self.keys(editor, "n3<CR>")
+        self.wait_for(editor, "#vim.fn.readfile(vim.env.HARNESS_TEST_LOG)==4")
+        self.assertEqual(
+            str(binary / "claude") + "|" + self.root + "|",
+            log.read_text().splitlines()[-1],
+        )
+        # Closing the only normal window must not quit Neovim or kill its job.
+        fourth = editor.current.buffer.vars["terminal_job_id"]
+        self.keys(editor, "<Esc>:only<CR>:harness close<CR>")
+        self.assertNotEqual("terminal", editor.current.buffer.options["buftype"])
+        self.assertEqual([-1] * 4, editor.funcs.jobwait([first, second, third, fourth], 0))
+
+    def test_harness_close_hides_only_selected_terminal_and_preserves_jobs(self):
+        editor = self.launch(self.root)
+        first, second = self.lua(
+            editor,
+            """
+            local h=require('rediff.harness')
+            local ids={}
+            for _,session in ipairs({'session-a','session-b'}) do
+                local target={name='claude',session=session}
+                h.select(s.root,target)
+                table.insert(ids,h.launch(s.root,{'/bin/sh','-c','exec sleep 600'},target))
+            end
+            return ids
+            """,
+        )
+        self.keys(editor, "<Esc>:hl<CR>C")
+        self.assertIn("[open]", "\n".join(editor.current.buffer[:]))
+        self.keys(editor, "jC")
+        self.assertNotIn("[open]", "\n".join(editor.current.buffer[:]))
+        self.assertEqual("session-b", self.lua(editor, "return s.harness.session"))
+        self.assertEqual(
+            2, self.lua(editor, "return #require('rediff.connections').connected()")
+        )
+        self.assertEqual([-1, -1], editor.funcs.jobwait([first, second], 0))
+        self.keys(editor, "o")
+        self.assertEqual(second, editor.current.buffer.vars["terminal_job_id"])
+        self.keys(editor, "<Esc>:harness close<CR>:hl<CR>")
+        self.assertNotIn("[open]", "\n".join(editor.current.buffer[:]))
+        self.keys(editor, "o")
+        self.assertEqual(first, editor.current.buffer.vars["terminal_job_id"])
+        self.assertEqual([-1, -1], editor.funcs.jobwait([first, second], 0))
+        # Closing an external terminal returns the panel to the underlying review;
+        # its selected external session can still be reopened without a new job.
+        external = Path(self.directory.name, "external").resolve()
+        external.mkdir()
+        self.keys(editor, "<Esc>")
+        third = editor.exec_lua(
+            """
+            local root=...
+            local h=require('rediff.harness')
+            local target={name='claude',session='session-c'}
+            h.select(root,target)
+            return h.launch(root,{'/bin/sh','-c','exec sleep 600'},target)
+            """,
+            str(external),
+        )
+        self.keys(editor, "<Esc>:hl<CR>")
+        self.keys(editor, "jjC")
+        self.assertNotIn("[open]", "\n".join(editor.current.buffer[:]))
+        self.keys(editor, "o")
+        self.assertEqual(third, editor.current.buffer.vars["terminal_job_id"])
+        self.assertEqual(str(external), editor.funcs.getcwd())
+        self.assertEqual([-1] * 3, editor.funcs.jobwait([first, second, third], 0))
 
     def test_harness_open_defaults_to_current_worktree_and_reuses_its_process(self):
         binary = Path(self.directory.name, "bin")

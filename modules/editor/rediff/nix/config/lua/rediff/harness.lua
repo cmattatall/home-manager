@@ -309,6 +309,62 @@ function M.is_open(target)
 	return false
 end
 
+function M.close(target)
+	local root = target and target.root or current().root
+	for _, win in ipairs(api.nvim_tabpage_list_wins(0)) do
+		local buf = api.nvim_win_get_buf(win)
+		local owned = (jobs[root] or {})[vim.b[buf].terminal_job_id]
+		if owned and (not target or (owned.session == target.session and owned.provider == feedback.provider(target))) then
+			-- Hide the pane, keeping the terminal job and feedback connection alive.
+			local windows = vim.tbl_filter(function(id)
+				return api.nvim_win_get_config(id).relative == ""
+			end, api.nvim_tabpage_list_wins(0))
+			if #windows == 1 then
+				api.nvim_win_set_buf(win, api.nvim_create_buf(true, false))
+				vim.wo[win].winbar = ""
+			else
+				api.nvim_win_hide(win)
+			end
+		end
+	end
+end
+
+function M.new(provider)
+	local s = current()
+	local epoch, win, tab = s.epoch, api.nvim_get_current_win(), api.nvim_get_current_tabpage()
+	local function create(name)
+		if not name then
+			return
+		end
+		assert(name == "amp" or name == "omp" or name == "claude", "Usage: Harness new [amp|omp|claude]")
+		assert(
+			s.epoch == epoch
+				and api.nvim_get_current_tabpage() == tab
+				and api.nvim_get_current_win() == win
+				and current().root == s.root,
+			"Checkout or harness changed; run :harness new again"
+		)
+		assert(not feedback.busy(s.root), "Wait for feedback delivery before starting a new harness")
+		local executable = vim.fn.exepath(name)
+		assert(executable ~= "", "Install/authenticate the " .. name .. " CLI and put it on PATH first")
+		-- A fresh CLI has no session ID yet. Do not resume the saved feedback target.
+		M.launch(s.root, { executable }, { name = name })
+		M.select(s.root, { name = "none" })
+		s.provider = name
+		save(s)
+	end
+	if provider then
+		create(provider)
+	else
+		vim.ui.select({ "amp", "omp", "claude" }, { prompt = "New harness type:" }, function(name)
+			local ok, err = pcall(create, name)
+			if not ok then
+				notify(tostring(err), "failed")
+			end
+		end)
+	end
+end
+
 local function terminal_pane(root, buf)
 	local pane
 	for _, win in ipairs(api.nvim_tabpage_list_wins(0)) do
@@ -358,7 +414,7 @@ end
 function M.launch(root, argv, target)
 	for _, owned in pairs(jobs[root] or {}) do
 		assert(
-			target and (owned.session ~= target.session or owned.provider ~= feedback.provider(target)),
+			target and (not target.session or owned.session ~= target.session or owned.provider ~= feedback.provider(target)),
 			"Harness already running in this editor; use :harness open"
 		)
 	end
@@ -1173,6 +1229,28 @@ function M.panel(purpose, provider)
 			end
 		end,
 		on_disconnect = M.disconnect,
+		on_close = function(entry)
+			M.close(entry)
+			if not api.nvim_win_is_valid(win) then
+				for _, candidate in ipairs(api.nvim_tabpage_list_wins(0)) do
+					if api.nvim_win_get_config(candidate).relative == "" then
+						win = candidate
+						source = api.nvim_win_call(win, current)
+						root, epoch = source.root, source.epoch
+						panel.state.root = root
+						break
+					end
+				end
+			end
+		end,
+		on_new = function()
+			assert(api.nvim_win_is_valid(win) and api.nvim_win_call(win, function()
+				return current().root == root
+			end), "Checkout changed; run :harness list again")
+			panel.close()
+			api.nvim_set_current_win(win)
+			M.new()
+		end,
 		on_delete = function(entry)
 			M.delete(entry)
 			epoch = source.epoch
@@ -1289,6 +1367,12 @@ function M.setup()
 				M.panel("manage")
 			elseif #args == 1 and args[1] == "open" then
 				open_requested(current().root)
+			elseif #args == 1 and args[1] == "close" then
+				M.close()
+			elseif #args == 2 and args[1] == "delete" then
+				M.delete(find_connection(args[2]))
+			elseif #args <= 2 and args[1] == "new" then
+				M.new(args[2])
 			elseif #args == 1 and args[1] == "resume" then
 				M.resume()
 			elseif #args == 2 and args[1] == "use" then
@@ -1317,7 +1401,7 @@ function M.setup()
 				end
 			else
 				error(
-					"Usage: Harness open | resume | list | connect [amp|omp] | use amp|omp|claude | rename ID ALIAS | disconnect [alias] | status | retry | install amp|omp"
+					"Usage: Harness open | close | new [amp|omp|claude] | delete ID | resume | list | connect [amp|omp] | use amp|omp|claude | rename ID ALIAS | disconnect [alias] | status | retry | install amp|omp"
 				)
 			end
 		end)
@@ -1331,6 +1415,9 @@ function M.setup()
 			if #args == 2 then
 				return {
 					"open",
+					"close",
+					"delete",
+					"new",
 					"resume",
 					"list",
 					"panel",
@@ -1342,10 +1429,14 @@ function M.setup()
 					"status",
 					"retry",
 				}
-			elseif #args == 3 and args[2] == "use" then
+			elseif #args == 3 and (args[2] == "use" or args[2] == "new") then
 				return { "amp", "omp", "claude" }
 			elseif #args == 3 and (args[2] == "connect" or args[2] == "install") then
 				return { "amp", "omp" }
+			elseif #args == 3 and args[2] == "delete" then
+				return vim.tbl_map(function(entry)
+					return entry.session
+				end, connections.items())
 			elseif #args == 3 and (args[2] == "disconnect" or args[2] == "rename") then
 				return vim.tbl_map(function(entry)
 					return entry.alias or entry.session

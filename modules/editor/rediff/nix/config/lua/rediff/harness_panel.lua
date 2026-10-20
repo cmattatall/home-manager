@@ -220,7 +220,7 @@ local function render()
 	end
 	local action = entry and entry.connected and "Enter disconnect" or "Enter connect"
 	table.insert(lines, " " .. action .. "  / filter  c connected  R discover  q close")
-	table.insert(lines, " o open  r rename  d disconnect  D delete")
+	table.insert(lines, " o open  C close  n new  r rename  d disconnect  D delete")
 	vim.bo[s.buf].modifiable = true
 	api.nvim_buf_set_lines(s.buf, 0, -1, false, lines)
 	vim.bo[s.buf].modifiable = false
@@ -364,6 +364,14 @@ function M.open(opts)
 	map(s.buf, "o", function()
 		act(opts.on_open)
 	end, "Open harness")
+	map(s.buf, "C", function()
+		act(opts.on_close)
+	end, "Hide harness terminal")
+	map(s.buf, "n", function()
+		if opts.on_new then
+			safely(opts.on_new)
+		end
+	end, "New harness")
 	map(s.buf, "d", function()
 		local callback = opts.on_disconnect or function(entry)
 			registry.disconnect(entry.key)

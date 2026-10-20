@@ -633,6 +633,21 @@ OMP remains activity-only because resuming an OMP session is not supported.
 The **[open]** badge identifies the terminal visible in the current tab, independently
 of the highlighted row or connection status; hidden terminals have no badge.
 
+`:harness close` hides the current worktree's terminal pane in this tab without
+stopping the agent or disconnecting feedback. **Shift-C** in the list hides only
+the highlighted harness's terminal; **o** reopens it.
+`:harness delete <id>` or **Shift-D** in the list asks before removing that harness
+from the editor's list and clearing its local alias and feedback connection.
+It does not delete the agent thread or stop its terminal. **R** rediscovers it.
+
+`:harness new [amp|omp|claude]` starts a fresh CLI in the current worktree, even
+when another harness is running. Omitting the type prompts for it; **n** in the
+list opens the same prompt, including when the list is empty. Cancelling changes
+nothing. Existing terminals and connections stay alive, but the worktree's feedback
+target is cleared so notes are not accidentally sent to the previous session.
+Connect the new session before sending feedback. The CLI must be installed and
+authenticated separately.
+
 The panel receives authenticated Amp activity snapshots asynchronously: running,
 idle, awaiting approval, error, and active tool name, without tool inputs/outputs.
 A running agent has a spinner. Multiple editor instances can subscribe to the
