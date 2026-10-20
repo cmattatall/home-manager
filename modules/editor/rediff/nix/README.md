@@ -460,7 +460,10 @@ another CLI. The bridge itself carries annotations and activity, not terminal in
 After a disconnect, **:harness open** rediscovers live sessions, including after
 restarting Neovim or opening a file instead of Review. Without a live match, Amp
 checks its saved thread before starting fresh; other adapters retain their launch behavior.
-After Amp exits (including Ctrl-C), opening it again offers to resume the saved
+While typing in an Amp pane, **Ctrl-C** hides it like **:harness close**.
+The process and feedback connection stay alive;
+**:harness open** returns to the same terminal. **Ctrl-L** twice still interrupts Amp.
+After Amp exits, opening it again offers to resume the saved
 thread in a new TUI. **:harness resume** also asks before starting an Amp/Claude
 TUI and reuses an existing editor-owned terminal. If discovery finds the selected
 session in a different worktree, it refuses to launch it in the wrong directory.

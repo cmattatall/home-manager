@@ -3731,8 +3731,8 @@ func greeting() string {
         self.lua(editor, "vim.fn.confirm=function() return 1 end")
         for restart in (False, True):
             job = editor.current.buffer.vars["terminal_job_id"]
-            self.keys(editor, "i")
-            self.keys(editor, "<C-c>")
+            # Simulate an actual CLI exit independently of the hide shortcut.
+            self.lua(editor, "vim.fn.chansend(vim.b.terminal_job_id, '\\3')")
             self.wait_for(editor, f"vim.fn.jobwait({{{job}}},0)[1] == -3")
             self.keys(editor, "<Esc>")
             if restart:
@@ -3749,6 +3749,26 @@ func greeting() string {
             self.wait_for(editor, "table.concat(vim.api.nvim_buf_get_lines(0,0,-1,false),'\\n'):find('Amp test terminal ready',1,true) ~= nil")
             self.wait_for(editor, "require('rediff.harness').get(require('rediff.git').root()).connection_error == nil")
             self.assertEqual(thread, self.lua(editor, "return require('rediff.harness').get(require('rediff.git').root()).target.session"))
+        # The restarted editor is editing auth.lua, not in Review. Ctrl-C
+        # hides Amp while preserving its terminal, job, and live connection.
+        self.keys(editor, "<Esc>")
+        job = editor.current.buffer.vars["terminal_job_id"]
+        terminal = editor.current.buffer.number
+        target = self.lua(editor, "return require('rediff.harness').get(require('rediff.git').root()).target")
+        for only in (False, True):
+            if only:
+                self.keys(editor, ":only<CR>")
+            self.keys(editor, "i")
+            self.assertEqual("t", editor.api.get_mode()["mode"])
+            self.keys(editor, "<C-c>")
+            self.assertNotEqual("terminal", editor.current.buffer.options["buftype"])
+            self.assertEqual("n", editor.api.get_mode()["mode"])
+            self.assertEqual([-1], editor.funcs.jobwait([job], 0))
+            self.assertEqual(target, self.lua(editor, "return require('rediff.harness').get(require('rediff.git').root()).target"))
+            self.keys(editor, ":harness open<CR>")
+            self.assertEqual(terminal, editor.current.buffer.number)
+            self.assertEqual(job, editor.current.buffer.vars["terminal_job_id"])
+            self.keys(editor, "<Esc>")
         self.assertEqual(
             [[], ["threads", "continue", thread], ["threads", "continue", thread]],
             [json.loads(line) for line in log.read_text().splitlines()],

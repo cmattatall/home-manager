@@ -440,6 +440,10 @@ function M.launch(root, argv, target)
 		{ buffer = owned.buf, nowait = true, desc = "Return control to Neovim without interrupting harness" }
 	)
 	if owned.provider == "amp" then
+		vim.keymap.set("t", "<C-c>", function()
+			vim.cmd.stopinsert()
+			M.close()
+		end, { buffer = owned.buf, nowait = true, desc = "Hide Amp pane without stopping the agent" })
 		vim.keymap.set({ "n", "t" }, "<C-l>", function()
 			-- Send a literal Escape, bypassing Neovim's mode-switch mapping.
 			-- Amp handles this in menus/dialogs too, unlike thread.interrupt.

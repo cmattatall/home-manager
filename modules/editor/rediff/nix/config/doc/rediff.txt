@@ -376,7 +376,10 @@ OMP remains activity-only because session resumption is unsupported.
 After disconnecting, open rediscovers live sessions even after an editor restart
 or when opening a file instead of Review. With no live match, the Amp adapter
 checks saved history before starting fresh; other adapters retain their launch behavior.
-After Amp exits (including Ctrl-C), open offers to resume the saved thread in a
+While typing in an Amp pane, Ctrl-C hides it like :harness close,
+keeping the process and feedback connection alive. Use
+:harness open to return to the same terminal. Ctrl-L twice still interrupts Amp.
+After Amp exits, open offers to resume the saved thread in a
 new TUI. Automatic startup only connects to an existing live session; it does not
 start another CLI for it.
 The shared startup policy for every harness is: connect to a live session in this
