@@ -193,6 +193,8 @@ export default async function readiffPlugin(amp: PluginAPI): Promise<void> {
   const connections = new Map<string, Connection>()
   const connecting = new Map<string, Promise<void>>()
   const disconnected = new Set<string>()
+  const terminal = process.env.REDIFF_TERMINAL_ID
+  let activeThread: string | undefined
 
   async function remember(thread: string, root: string): Promise<void> {
     const directory = join(process.env.XDG_STATE_HOME || join(homedir(), '.local/state'), 'rediff/amp')
@@ -268,7 +270,9 @@ export default async function readiffPlugin(amp: PluginAPI): Promise<void> {
         }
         if (request.method === 'GET') {
           response.writeHead(200, { 'Content-Type': 'application/json' })
-            .end(JSON.stringify({ version: 1, root, thread: thread.id }))
+            .end(JSON.stringify({ version: 1, root, thread: thread.id,
+              ...(terminal && activeThread === thread.id ? { terminal } : {}),
+            }))
           return
         }
 
@@ -402,6 +406,7 @@ export default async function readiffPlugin(amp: PluginAPI): Promise<void> {
 
   async function autoConnect(_event: unknown, ctx: PluginCommandContext): Promise<void> {
     if (!ctx.thread || !ctx.system.workspaceRoot || disconnected.has(ctx.thread.id)) return
+    activeThread ??= ctx.thread.id
     try {
       await ensureConnection(ctx, false)
     } catch (error) {
@@ -409,6 +414,7 @@ export default async function readiffPlugin(amp: PluginAPI): Promise<void> {
     }
   }
   amp.on('session.start', async (event, ctx) => {
+    activeThread = ctx.thread.id
     const existing = connections.get(ctx.thread.id)
     await autoConnect(event, ctx)
     // Switching back to an already-connected thread makes it the last session too.
@@ -438,7 +444,10 @@ export default async function readiffPlugin(amp: PluginAPI): Promise<void> {
   amp.registerCommand('readiff-connect', {
     category: 'readiff', title: 'connect', description: 'Connect editor review feedback to this thread',
   }, async (ctx) => {
-    if (ctx.thread) disconnected.delete(ctx.thread.id)
+    if (ctx.thread) {
+      activeThread = ctx.thread.id
+      disconnected.delete(ctx.thread.id)
+    }
     await ensureConnection(ctx, true)
   })
   amp.registerCommand('readiff-disconnect', {

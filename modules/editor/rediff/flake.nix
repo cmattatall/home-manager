@@ -162,12 +162,14 @@
                 nativeBuildInputs = [
                   self.packages.${system}.default
                   pkgs.git
+                  pkgs.nodejs
                   pkgs.go
                   pkgs.cargo
                   pkgs.rustc
                   (pkgs.python3.withPackages (ps: [ ps.pynvim ]))
                 ];
                 RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+                REDIFF_TEST_PLUGIN_HOST = "${self}/plugins/amp/tests/terminal-host.ts";
               }
               ''
                 export HOME="$TMPDIR/home"

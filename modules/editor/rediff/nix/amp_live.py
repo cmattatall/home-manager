@@ -109,6 +109,9 @@ def discover(root, provider="amp"):
                      "title": desc.get("title", "")}
             if "capabilities" in desc:
                 entry["capabilities"] = desc["capabilities"]
+            terminal = identity.get("terminal")
+            if isinstance(terminal, str) and re.fullmatch(r"[0-9a-f]{64}", terminal):
+                entry["terminal"] = terminal
             found.append(entry)
         except (OSError, ValueError, TypeError, json.JSONDecodeError, http.client.HTTPException):
             continue

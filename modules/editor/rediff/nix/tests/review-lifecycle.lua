@@ -113,9 +113,9 @@ return function(root, equal, fails)
 			equal(0, markers(), "Archiving clears the tree marker")
 		end
 		review.select_harness("none")
-		local local_note = add("Local queue only")
-		review.submit()
-		equal({ local_note }, review.state.comments, "Local-only queue is not a successful delivery")
+		local disconnected_note = add("Keep until reconnected")
+		fails(review.submit, "Feedback not sent")
+		equal({ disconnected_note }, review.state.comments, "Disconnecting the configured harness retains notes")
 		review.archive()
 	end, debug.traceback)
 	vim.system, feedback.settings, vim.notify = system, settings, notify

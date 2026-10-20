@@ -1516,6 +1516,7 @@ function M.submit(retry)
 		return
 	end
 	assert(not feedback.busy(s.root), "Wait for the current feedback delivery before submitting again")
+	local argv = harness.command(s.root)
 	local current = M.refresh_annotations(s.root)
 	local snapshots, snapshot_status, warnings = {}, {}, {}
 	for _, comment in ipairs(s.comments) do
@@ -1530,7 +1531,6 @@ function M.submit(retry)
 			table.insert(warnings, vim.fn.strtrans(comment.file) .. ":" .. comment.line .. "–" .. comment.line_end)
 		end
 	end
-	local argv = feedback.command(s.harness)
 	local id, path = feedback.enqueue(s.root, s.comments, snapshots, argv, nil, snapshot_status)
 	if #warnings > 0 then
 		notify(

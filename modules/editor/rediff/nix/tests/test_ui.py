@@ -3841,6 +3841,115 @@ func greeting() string {
         )
         self.assertEqual(["launch"], log.read_text().splitlines())
 
+    def test_new_amp_harness_binds_and_receives_notes_without_manual_connect(self):
+        binary = Path(self.directory.name, "bin")
+        binary.mkdir()
+        cli = binary / "amp"
+        host = os.environ.get("REDIFF_TEST_PLUGIN_HOST") or str(
+            Path(__file__).resolve().parents[2] / "plugins/amp/tests/terminal-host.ts"
+        )
+        log = Path(self.directory.name, "feedback.jsonl")
+        other_log = Path(self.directory.name, "other-feedback.jsonl")
+        thread = "T-11111111-2222-4333-8444-555555555555"
+        cli.write_text(
+            f"#!{shutil.which('node')}\n"
+            "const {fork} = require('node:child_process');\n"
+            "const {appendFileSync} = require('node:fs');\n"
+            "console.log('Waiting for first prompt');\n"
+            "process.stdin.once('data', () => {\n"
+            f"  const child = fork({json.dumps(str(host))}, [process.cwd(), process.env.HARNESS_THREAD], {{stdio: ['ignore','ignore','inherit','ipc']}});\n"
+            "  child.on('message', value => appendFileSync(process.env.HARNESS_FEEDBACK_LOG, JSON.stringify(value)+'\\n'));\n"
+            "  process.on('SIGTERM', () => {child.send('dispose'); child.once('exit', () => process.exit());});\n"
+            "});\n"
+        )
+        cli.chmod(0o755)
+        os.environ["PATH"] = str(binary) + os.pathsep + os.environ["PATH"]
+        os.environ["HARNESS_THREAD"] = thread
+        os.environ["HARNESS_FEEDBACK_LOG"] = str(log)
+        editor = self.launch(self.root)
+        self.keys(editor, "<Tab>5GiSend to the embedded Amp thread<Esc>:w<CR>")
+        # Another live CLI in the exact same checkout must not receive these notes.
+        other = subprocess.Popen(
+            [str(cli)],
+            cwd=self.root,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            env=dict(
+                os.environ,
+                HARNESS_THREAD="T-other",
+                HARNESS_FEEDBACK_LOG=str(other_log),
+                REDIFF_TERMINAL_ID="f" * 64,
+            ),
+        )
+        try:
+            other.stdin.write(b"start\n")
+            other.stdin.flush()
+            deadline = time.monotonic() + 10
+            while not other_log.exists():
+                self.assertLess(
+                    time.monotonic(), deadline, "Other plugin host did not start"
+                )
+                pump(editor)
+            self.keys(editor, ":Harness new amp<CR>")
+            self.wait_for(editor, "vim.bo.buftype == 'terminal'")
+            self.keys(editor, "<Esc>:WriteFeedback<CR>")
+            self.assertIn("not connected", editor.vars["startup_notice"])
+            self.assertIn(
+                "amp · not connected", self.lua(editor, "return r.statusline()")
+            )
+            self.assertEqual(1, self.lua(editor, "return #s.comments"))
+            self.assertIsNone(self.lua(editor, "return s.last_submission"))
+            self.assertEqual(
+                [{"ready": True}],
+                [json.loads(line) for line in other_log.read_text().splitlines()],
+            )
+            self.keys(editor, "istart<CR>")
+            self.wait_for(editor, "s.harness.name == 'amp-live'", timeout=15)
+            self.assertEqual(thread, self.lua(editor, "return s.harness.session"))
+            self.keys(editor, "<Esc>:WriteFeedback<CR>")
+            self.wait_for(editor, "#s.comments == 0", timeout=15)
+            self.assertEqual(
+                "accepted",
+                self.lua(
+                    editor, "return require('rediff.harness').get(s.root).delivery"
+                ),
+            )
+            received = [
+                json.loads(line)
+                for line in log.read_text().splitlines()
+                if '"message"' in line
+            ]
+            self.assertEqual(1, len(received))
+            self.assertIn(
+                "Send to the embedded Amp thread", received[0]["message"]["content"]
+            )
+            self.assertEqual(
+                [{"ready": True}],
+                [json.loads(line) for line in other_log.read_text().splitlines()],
+            )
+            # Explicit disconnect must not silently turn Send into a local queue.
+            self.lua(
+                editor,
+                "local c=require('rediff.connections'); require('rediff.harness').disconnect(c.connected()[1])",
+            )
+            self.keys(editor, " diAnother note<Esc>:w<CR>:WriteFeedback<CR>")
+            self.assertIn("Feedback not sent", editor.vars["startup_notice"])
+            self.assertEqual(1, self.lua(editor, "return #s.comments"))
+            self.assertEqual(
+                1,
+                len(
+                    [
+                        line
+                        for line in log.read_text().splitlines()
+                        if '"message"' in line
+                    ]
+                ),
+            )
+        finally:
+            other.terminate()
+            other.communicate(timeout=10)
+
     def test_harness_open_without_configuration_and_after_amp_exit(self):
         binary = Path(self.directory.name, "bin")
         binary.mkdir()

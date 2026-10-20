@@ -497,7 +497,9 @@ test('discovers and sends across independent terminal hosts and worktrees', { ti
   ]) {
     const child = fork(fileURLToPath(new URL('./terminal-host.ts', import.meta.url)), [directory, id], {
       cwd: directory,
-      env: { ...process.env, HOME: home, TERM_PROGRAM: terminal, TMUX: `/different-${id}`, XDG_CACHE_HOME: join(home, id) },
+      env: { ...process.env, HOME: home, TERM_PROGRAM: terminal, TMUX: `/different-${id}`, XDG_CACHE_HOME: join(home, id),
+        REDIFF_TERMINAL_ID: createHash('sha256').update(id).digest('hex'),
+      },
       stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
     })
     t.after(async () => {
@@ -516,6 +518,7 @@ test('discovers and sends across independent terminal hosts and worktrees', { ti
   })).stdout)
   const all = await run('discover', '--all')
   assert.deepEqual(all.map((entry: any) => entry.session).sort(), ['T-terminal-one', 'T-terminal-two'])
+  for (const entry of all) assert.equal(entry.terminal, createHash('sha256').update(entry.session).digest('hex'))
   assert.deepEqual((await run('discover', root)).map((entry: any) => entry.session), ['T-terminal-one'])
   const target = all.find((entry: any) => entry.session === 'T-terminal-two')
   const payload = join(home, 'cross-terminal.json')
@@ -535,6 +538,27 @@ test('discovers and sends across independent terminal hosts and worktrees', { ti
   hosts[1].send('dispose')
   await exited
   assert.deepEqual((await run('discover', '--all')).map((entry: any) => entry.session), ['T-terminal-one'])
+})
+
+test('terminal identity follows the active thread, not older connections in the same CLI', async (t) => {
+  const previous = process.env.REDIFF_TERMINAL_ID
+  process.env.REDIFF_TERMINAL_ID = 'a'.repeat(64)
+  const f = fakeAmp()
+  try { await plugin(f.amp) } finally {
+    if (previous === undefined) delete process.env.REDIFF_TERMINAL_ID
+    else process.env.REDIFF_TERMINAL_ID = previous
+  }
+  t.after(() => Promise.all(f.disposers.map(dispose => dispose())))
+  const first = await connect(f, 'T-first')
+  const second = await connect(f, 'T-second')
+  const identity = async (c: typeof first) => (await fetch(c.descriptor.url, {
+    headers: { authorization: `Bearer ${c.descriptor.token}` },
+  })).json()
+  assert.equal((await identity(first)).terminal, undefined)
+  assert.equal((await identity(second)).terminal, 'a'.repeat(64))
+  await f.events.get('session.start')!({}, f.context('T-first'))
+  assert.equal((await identity(first)).terminal, 'a'.repeat(64))
+  assert.equal((await identity(second)).terminal, undefined)
 })
 
 test('editor bridge sends rules once before annotations or message, without prose wrappers', async (t) => {

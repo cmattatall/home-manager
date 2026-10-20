@@ -226,6 +226,9 @@ function M.statusline(root)
 		return "harness: unavailable"
 	end
 	local label = s.target.name == "none" and "local" or s.target.name
+	if s.target.name == "none" and s.provider ~= "none" then
+		label = s.provider .. " · not connected"
+	end
 	local id = s.target.session
 	if id then
 		label = label .. " · " .. (#id > 12 and ("…" .. id:sub(-8)) or id)
@@ -348,10 +351,10 @@ function M.new(provider)
 		local executable = vim.fn.exepath(name)
 		assert(executable ~= "", "Install/authenticate the " .. name .. " CLI and put it on PATH first")
 		-- A fresh CLI has no session ID yet. Do not resume the saved feedback target.
-		M.launch(s.root, { executable }, { name = name })
 		M.select(s.root, { name = "none" })
 		s.provider = name
 		save(s)
+		M.launch(s.root, { executable }, { name = name })
 	end
 	if provider then
 		create(provider)
@@ -411,6 +414,57 @@ function M.move_pane(tab)
 	end
 end
 
+local function bind_new_terminal(root, job, owned)
+	local s = M.get(root)
+	local epoch = s.epoch
+	local function valid()
+		if s.epoch ~= epoch then
+			return false
+		end
+		if jobs[root][job] ~= owned then
+			s.connection_error = "Amp exited before feedback connected. Open a harness with :harness open, then retry. Notes are kept; nothing sent."
+			s.delivery = "disconnected"
+			vim.cmd.redrawstatus()
+			return false
+		end
+		return true
+	end
+	s.connection_error = "Amp feedback is not connected yet. Start a thread in the harness; if it stays disconnected, use :harness install amp, reload its plugin, then :harness connect amp. Notes are kept; nothing sent."
+	s.delivery = "connecting"
+	local function discover()
+		if not valid() then
+			return
+		end
+		vim.system({ "rediff-amp-live", "discover", root }, { text = true, timeout = 5000 }, function(result)
+			vim.schedule(function()
+				if not valid() then
+					return
+				end
+				local ok, matches = pcall(vim.json.decode, result.stdout or "")
+				if result.code == 0 and ok and type(matches) == "table" and not feedback.busy(root) then
+					local matching = vim.tbl_filter(function(entry)
+						return type(entry) == "table"
+							and entry.root == root
+							and entry.terminal == owned.terminal
+							and type(entry.session) == "string"
+							and type(entry.connection) == "string"
+					end, matches)
+					if #matching == 1 then
+						owned.session = matching[1].session
+						M.select(root, vim.tbl_extend("force", matching[1], { name = "amp-live" }))
+						vim.cmd.redrawstatus()
+						return
+					end
+				end
+				-- A fresh TUI may not create a thread until its first prompt. Keep
+				-- waiting for this terminal, never guess from another same-root CLI.
+				vim.defer_fn(discover, 1000)
+			end)
+		end)
+	end
+	discover()
+end
+
 function M.launch(root, argv, target)
 	for _, owned in pairs(jobs[root] or {}) do
 		assert(
@@ -423,6 +477,7 @@ function M.launch(root, argv, target)
 		buf = api.nvim_create_buf(false, true),
 		provider = target and feedback.provider(target) or M.get(root).provider,
 		session = target and target.session,
+		terminal = vim.fn.sha256(tostring(vim.uv.os_getpid()) .. ":" .. tostring(vim.uv.hrtime())),
 	}
 	vim.bo[owned.buf].bufhidden = "hide"
 	vim.b[owned.buf].rediff_harness_root = root
@@ -507,6 +562,7 @@ function M.launch(root, argv, target)
 		-- wl-copy on an SSH server. Keep these wrappers out of the editor's PATH
 		-- so its own clipboard provider cannot recursively invoke them.
 		env.PATH = vim.env.REDIFF_RUNTIME .. "/clipboard-bin:" .. env.PATH
+		env.REDIFF_TERMINAL_ID = owned.terminal
 	end
 	local job = vim.fn.jobstart(argv, {
 		cwd = root,
@@ -524,6 +580,9 @@ function M.launch(root, argv, target)
 	})
 	assert(job > 0, "Could not start harness; worktree retained at " .. root)
 	jobs[root][job] = owned
+	if owned.provider == "amp" and not owned.session then
+		bind_new_terminal(root, job, owned)
+	end
 	vim.cmd.startinsert()
 	return job
 end
@@ -1016,10 +1075,20 @@ function M.stop(root)
 	end
 end
 
-function M.deliver(root, id, path, argv, retry, callback)
+function M.command(root)
 	local s = M.get(root)
 	assert(not s.restoring, "Checking the saved harness session. Try again shortly.")
 	assert(not s.connection_error, s.connection_error)
+	assert(
+		s.target.name ~= "none" or (s.provider == "none" and not next(jobs[root] or {})),
+		"Feedback not sent: no harness is connected. Use :harness connect to select the running session. Notes are kept."
+	)
+	return feedback.command(s.target)
+end
+
+function M.deliver(root, id, path, argv, retry, callback)
+	local s = M.get(root)
+	assert(vim.deep_equal(argv, M.command(root)), "Harness changed; submit again to the selected session")
 	assert(not feedback.busy(root), "A feedback delivery is already running for this repository")
 	s.last = { id = id, path = path, argv = vim.deepcopy(argv) }
 	save(s)

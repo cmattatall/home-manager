@@ -462,6 +462,16 @@ Resumed live Amp sessions reconnect feedback when their plugin registers a fresh
 endpoint for the same thread and worktree. Until then, annotations remain saved;
 retry :w after the connection is ready.
 
+Fresh embedded Amp terminals automatically bind feedback after the first thread
+starts. Update the bundled Amp plugin with :harness install amp and reload it in
+Amp after upgrading the editor. Launch identity distinguishes this terminal from
+other Amp processes in the same checkout. Explicit target changes cancel pending
+automatic binding. A configured/open but unconnected harness blocks :w with a
+"nothing sent" message and keeps the notes; it never silently falls back to the
+local outbox. Local-only review requires no configured/running harness. Keep the
+editor open while reconnecting: unsent notes remain process-local. Retry :w once
+the target is connected.
+
 Plugin installation asks for confirmation, preserves Home Manager symlinks, and
 does not install/authenticate the Amp CLI. With a live target, it also requests
 an agent-mediated reload; queued does not mean reloaded. Without one, reload Amp

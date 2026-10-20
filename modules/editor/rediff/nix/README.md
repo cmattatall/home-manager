@@ -488,6 +488,16 @@ session in a different worktree, it refuses to launch it in the wrong directory.
 A resumed live Amp session reconnects feedback when its plugin registers
 a fresh endpoint for the same thread and worktree. Until then, annotations stay saved;
 retry **:w** after it connects. OMP resumption is unsupported.
+Fresh embedded Amp terminals also bind feedback automatically once their first
+thread starts. This requires the current readiff Amp plugin: after upgrading the
+editor, run **:harness install amp** and reload the plugin in Amp. Each launch has
+its own terminal identity, so another Amp process in the same checkout cannot
+receive its notes by accident. Explicitly changing/disconnecting the target cancels
+the pending automatic connection. While a configured or open harness is unconnected,
+**:w** keeps the notes and reports that nothing was sent; it does not silently
+switch to local-outbox delivery. Local-only review remains available when no
+harness is configured or running. Notes remain process-local until submitted;
+keep the editor open while reconnecting, then retry **:w**.
 Editor exit stops its terminal processes.
 If a launch fails, the new worktree is retained and an error is reported.
 
@@ -791,9 +801,11 @@ Switch harnesses without rebuilding:
 ```
 
 Claude uses `claude --print --resume SESSION_ID --output-format json`. `none`
-returns to the local outbox. With `harness = "amp"` or `"claude"`, submitting
-before selecting a session fails rather than guessing the most recent session.
-With the default `harness = "none"`, feedback is queued locally only.
+clears the feedback target; it does not disable a previously selected launch
+provider. With a configured or running harness, submitting before selecting a
+session fails rather than guessing a session or silently queuing locally.
+With the default `harness = "none"` and no selected or running provider, feedback
+is queued locally only.
 
 Adapters do not pause agents or bypass their permission configuration. Keep
 the editor running until delivery completes. `completed` means the agent turn

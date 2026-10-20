@@ -329,8 +329,9 @@ return function(root, equal, fails, keys)
 	local retained = annotate("Unsent review comment")
 	vim.cmd("Harness disconnect")
 	fails(harness.retry, "Harness changed")
+	fails(review.submit, "Feedback not sent")
 	equal(
-		"harness: local · idle",
+		"harness: amp · not connected · idle",
 		harness.statusline(root),
 		"Disconnect cannot attribute old delivery to a new target"
 	)
