@@ -549,6 +549,8 @@ Nix bundles nvim-lspconfig and servers for Lua, Nix, Python, JS/TypeScript,
 Go (gopls), and Rust (rust-analyzer). Go and Rust use your project's toolchain;
 provide go or cargo/rustc on PATH. Nix supplies Rust standard-library sources;
 set RUST_SRC_PATH to use sources matching a different project toolchain.
+The Nix server automatically fetches missing flake inputs. A statusline spinner
+shows "Fetching flake inputs" while it works; editing remains available.
 Configure your terminal to send Option+Enter as Alt/Meta+Enter; use gd if it
 sends plain Enter instead. Insert-mode editing is unchanged.
 

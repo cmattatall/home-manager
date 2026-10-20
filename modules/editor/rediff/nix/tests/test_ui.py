@@ -2386,6 +2386,61 @@ func greeting() string {
                         self.assertNotEqual(normal, cell[1]["foreground"])
                 self.keys(editor, "gT")
 
+    def test_flake_fetch_is_automatic_and_shows_nonblocking_activity(self):
+        source = Path(self.root, "example.nix")
+        source.write_text('let greeting = "hi"; in greeting\n')
+        editor = self.launch(self.root, file=str(source))
+        self.wait_for(
+            editor,
+            "#vim.lsp.get_clients({bufnr=0, name='nil_ls'}) == 1",
+        )
+        editor.exec_lua(
+            "_G.nil_client = vim.lsp.get_clients({bufnr=0, name='nil_ls'})[1]"
+        )
+        self.wait_for(editor, "nil_client.initialized")
+        self.assertTrue(
+            editor.exec_lua(
+                "return vim.tbl_get(nil_client.config, 'settings', 'nil', 'nix', 'flake', 'autoArchive')"
+            )
+        )
+        editor.exec_lua(
+            """
+            function _G.fetch_progress(kind, token)
+                vim.lsp.handlers['$/progress'](nil, {
+                    token=token or 'nil/flakeArchiveProgress',
+                    value={kind=kind, title='Fetching flake with inputs'},
+                }, {client_id=nil_client.id})
+            end
+            """
+        )
+
+        def status():
+            return editor.api.eval_statusline(editor.options["statusline"], {})["str"]
+
+        self.assertNotIn("Fetching flake inputs", status())
+        editor.exec_lua("fetch_progress('begin')")
+        self.assertIn("Fetching flake inputs", status())
+        # nil sends no intermediate reports while archiving; the spinner must
+        # continue moving without further notifications, even as we edit.
+        self.keys(editor, "A # still editable<Esc>")
+        self.assertIn("# still editable", editor.current.line)
+        editor.vars["busy_status"] = status()
+        self.wait_for(
+            editor,
+            "vim.api.nvim_eval_statusline(vim.o.statusline, {}).str ~= vim.g.busy_status",
+        )
+        editor.exec_lua("fetch_progress('end', 'nil/flakeEvaluationProgress')")
+        self.assertIn("Fetching flake inputs", status())
+        editor.exec_lua("fetch_progress('end')")
+        self.assertNotIn("Fetching flake inputs", status())
+        # An abruptly stopped server must not leave a permanent busy indicator.
+        editor.exec_lua("fetch_progress('begin'); nil_client:stop(true)")
+        self.wait_for(
+            editor,
+            "not vim.api.nvim_eval_statusline(vim.o.statusline, {}).str:find('Fetching flake inputs', 1, true)",
+        )
+        self.assertFalse(editor.api.get_mode()["blocking"])
+
     def test_bundled_language_servers_resolve_review_definitions(self):
         cases = (
             (

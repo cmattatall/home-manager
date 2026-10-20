@@ -240,9 +240,7 @@ vim.api.nvim_create_autocmd("VimEnter", {
 })
 
 local review = require("rediff.review")
-vim.lsp.config("lua_ls", { settings = { Lua = { workspace = { checkThirdParty = false } } } })
-vim.lsp.config("gopls", { settings = { gopls = { semanticTokens = true } } })
-vim.lsp.enable({ "lua_ls", "nil_ls", "pyright", "ts_ls", "gopls", "rust_analyzer" })
+require("rediff.lsp").setup()
 review.setup()
 require("rediff.annotations").setup()
 require("rediff.harness").setup()
@@ -293,7 +291,7 @@ vim.keymap.set("n", "<leader>E", function()
 	end
 end, { desc = "Toggle file tree (focus in Review)" })
 vim.opt.laststatus = 3
-vim.opt.statusline = "%{%v:lua.require('rediff.review').statusline()%}"
+vim.opt.statusline = "%{%v:lua.require('rediff.review').statusline()%}%{%v:lua.require('rediff.lsp').statusline()%}"
 function _G.RediffCloseBuffer(_, _, button)
 	if button == "l" then
 		vim.api.nvim_win_call(vim.fn.getmousepos().winid, function()
