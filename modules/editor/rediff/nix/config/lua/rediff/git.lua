@@ -26,7 +26,29 @@ local function paths(root, args)
 	return vim.split(M.run(root, args), "\0", { plain = true, trimempty = true })
 end
 
-function M.entries(root)
+function M.comparison(root, base, head)
+	local function resolve(ref)
+		return vim.trim(M.run(root, { "rev-parse", "--verify", "--end-of-options", ref .. "^{commit}" }))
+	end
+	return { base = resolve(base), head = resolve(head) }
+end
+
+function M.entries(root, comparison)
+	if comparison then
+		local fields =
+			paths(root, { "diff", "--name-status", "--no-renames", "-z", comparison.base, comparison.head, "--" })
+		local result = {}
+		for i = 1, #fields, 2 do
+			table.insert(result, {
+				path = fields[i + 1],
+				group = "branch",
+				status = fields[i],
+				base = comparison.base,
+				head = comparison.head,
+			})
+		end
+		return result
+	end
 	assert(
 		#paths(root, { "diff", "--name-only", "--diff-filter=U", "-z" }) == 0,
 		"Resolve merge conflicts before entering Review"
@@ -100,11 +122,17 @@ function M.snapshot(root, entry, buffer_text)
 		old, new = "", worktree(root, entry.path)
 		patch = vim.diff(old, new, { result_type = "unified", ctxlen = 3 })
 	else
-		old = blob(root, entry.group == "staged" and "HEAD" or "", entry.path)
-		new = entry.group == "staged" and blob(root, "", entry.path) or worktree(root, entry.path)
+		if entry.group == "branch" then
+			old, new = blob(root, entry.base, entry.path), blob(root, entry.head, entry.path)
+		else
+			old = blob(root, entry.group == "staged" and "HEAD" or "", entry.path)
+			new = entry.group == "staged" and blob(root, "", entry.path) or worktree(root, entry.path)
+		end
 		local args =
 			{ "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "--binary", "--unified=3" }
-		if entry.group == "staged" then
+		if entry.group == "branch" then
+			vim.list_extend(args, { entry.base, entry.head })
+		elseif entry.group == "staged" then
 			table.insert(args, "--cached")
 		end
 		vim.list_extend(args, { "--", entry.path })
@@ -112,11 +140,23 @@ function M.snapshot(root, entry, buffer_text)
 	end
 	assert(not old:find("\0", 1, true) and not new:find("\0", 1, true), "Binary files cannot be annotated")
 	assert(#old <= 2 * 1024 * 1024 and #new <= 2 * 1024 * 1024, "File exceeds the 2 MiB review limit")
-	local head = vim.trim(M.run(root, { "rev-parse", "--verify", "HEAD" }, nil, true))
-	local id = vim.fn.sha256(
-		table.concat({ root, entry.group, entry.path, head, vim.fn.sha256(old), vim.fn.sha256(new), patch }, "\0")
-	)
-	return { id = id, path = entry.path, group = entry.group, head = head, old = old, new = new, patch = patch }
+	local head = entry.group == "branch" and entry.head
+		or vim.trim(M.run(root, { "rev-parse", "--verify", "HEAD" }, nil, true))
+	local identity = { root, entry.group, entry.path, head, vim.fn.sha256(old), vim.fn.sha256(new), patch }
+	if entry.base then
+		table.insert(identity, entry.base)
+	end
+	local id = vim.fn.sha256(table.concat(identity, "\0"))
+	return {
+		id = id,
+		path = entry.path,
+		group = entry.group,
+		base = entry.base,
+		head = head,
+		old = old,
+		new = new,
+		patch = patch,
+	}
 end
 
 function M.buffer_snapshot(root, path, buf)
@@ -159,6 +199,7 @@ function M.hunks(patch)
 end
 
 function M.stage(root, snapshot, side, line, whole_file)
+	assert(snapshot.group ~= "branch", "Staging is unavailable in branch diff mode; use :Review for worktree changes")
 	M.validate(root, snapshot)
 	if snapshot.group == "untracked" then
 		local _, hunks = M.hunks(snapshot.patch)
@@ -193,6 +234,7 @@ end
 
 -- Reverse only the selected Git hunks, never replace a whole-file snapshot.
 function M.revert(root, snapshot, side, first, last)
+	assert(snapshot.group ~= "branch", "Reverting is unavailable in branch diff mode; use :Review for worktree changes")
 	assert(snapshot.group ~= "buffer", "Refresh to current Git changes before reverting")
 	M.validate(root, snapshot)
 	local patch = snapshot.patch

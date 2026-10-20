@@ -199,7 +199,12 @@ vim.api.nvim_create_autocmd("ColorScheme", { callback = explorer_highlights })
 vim.api.nvim_create_autocmd("VimEnter", {
 	once = true,
 	callback = vim.schedule_wrap(function()
-		if #vim.api.nvim_list_uis() == 0 or vim.fn.argc() > 0 or not pcall(require("rediff.git").root) then
+		if
+			#vim.api.nvim_list_uis() == 0
+			or vim.fn.argc() > 0
+			or require("rediff.review").state
+			or not pcall(require("rediff.git").root)
+		then
 			return
 		end
 		require("neo-tree.command").execute({

@@ -71,7 +71,7 @@ end
 function M.start(s)
 	-- Replace timers so restarting cannot duplicate polling or queued event checks.
 	M.stop(s)
-	if #api.nvim_list_uis() == 0 then
+	if s.comparison or #api.nvim_list_uis() == 0 then
 		return
 	end
 	local interval = require("rediff.feedback").settings().review_refresh_interval

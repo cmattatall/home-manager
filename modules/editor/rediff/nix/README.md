@@ -51,6 +51,24 @@ ordinary editing without a sidebar.
 If Review is locked by another editor or cannot open, startup reports the
 reason and leaves ordinary editing available. Startup never sends feedback.
 
+To compare two commits, enter **`:git diff BASE TARGET`**, for example
+`:git diff main HEAD` or `:git diff HEAD~3 HEAD~1`. Full and abbreviated SHAs,
+branches, and tags are accepted. OLD shows BASE; NEW shows TARGET. This compares
+the two endpoints directly, not their merge base, and excludes local changes.
+Both refs are pinned to SHAs until you run `:git diff` again. Split/merged views,
+navigation, filtering, and annotations remain available; staging and reverting
+are disabled. Renames appear as a deletion and addition. **`:Review`** returns
+to staged/unstaged worktree changes, preserving notes and their original snapshots.
+
+Typed **`:gd BASE TARGET`** is a shortcut for `:git diff`, both inside and outside
+Review. Normal-mode `gd` is unchanged. Scripts should use `:Git diff` directly.
+
+**`:git base BASE`** changes only the base, keeping the current comparison's
+target SHA pinned. If no commit comparison is open, it compares BASE against
+the current `HEAD`. It does not check out commits or change local files/index.
+Scripts can use `:Git base BASE`. Tab completes `base` and `diff`; other Git
+subcommands are not supported.
+
 **Right-click a path** in either tree and choose **Copy Relative Path** from the
 context menu to copy its repository-relative path to the system clipboard.
 Outside Git, paths are relative to the filesystem explorer's root. Opening or

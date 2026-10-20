@@ -134,7 +134,14 @@ local function retain(items, predicate)
 end
 
 local function entry_key(entry)
-	return entry.group .. "\0" .. entry.path
+	return entry.group
+		.. "\0"
+		.. entry.path
+		.. (entry.group == "branch" and ("\0" .. entry.base .. "\0" .. entry.head) or "")
+end
+
+local function tree_group(entry)
+	return entry.group == "untracked" and "unstaged" or entry.group
 end
 
 local function save(s)
@@ -482,7 +489,7 @@ local function select_tree_file(keep_fold)
 	for row, item in pairs(s.rows) do
 		if item == s.index then
 			local entry = s.entries[item]
-			local group = entry.group == "staged" and "staged" or "unstaged"
+			local group = tree_group(entry)
 			if not keep_fold or not s.collapsed[group] then
 				s.tree_selection[group] = entry_key(entry)
 			end
@@ -574,11 +581,11 @@ function M.show(index, snapshot, keep_fold)
 	else
 		vim.wo[s.old_win].winbar = path
 			.. " %= OLD · "
-			.. (buffer_snapshot and "BUFFER" or (snapshot.group == "staged" and "HEAD" or "INDEX"))
+			.. (snapshot.base and snapshot.base:sub(1, 12) or (buffer_snapshot and "BUFFER" or (snapshot.group == "staged" and "HEAD" or "INDEX")))
 			.. " "
 		vim.wo[s.new_win].winbar = path
 			.. " %= NEW · "
-			.. (buffer_snapshot and "BUFFER" or (snapshot.group == "staged" and "INDEX" or "WORKTREE"))
+			.. (snapshot.base and snapshot.head:sub(1, 12) or (buffer_snapshot and "BUFFER" or (snapshot.group == "staged" and "INDEX" or "WORKTREE")))
 			.. " "
 		s.diff = renderer.compute_and_render(
 			s.old_buf,
@@ -650,8 +657,9 @@ function M.view(layout)
 end
 
 local function read_changes(s, preferred)
-	local reference = git.reference(s.root)
-	local entries = git.entries(s.root)
+	local reference = s.comparison and (s.comparison.base:sub(1, 12) .. " → " .. s.comparison.head:sub(1, 12))
+		or git.reference(s.root)
+	local entries = git.entries(s.root, s.comparison)
 	if s.file_match then
 		retain(entries, s.file_match)
 	end
@@ -659,7 +667,7 @@ local function read_changes(s, preferred)
 	if s.exhausted_group then
 		index = nil
 		for i, entry in ipairs(entries) do
-			if (entry.group == "staged") == (s.exhausted_group == "staged") then
+			if tree_group(entry) == s.exhausted_group then
 				index = i
 				break
 			end
@@ -697,22 +705,22 @@ function M.refresh(preferred, changes)
 	changes = changes or read_changes(s, preferred)
 	s.annotation_id = nil
 	s.entries, s.reference = changes.entries, changes.reference
-	local lines, rows = { " REVIEW · Git changes", "" }, {}
+	local lines, rows = { s.comparison and " BRANCH DIFF · Commits" or " REVIEW · Git changes", "" }, {}
 	if s.file_filter and s.file_filter ~= "" then
 		lines[2] = " / " .. vim.fn.strtrans(s.file_filter)
 	end
 	s.group_rows = {}
-	for _, group in ipairs({ "staged", "unstaged" }) do
+	for _, group in ipairs(s.groups) do
 		local count = 0
 		for _, entry in ipairs(s.entries) do
-			if (entry.group == "staged") == (group == "staged") then
+			if tree_group(entry) == group then
 				count = count + 1
 			end
 		end
 		table.insert(lines, string.format(" ▾ %s (%d)", group:upper(), count))
 		s.group_rows[group] = #lines
 		for i, entry in ipairs(s.entries) do
-			if (entry.group == "staged") == (group == "staged") then
+			if tree_group(entry) == group then
 				table.insert(lines, " " .. entry.status .. " " .. vim.fn.strtrans(entry.path))
 				rows[#lines] = i
 			end
@@ -739,9 +747,9 @@ function M.refresh(preferred, changes)
 	end
 	api.nvim_win_call(s.tree_win, function()
 		vim.cmd("normal! zE")
-		for _, group in ipairs({ "staged", "unstaged" }) do
+		for i, group in ipairs(s.groups) do
 			local first = s.group_rows[group]
-			local last = group == "staged" and s.group_rows.unstaged - 2 or #lines - 1
+			local last = s.groups[i + 1] and s.group_rows[s.groups[i + 1]] - 2 or #lines - 1
 			vim.cmd(string.format("%d,%dfold", first, last))
 			if not s.collapsed[group] then
 				vim.cmd(first .. "foldopen!")
@@ -772,6 +780,11 @@ function M.refresh(preferred, changes)
 		end
 		if #s.entries == 0 and s.file_filter and s.file_filter ~= "" then
 			vim.wo[s.new_win].winbar = " No matching files · / in tree to change filter"
+			if s.old_win then
+				vim.wo[s.old_win].winbar = ""
+			end
+		elseif s.comparison then
+			vim.wo[s.new_win].winbar = " No differences between commits "
 			if s.old_win then
 				vim.wo[s.old_win].winbar = ""
 			end
@@ -840,7 +853,7 @@ end
 function M.tree_fold(collapsed)
 	local s = state()
 	local row = api.nvim_win_get_cursor(s.tree_win)[1]
-	local group = row >= s.group_rows.unstaged and "unstaged" or "staged"
+	local group = s.comparison and "branch" or (row >= s.group_rows.unstaged and "unstaged" or "staged")
 	if (s.collapsed[group] == true) == collapsed then
 		return
 	end
@@ -856,7 +869,7 @@ function M.tree_fold(collapsed)
 		vim.cmd(s.group_rows[group] .. "foldopen!")
 		local first, selected
 		for i, entry in ipairs(s.entries) do
-			if (entry.group == "staged") == (group == "staged") then
+			if tree_group(entry) == group then
 				first = first or i
 				if entry_key(entry) == s.tree_selection[group] then
 					selected = i
@@ -947,6 +960,7 @@ end
 
 function M.focus(group)
 	local s = assert(M.active(), "Enter Review first")
+	assert(not s.comparison, "Staged/unstaged groups are unavailable in branch diff mode; use :Review")
 	assert(group == "staged" or group == "unstaged", "Usage: focus staged|unstaged")
 	local win = api.nvim_get_current_win()
 	for i, entry in ipairs(s.entries) do
@@ -1112,6 +1126,7 @@ end
 
 function M.stage(whole_file, unstage)
 	local s = assert(M.active(), "Enter Review first")
+	assert(not s.comparison, "Staging is unavailable in branch diff mode; use :Review for worktree changes")
 	assert(not s.annotation_id, "Press Space R to return to current files before staging")
 	local win = api.nvim_get_current_win()
 	local snapshot, side, line = s.current, "new", 1
@@ -1170,6 +1185,7 @@ end
 
 function M.revert(first, last)
 	local s = assert(M.active(), "Enter Review first")
+	assert(not s.comparison, "Reverting is unavailable in branch diff mode; use :Review for worktree changes")
 	assert(not s.annotation_id, "Press Space R to return to current files before reverting")
 	assert(not s.composer, "Close the annotation before reverting")
 	local side = side_at_cursor()
@@ -1772,14 +1788,20 @@ function M.leave()
 	api.nvim_exec_autocmds("User", { pattern = "ReviewLeave" })
 end
 
-function M.open(root)
+function M.open(root, comparison)
+	root = root or (M.state and M.state.root) or git.root()
 	if M.state then
-		assert(not root or root == M.state.root, "Leave the other repository's Review first")
-		api.nvim_set_current_tabpage(M.state.tab)
-		return
+		assert(root == M.state.root, "Leave the other repository's Review first")
+		if vim.deep_equal(comparison, M.state.comparison) then
+			api.nvim_set_current_tabpage(M.state.tab)
+			return
+		end
 	end
-	root = root or git.root()
-	git.entries(root) -- Validate before changing windows.
+	git.entries(root, comparison) -- Validate before changing windows.
+	if M.state then
+		assert(not M.state.composer, "Save or close the current annotation before switching diff modes")
+		M.leave()
+	end
 	local target = harness.get(root).target
 	local directory = feedback.directory(root)
 	local lock = directory .. "/editor.lock"
@@ -1794,6 +1816,8 @@ function M.open(root)
 	local pending = M.notes(root)
 	local s = {
 		root = root,
+		comparison = comparison,
+		groups = comparison and { "branch" } or { "staged", "unstaged" },
 		directory = directory,
 		comments = pending.comments or {},
 		drafts = pending.drafts or {},
@@ -1901,7 +1925,7 @@ function M.statusline()
 	if s and api.nvim_get_current_tabpage() == s.tab then
 		local file = s.current and vim.fn.strtrans(s.current.path):gsub("%%", "%%%%")
 			or (#s.entries > 0 and "No file selected" or "No changes")
-		return "%#RediffMode# REVIEW %*· "
+		return (s.comparison and "%#RediffMode# BRANCH DIFF %*· " or "%#RediffMode# REVIEW %*· ")
 			.. vim.fn.strtrans(s.reference or ""):gsub("%%", "%%%%")
 			.. " · "
 			.. harness.statusline(s.root)
@@ -2026,7 +2050,9 @@ function M.setup()
 				-- Closed and empty groups are selectable; hidden files and separators are not.
 				local function selectable(row)
 					local closed = vim.fn.foldclosed(row)
-					local header = row == s.group_rows.staged or row == s.group_rows.unstaged
+					local header = row == s.group_rows.staged
+						or row == s.group_rows.unstaged
+						or row == s.group_rows.branch
 					return closed == row or (closed == -1 and (s.rows[row] ~= nil or (header and not s.rows[row + 1])))
 				end
 				local empty_group = s.exhausted_group and cursor[1] == s.group_rows[s.exhausted_group]
@@ -2188,6 +2214,37 @@ function M.setup()
 			M.revert(opts.line1, opts.line2)
 		end),
 		{ range = true, desc = "Revert selected Git hunks and notify the agent" }
+	)
+	api.nvim_create_user_command(
+		"Git",
+		guard(function(opts)
+			local action = opts.fargs[1]
+			assert(
+				(action == "diff" and #opts.fargs == 3) or (action == "base" and #opts.fargs == 2),
+				"Usage: git diff BASE TARGET | git base BASE (commit SHAs, branches, or tags)"
+			)
+			local root = M.state and M.state.root or git.root()
+			local head = opts.fargs[3]
+			if action == "base" then
+				head = M.state and M.state.comparison and M.state.comparison.head or "HEAD"
+			end
+			M.open(root, git.comparison(root, opts.fargs[2], head))
+		end),
+		{
+			nargs = "*",
+			complete = function(lead, line, position)
+				if line:sub(1, position):match("^%s*Git%s+%S*$") then
+					return vim.tbl_filter(function(action)
+						return vim.startswith(action, lead)
+					end, { "base", "diff" })
+				end
+				return {}
+			end,
+		}
+	)
+	vim.cmd([[cnoreabbrev <expr> git getcmdtype() == ':' && getcmdline() == 'git' && getcmdpos() == 4 ? 'Git' : 'git']])
+	vim.cmd(
+		[[cnoreabbrev <expr> gd getcmdtype() == ':' && getcmdline() == 'gd' && getcmdpos() == 3 ? 'Git diff' : 'gd']]
 	)
 	local commands = {
 		Review = M.open,

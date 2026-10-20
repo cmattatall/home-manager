@@ -22,6 +22,7 @@ function M.suffix(line)
 		lead, matches = line, vim.fn.getcompletion(line, "command")
 	elseif
 		line:match("^Harness%s+[%a%s]*$")
+		or line:match("^Git%s+%a*$")
 		or line:match("^Focus%s+%a*$")
 		or line:match("^Worktree%s+%a*$")
 		or line:match("^Annotations%s+%a*$")
