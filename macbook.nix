@@ -16,6 +16,10 @@ in
 
   home.stateVersion = "26.05";
   home.sessionPath = [ "${config.home.profileDirectory}/bin" ];
+  nix.gc = {
+    automatic = true;
+    dates = "daily";
+  };
   # OMP is absent and Amp is older in the stable release.
   # Unstable no longer supports Intel Macs.
   nixpkgs.overlays = [
