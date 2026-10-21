@@ -5061,6 +5061,34 @@ func greeting() string {
             index, subprocess.check_output(["git", "-C", self.root, "write-tree"])
         )
 
+    def test_editing_pkl_keeps_nested_source_visible(self):
+        lines = [
+            'name = "sample"',
+            '',
+            'pxe {',
+            '  enabled = true',
+            '  boot {',
+            '    image = "boot.img"',
+            '  }',
+            '}',
+        ]
+        path = Path(self.root, "test.pkl")
+        path.write_text("\n".join(lines) + "\n")
+        editor = self.launch(self.root, file=str(path))
+        self.assertEqual("pkl", editor.current.buffer.options["filetype"])
+        for command in (None, "edit!", "vsplit", "enew | edit " + str(path)):
+            with self.subTest(command=command):
+                if command:
+                    editor.command(command)
+                pump(editor)
+                self.assertEqual(lines, editor.current.buffer[:])
+                for row in range(1, len(lines) + 1):
+                    self.assertEqual(-1, editor.funcs.foldclosed(row))
+        # Folding remains available when explicitly requested.
+        editor.command("setlocal foldenable")
+        editor.command("normal! zM")
+        self.assertEqual(3, editor.funcs.foldclosed(6))
+
     def test_review_keeps_source_visible_across_filetype_and_layout_changes(self):
         files = {
             "test.pkl": ['name = "sample"', '', 'output {', '  value = 123', '}'],

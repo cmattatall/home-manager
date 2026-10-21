@@ -21,6 +21,8 @@ vim.opt.shiftwidth = 4
 vim.opt.tabstop = 4
 vim.opt.autowrite = false
 vim.opt.autowriteall = false
+-- Filetype plugins (including Pkl) define folds; don't hide source by default.
+vim.opt.foldenable = false
 require("rose-pine").setup({
 	variant = "main",
 	dark_variant = "main",
