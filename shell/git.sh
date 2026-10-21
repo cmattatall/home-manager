@@ -407,7 +407,7 @@ git_contributors() {
 git_worktree_add() {
     if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
         echo "Usage: git_worktree_add <path>"
-        echo "Add a worktree and copy supported repository-local files into it."
+        echo "Add a worktree and copy supported local files, including ignored .envrc files below the current directory."
         return 0
     fi
 
@@ -418,6 +418,13 @@ git_worktree_add() {
     fi
 
     git worktree add "$worktree_path" || return
+
+    local prefix envrc
+    prefix=$(git rev-parse --show-prefix) || return
+    while IFS= read -r -d '' envrc; do
+        mkdir -p "$(dirname "$worktree_path/$prefix$envrc")" || return
+        cp "$envrc" "$worktree_path/$prefix$envrc" || return
+    done < <(git ls-files --others --ignored --exclude-standard -z -- '.envrc' ':(glob)**/.envrc')
 
     # Copy repository-local configuration and scratch files when present.
     if [ -d nix/config ]; then

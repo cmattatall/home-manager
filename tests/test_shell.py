@@ -227,6 +227,62 @@ class ZshStartupTest(StartupTestBase):
         self.assertIn("launchctl", result.stdout)
 
 
+@unittest.skipUnless(GIT, "git not installed")
+class GitWorktreeAddTest(StartupTestBase):
+    def test_copies_only_ignored_envrc_files_below_current_directory(self) -> None:
+        root = self.ordinary_dir
+        ignored = {
+            ".envrc": 'touch "$HOME/should-not-run"\n',
+            "ignored tree/line\nbreak/.envrc": "export NESTED=1\n",
+            "service/.envrc": "export SERVICE=1\n",
+            "service/nested dir/.envrc": "export CHILD=2\n",
+        }
+        files = {
+            **ignored,
+            "public/.envrc": "export NOT_IGNORED=1\n",
+            "tracked/.envrc": "export TRACKED=original\n",
+            "nix/config/user-aliases": "local aliases\n",
+            "tmp/pain.sh": "local pain\n",
+            "tmp/spells.sh": "local spells\n",
+        }
+        for relative, text in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        (root / ".gitignore").write_text(
+            "/.envrc\n/ignored tree/\n/service/**/.envrc\n/tracked/.envrc\n"
+        )
+        subprocess.run([GIT, "add", "-f", ".gitignore", "tracked/.envrc"], cwd=root, check=True)
+        subprocess.run(
+            [GIT, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+             "-c", "commit.gpgsign=false", "commit", "-qm", "Initial"],
+            cwd=root, check=True,
+        )
+        (root / "tracked/.envrc").write_text("export TRACKED=modified\n")
+        for shell in filter(None, [BASH, ZSH]):
+            for directory in (".", "service", "public"):
+                with self.subTest(shell=shell, directory=directory):
+                    cwd = root / directory
+                    destination = self.home / (Path(shell).name + "-" + ("root" if directory == "." else directory))
+                    relative_destination = os.path.relpath(destination, cwd)
+                    result = self.run_shell(
+                        shell, cwd, shell, f'git_worktree_add "{relative_destination}"\n'
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    for relative, text in ignored.items():
+                        copied = destination / relative
+                        if directory == "." or relative.startswith(directory + "/"):
+                            self.assertEqual(copied.read_text(), text)
+                        else:
+                            self.assertFalse(copied.exists(), relative)
+                    self.assertFalse((destination / "public/.envrc").exists())
+                    self.assertEqual((destination / "tracked/.envrc").read_text(), files["tracked/.envrc"])
+                    if directory == ".":
+                        for relative in ("nix/config/user-aliases", "tmp/pain.sh", "tmp/spells.sh"):
+                            self.assertEqual((destination / relative).read_text(), files[relative])
+                    self.assertFalse((self.home / "should-not-run").exists())
+
+
 class HomeManagerAliasTest(StartupTestBase):
     def test_hm_pull_updates_only_the_pin_and_preserves_failed_switch_for_retry(self) -> None:
         old, new = "a" * 40, "b" * 40
