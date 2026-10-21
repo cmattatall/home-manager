@@ -17,8 +17,27 @@ function M.active()
 	end
 end
 
+local function visible(root)
+	local selected, source_win
+	for _, win in ipairs(api.nvim_tabpage_list_wins(0)) do
+		local s = views[api.nvim_win_get_buf(win)]
+		if s and s.enabled and (not root or s.root == root) then
+			if selected and selected ~= s then
+				return -- Do not choose between different annotated files.
+			end
+			selected, source_win = s, win
+		end
+	end
+	if selected then
+		selected.new_win = source_win
+	end
+	return selected
+end
+
 function M.context()
-	return M.active() or views[api.nvim_get_current_buf()]
+	return M.active()
+		or views[api.nvim_get_current_buf()]
+		or (vim.b.rediff_harness_root and visible(vim.b.rediff_harness_root))
 end
 
 -- Return an undo operation so file mode restores existing buffer-local maps;
@@ -119,6 +138,7 @@ local function disable(s)
 	assert(not s.composer, "Save or close the annotation before leaving annotation mode")
 	s.enabled = false
 	s.restore_maps()
+	api.nvim_del_autocmd(s.write_autocmd)
 	vim.bo[s.new_buf].modifiable = s.modifiable
 	api.nvim_buf_clear_namespace(s.new_buf, ns, 0, -1)
 	vim.cmd.redrawstatus()
@@ -136,7 +156,13 @@ function M.toggle()
 		return
 	end
 	local buf, path = api.nvim_get_current_buf(), api.nvim_buf_get_name(0)
-	assert(vim.bo[buf].buftype == "" and path ~= "", "Open a named file in a Git checkout first")
+	if vim.bo[buf].buftype ~= "" or path == "" then
+		local source = visible(vim.b.rediff_harness_root)
+		assert(source, "Focus a named source file in a Git checkout to toggle annotations; the harness pane is only for agent input")
+		api.nvim_set_current_win(source.new_win)
+		disable(source)
+		return
+	end
 	local git = require("rediff.git")
 	local root = vim.trim(git.run(vim.fs.dirname(path), { "rev-parse", "--show-toplevel" }))
 	root = vim.uv.fs_realpath(root) or root
@@ -163,6 +189,13 @@ function M.toggle()
 	s.snapshots[snapshot.id] = snapshot
 	views[buf] = s
 	s.restore_maps = M.bind(buf, true)
+	s.write_autocmd = api.nvim_create_autocmd("BufWriteCmd", {
+		buffer = buf,
+		callback = function(event)
+			assert(event.match == api.nvim_buf_get_name(buf), "Leave annotation mode with Space a before writing another file")
+			review.submit()
+		end,
+	})
 	vim.bo[buf].modifiable = false
 	review.render_comments(false, s)
 end

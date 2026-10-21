@@ -105,12 +105,18 @@ v/V/Ctrl-v then a annotates an exact selection; d deletes a note; @ lists notes.
 Esc in the source (Normal mode), or Space a again, restores normal editing and
 any previous buffer-local mappings when no note editor is open. Esc never closes
 an open note or exits annotation mode while that note is open.
+From a harness or unnamed pane, Space a returns to the single visible annotated
+file and exits annotation mode. It does not guess between multiple annotated
+files or use a file from a different harness checkout; focus the source first.
 Review always has annotation mode on; Space a does not turn it off there.
 
-:w in the note saves the note locally. :w in an ordinary file STILL saves that
-file, even in annotation mode. Use :WriteFeedback to send saved notes through
-the selected harness (:harness use amp, etc.). Without a harness, feedback is
-queued locally. Notes are shared with Review in this editor process.
+:w in the note saves the note locally and closes it. Then :w or :write in the
+annotated source sends saved notes through the selected harness, without writing
+source edits. :w in its harness pane also sends when a single annotated source
+is visible. :WriteFeedback is the explicit send command. Leave annotation mode
+with Space a or Esc before using :w to save source edits. With no configured or
+running harness, feedback is queued locally. Notes are shared with Review in
+this editor process.
 
 Notes retain the exact buffer text at annotation time, including unsaved edits.
 Later edits never move their anchors. Jumping to a note on another or older

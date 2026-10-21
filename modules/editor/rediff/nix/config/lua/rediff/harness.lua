@@ -519,7 +519,7 @@ function M.launch(root, argv, target)
 	-- Terminal buffers reject writes before BufWriteCmd can handle them.
 	for _, command in ipairs({ "w", "write" }) do
 		vim.keymap.set("ca", command, function()
-			local review = require("rediff.review").active()
+			local review = require("rediff.review").active() or require("rediff.annotations").context()
 			if
 				vim.fn.getcmdtype() == ":"
 				and vim.fn.getcmdline() == command
@@ -530,7 +530,7 @@ function M.launch(root, argv, target)
 				return "WriteFeedback"
 			end
 			return command
-		end, { buffer = owned.buf, expr = true, desc = "Send this Review's annotations" })
+		end, { buffer = owned.buf, expr = true, desc = "Send this checkout's annotations" })
 	end
 	terminal_pane(root, owned.buf)
 	jobs[root] = jobs[root] or {}

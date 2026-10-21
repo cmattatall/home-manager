@@ -3008,7 +3008,7 @@ func greeting() string {
         self.assertEqual(source.number, editor.current.buffer.number)
         self.assertEqual(original, path.read_text())
         self.assertTrue(source.options["modified"])
-        self.keys(editor, ":WriteFeedback<CR>")
+        self.keys(editor, ":w<CR>")
         payload = editor.exec_lua(
             "local s=require('rediff.annotations').context(); return require('rediff.feedback').read(s.last_submission)"
         )
@@ -3024,10 +3024,10 @@ func greeting() string {
         self.assertEqual("buffer", snapshot["group"])
         self.assertEqual(annotated, snapshot["new"])
         self.assertEqual("changed", payload["snapshot_status"][snapshot["id"]])
-        # :w in a normal source remains a file write, not feedback delivery.
-        self.keys(editor, ":w<CR>")
-        self.assertEqual(annotated, path.read_text())
-        self.assertFalse(source.options["modified"])
+        # Sending from annotation mode never writes pending source edits.
+        self.keys(editor, ":write<CR>")
+        self.assertEqual(original, path.read_text())
+        self.assertTrue(source.options["modified"])
         # Deletion and draft handling use the same controls as Review.
         self.keys(editor, "diUnsent draft<Esc>")
         composer = editor.current.buffer.number
@@ -3051,6 +3051,10 @@ func greeting() string {
         self.keys(editor, "x<Esc>")
         self.assertTrue(editor.exec_lua("return vim.g.restored_map"))
         self.assertTrue(editor.exec_lua("return vim.g.restored_escape"))
+        # Leaving annotation mode restores ordinary file writes.
+        self.keys(editor, ":w<CR>")
+        self.assertEqual(annotated, path.read_text())
+        self.assertFalse(source.options["modified"])
         self.keys(editor, "ggI-- later edit <Esc>")
         self.assertEqual("-- later edit " + annotated, "\n".join(source[:]) + "\n")
         # Notes keep their exact original snapshot after ordinary editing.
@@ -3104,7 +3108,7 @@ func greeting() string {
             "require('rediff.review').select_harness('custom')",
             str(Path(FIXTURE).with_name("receiver.lua")),
         )
-        self.keys(editor, ":WriteFeedback<CR>")
+        self.keys(editor, ":w<CR>")
         submission = editor.exec_lua(
             "return require('rediff.annotations').context().last_submission"
         )
@@ -3133,6 +3137,61 @@ func greeting() string {
         self.assertTrue(editor.current.buffer.options["modifiable"])
         self.keys(editor, "ggI-- ordinary editing again<Esc>")
         self.assertTrue(editor.current.buffer[0].startswith("-- ordinary editing again"))
+
+    def test_file_annotations_follow_harness_and_empty_pane_focus(self):
+        path = Path(self.root, "auth.lua")
+        original = path.read_text()
+        editor = self.launch(self.root, file="auth.lua")
+        source, source_win = editor.current.buffer, editor.current.window
+        self.keys(editor, "ggI-- unsaved <Esc> a5GiSend from file mode<Esc>:w<CR>")
+        editor.exec_lua(
+            "local receiver=...; require('rediff.feedback').settings=function() "
+            "return {feedback_command={vim.v.progpath,'--headless','-u','NONE','-l',receiver,'ok'}} end; "
+            "require('rediff.review').select_harness('custom'); "
+            "require('rediff.harness').launch(require('rediff.annotations').context().root,{'sh','-c','exec sleep 60'})",
+            str(Path(FIXTURE).with_name("receiver.lua")),
+        )
+        terminal_win = editor.current.window
+        self.keys(editor, "<Esc>:w<CR>")
+        self.wait_for(editor, "#require('rediff.annotations').context().comments == 0")
+        submission = editor.exec_lua(
+            "return require('rediff.annotations').context().last_submission"
+        )
+        self.assertEqual("Send from file mode", json.loads(Path(submission).read_text())["comments"][0]["text"])
+        self.assertEqual("1", Path(submission + ".calls").read_text().strip())
+        self.assertEqual(terminal_win.handle, editor.current.window.handle)
+        self.assertEqual(original, path.read_text())
+        self.assertTrue(source.options["modified"])
+        self.keys(editor, ":write<CR>")
+        self.assertEqual("No agent notes to send to the harness", editor.vars["startup_notice"])
+
+        # Space a from the harness targets the visible annotated file, not the PTY.
+        self.keys(editor, " a")
+        self.assertEqual(source.number, editor.current.buffer.number)
+        self.assertTrue(source.options["modifiable"])
+        self.keys(editor, " a6GiRetain this note<Esc>:w<CR>:vnew<CR>")
+        self.assertEqual("", editor.current.buffer.name)
+        self.keys(editor, " a")
+        self.assertEqual(source.number, editor.current.buffer.number)
+        self.assertTrue(source.options["modifiable"])
+        self.assertEqual(1, editor.exec_lua("return #require('rediff.annotations').context().comments"))
+        self.keys(editor, " a")
+
+        # A different checkout's terminal cannot send or toggle this file's notes.
+        other_root = str(Path(self.directory.name, "other"))
+        subprocess.run(["git", "init", other_root], check=True, capture_output=True)
+        editor.exec_lua("require('rediff.harness').launch(...,{'sh','-c','exec sleep 60'})", other_root)
+        self.keys(editor, "<Esc>")
+        editor.exec_lua("vim.v.errmsg = ''")
+        self.keys(editor, ":w<CR>")
+        self.assertIn("E382", editor.vvars["errmsg"])
+        self.keys(editor, " a")
+        self.assertIn("Focus a named source file", editor.vars["startup_notice"])
+        self.assertFalse(source.options["modifiable"])
+        editor.current.window = source_win
+        self.assertEqual(1, editor.exec_lua("return #require('rediff.annotations').context().comments"))
+        self.assertEqual(original, path.read_text())
+        self.assertTrue(source.options["modified"])
 
     def test_visual_a_preserves_annotation_ranges_through_submission(self):
         editor = self.launch(self.root)

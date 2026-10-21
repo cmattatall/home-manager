@@ -235,8 +235,11 @@ your nixpkgs, including its Neovim and plugin versions. Update the editor with
    feedback or writes the source file. **:q** (or **:q!**) discards edits since
    the last write and closes. **i** on an annotated line edits the existing note;
    **:annotations new** starts a separate note on the same line.
-5. **:w** from a diff pane or Git sidebar submits the saved batch;
+5. **:w** from a diff pane, Git sidebar, or source file in **ANNOTATE** mode submits the saved batch;
    **:WriteFeedback** is an alias. Unsaved annotation text is never included.
+   Source edits stay unsaved in annotation mode; leave it with **Space a** or
+   **Esc** before using **:w** to save the file. The harness pane also accepts
+   **:w** when a single annotated source from its checkout is visible.
    With no receiver configured, feedback is queued locally only. Use
    **d** on an annotated source line to delete its note (choose from a picker
    if several overlap). Notes use a small orange icon and orange text below
