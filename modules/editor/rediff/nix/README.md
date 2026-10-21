@@ -714,9 +714,11 @@ command, then resumes it. A confirmed missing thread invalidates the saved ID an
 starts fresh. Network/authentication failures or a thread active in another local
 directory stop startup without discarding history. If Amp refuses the actual resume
 (for example, it is active elsewhere), the terminal shows the error; no replacement
-conversation is launched. Plugin reconnection waits at most 30 seconds; use
-`:harness connect amp` after resolving an error. Failed feedback is never resent
-by reconnecting.
+conversation is launched. Plugin reconnection keeps checking while the resumed CLI
+is running, so delayed network recovery reconnects automatically. Exiting the CLI
+or explicitly changing/disconnecting the harness stops those checks. Use
+`:harness connect amp` to connect manually. Failed feedback is never resent by
+reconnecting.
 
 `:w` in a Review diff pane or sidebar sends the saved annotation batch; its
 successful acknowledgment clears only those sent notes. An `accepted` ACK means

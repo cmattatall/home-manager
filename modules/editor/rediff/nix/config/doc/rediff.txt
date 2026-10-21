@@ -425,8 +425,10 @@ under $XDG_STATE_HOME/rediff/amp (default ~/.local/state/rediff/amp), including
 threads started outside Neovim. Empty welcome screens have no thread ID yet.
 A confirmed missing ID is invalidated; auth/network/active-elsewhere errors retain
 history and stop startup. Resume errors stay visible in the terminal and never
-silently launch a replacement. Reconnection stops after 30 seconds; resolve the
-error and run :harness connect amp.
+silently launch a replacement. Reconnection keeps checking while the resumed CLI
+runs, including during network recovery. Exiting the CLI or explicitly changing
+or disconnecting the harness stops those checks. Use :harness connect amp to
+connect manually.
 Missing CLIs leave Review usable.
 File/directory arguments, headless runs, and none/custom harnesses do not auto-open.
 Space r moves an open harness pane between Review and editing, keeping its

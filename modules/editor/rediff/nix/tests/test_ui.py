@@ -1121,6 +1121,12 @@ class EditorUI(unittest.TestCase):
         self.assertIn("Waiting for the resumed amp", editor.vars["startup_notice"])
         self.assertEqual(1, self.lua(editor, "return #s.comments"))
         self.assertIsNone(self.lua(editor, "return s.last_submission"))
+        # Amp can recover from a network outage after the old 30-second cutoff.
+        # Advance the clock without delaying this real editor/terminal test.
+        self.lua(
+            editor,
+            "local now=vim.uv.now; vim.uv.now=function() return now()+31000 end",
+        )
         # Neither the original endpoint nor another thread/worktree may win.
         self.lua(
             editor,

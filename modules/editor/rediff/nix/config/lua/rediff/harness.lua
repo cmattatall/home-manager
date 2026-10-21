@@ -967,18 +967,11 @@ local function resume(selected, automatic, request)
 	if feedback.is_live(target) then
 		s.connection_error = "Waiting for the resumed " .. provider .. " session to connect. Try again shortly."
 		s.delivery = "checking connection"
-		local deadline = vim.uv.now() + 30000
+		-- The CLI retries network failures itself. Keep discovering while its
+		-- process lives so a slow recovery does not leave feedback disconnected.
 		local function reconnect()
 			if s.epoch ~= epoch then
 				return -- An explicit harness selection supersedes this resume.
-			end
-			if vim.uv.now() >= deadline then
-				s.connection_error = "Harness did not connect. Check its terminal for errors (including active elsewhere), then :harness connect "
-					.. provider
-					.. ". Saved thread retained; no replacement started."
-				s.delivery = "disconnected"
-				notify(s.connection_error, "failed")
-				return
 			end
 			if not jobs[root][job] then
 				s.connection_error = "Resumed harness exited before connecting. Run :harness connect "
