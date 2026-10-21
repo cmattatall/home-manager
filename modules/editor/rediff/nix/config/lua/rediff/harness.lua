@@ -1513,11 +1513,12 @@ function M.setup()
 		harness = "Harness",
 		hl = "Harness list",
 		hc = "Harness connect",
+		hC = "Harness close",
 		ho = "Harness open",
 	}) do
 		vim.cmd(
 			string.format(
-				"cnoreabbrev <expr> %s getcmdtype() == ':' && getcmdline() == '%s' && getcmdpos() == %d ? '%s' : '%s'",
+				"cnoreabbrev <expr> %s getcmdtype() == ':' && getcmdline() ==# '%s' && getcmdpos() == %d ? '%s' : '%s'",
 				from,
 				from,
 				#from + 1,

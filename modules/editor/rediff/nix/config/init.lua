@@ -17,8 +17,8 @@ vim.opt.smartcase = true
 vim.opt.updatetime = 250
 vim.opt.completeopt = { "menuone", "noselect" }
 vim.opt.expandtab = true
-vim.opt.shiftwidth = 2
-vim.opt.tabstop = 2
+vim.opt.shiftwidth = 4
+vim.opt.tabstop = 4
 vim.opt.autowrite = false
 vim.opt.autowriteall = false
 require("rose-pine").setup({
@@ -258,6 +258,9 @@ require("fzf-lua").setup({
 	files = { file_icons = false, git_icons = false },
 	grep = { file_icons = false, git_icons = false },
 })
+require("telescope").setup({
+	defaults = { mappings = { i = { ["<Esc>"] = require("telescope.actions").close } } },
+})
 local navigation = require("rediff.navigation")
 vim.api.nvim_create_autocmd("MenuPopup", { callback = navigation.tree_menu })
 for _, binding in ipairs({
@@ -265,6 +268,13 @@ for _, binding in ipairs({
 	{ "<leader>d", "FocusDiff", navigation.diff, "Focus diff/editor" },
 	{ "<leader>f", "Files", navigation.files, "Fuzzy find files" },
 	{ "<leader>/", "Search", navigation.text, "Fuzzy find text" },
+	{ "<leader>s", "Symbols", require("telescope.builtin").lsp_document_symbols, "Find file symbols" },
+	{
+		"<leader>S",
+		"WorkspaceSymbols",
+		require("telescope.builtin").lsp_dynamic_workspace_symbols,
+		"Find workspace symbols",
+	},
 	{
 		"<leader>p",
 		"Commands",

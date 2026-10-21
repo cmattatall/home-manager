@@ -52,6 +52,7 @@ let
     vimPlugins.nui-nvim
     vimPlugins.neo-tree-nvim
     vimPlugins.fzf-lua
+    vimPlugins.telescope-nvim
     vimPlugins.nvim-lspconfig
     vimPlugins.gitsigns-nvim
     vimPlugins.plenary-nvim

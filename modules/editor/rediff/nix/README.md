@@ -357,6 +357,14 @@ Command names show dim inline suggestions (`:h` → `help`, `:ha` → `harness`)
 Tab accepts the hint; Enter executes only typed/accepted text. Harness
 subcommands also have hints; other arguments keep native Tab completion.
 
+Tabs and indentation default to **four spaces** (`expandtab`, `tabstop=4`,
+`shiftwidth=4`); filetype/project settings can override these defaults.
+While editing a source file, **Space s** / **`:Symbols`** opens Telescope's
+current-file symbol picker. **Space S** / **`:WorkspaceSymbols`** searches
+workspace symbols as you type. Both use the attached language server and require
+its symbol support; Review snapshots do not have attached servers. Enter jumps
+to a symbol; Esc closes the picker. Existing file/text pickers stay unchanged.
+
 | Key/command | Action |
 | --- | --- |
 | Space e / `:ft` / `:Explorer` | Focus Git sidebar in Review; focus Neo-tree while editing |
@@ -667,7 +675,7 @@ OMP remains activity-only because resuming an OMP session is not supported.
 The **[open]** badge identifies the terminal visible in the current tab, independently
 of the highlighted row or connection status; hidden terminals have no badge.
 
-`:harness close` hides the current worktree's terminal pane in this tab without
+`:harness close` / **`:hC`** hides the current worktree's terminal pane in this tab without
 stopping the agent or disconnecting feedback. **Shift-C** in the list hides only
 the highlighted harness's terminal; **o** reopens it.
 `:harness delete <id>` or **Shift-D** in the list asks before removing that harness
@@ -729,8 +737,9 @@ Live uncertain retries are allowed only on the same connection generation;
 reconnecting does not make an uncertain delivery safe to resend.
 
 For interactive typing, lowercase `:harness` and `:ho` abbreviate `:Harness`
-and `:Harness open`. Plugins/scripts must use uppercase because Neovim custom
-commands are uppercase. Credentials never belong in Nix or Git.
+and `:Harness open`. Shortcuts are case-sensitive: **`:hc` connects** and
+**`:hC` closes** the harness pane. Plugins/scripts must use uppercase because
+Neovim custom commands are uppercase. Credentials never belong in Nix or Git.
 
 ### Steer a live oh-my-pi process
 

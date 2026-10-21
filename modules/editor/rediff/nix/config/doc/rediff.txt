@@ -43,6 +43,7 @@ REVIEW QUICK REFERENCE
   :w in annotation    Save note locally and close
   :w in diff/tree     Send saved annotations
   :ho                 Open/reopen a harness terminal
+  :hC                 Hide harness terminal (:hc connects; case-sensitive)
   Space R             Refresh files and snapshots
   :view               Toggle split/merged diff
   Space r / Space q   Toggle / leave Review
@@ -574,6 +575,16 @@ entries and both snapshot sides, including deletions. Enter chooses; Esc cancels
 / and n/N search the current buffer, except / in the Review file tree filters
 paths. ? opens this guide; use :? for backward search.
 
+Tabs and indentation default to four spaces (expandtab, tabstop=4, shiftwidth=4).
+Filetype and project settings may override these defaults.
+
+Space s / :Symbols opens Telescope's current-file symbol picker; Space S /
+:WorkspaceSymbols searches workspace symbols as you type. Use them from an
+ordinary source buffer with an attached language server that supports symbols,
+not a Review snapshot. Enter jumps to the selected symbol; Esc closes the picker.
+:Telescope lsp_document_symbols and :Telescope lsp_dynamic_workspace_symbols
+are also available. File/text search continues to use the existing pickers.
+
 Opening a directory (for example, rediff src) uses the filesystem explorer.
 Its Git markers are green A for added, green U for untracked, and yellow M for
 modified. Directories summarize changes inside them, even when expanded. Deleted
@@ -610,6 +621,7 @@ completes arguments; Ctrl-d lists matches. :command lists user/plugin commands.
 
 Scripts use uppercase names below. Typed aliases: :harness = :Harness,
 :ho = :Harness open, :hl = :Harness list, :hc = :Harness connect,
+:hC = :Harness close (case-sensitive; lowercase :hc still connects),
 :ft = :Explorer, :git = :Git, :gd = :Git diff, :annotations = :Annotations,
 :al = :Annotations list, :worktree = :Worktree. In Review, :view = :View,
 :focus = :Focus, :fs = :Focus staged, :fu = :Focus unstaged.
@@ -619,6 +631,7 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
   :Git base BASE              Change base, retaining target (defaults to HEAD)
   :Explorer / :FocusDiff       Focus tree / diff or editor
   :Files / :Search             Fuzzy file / text search
+  :Symbols / :WorkspaceSymbols Telescope file / workspace symbol search
   :Commands                   Find available commands
   :GitGud blame[-line|-toggle] Full-file / current-line / inline blame
   :GitGud pr                  Show links to this line's associated PRs

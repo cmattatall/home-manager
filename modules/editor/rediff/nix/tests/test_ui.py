@@ -2351,6 +2351,58 @@ class EditorUI(unittest.TestCase):
             index, subprocess.check_output(["git", "-C", self.root, "write-tree"])
         )
 
+    def test_telescope_finds_file_and_workspace_symbols(self):
+        source = Path(self.root, "symbols.lua")
+        source.write_text(
+            "local M = {}\n\nfunction M.local_target()\n    return 42\nend\nreturn M\n"
+        )
+        helper = Path(self.root, "helper.lua")
+        helper.write_text(
+            "local M = {}\n\nfunction M.remote_target()\n    return 99\nend\nreturn M\n"
+        )
+        editor = self.launch(self.root, file="symbols.lua")
+        self.wait_for(
+            editor,
+            "#vim.lsp.get_clients({bufnr=0,method='textDocument/documentSymbol'}) > 0",
+            timeout=30,
+        )
+        for opening, query, destination in (
+            (":Symbols<CR>", "local_target", source),
+            (" s", "local_target", source),
+            (":WorkspaceSymbols<CR>", "remote_target", helper),
+            (" S", "local_target", source),
+        ):
+            with self.subTest(opening=opening):
+                self.keys(editor, opening)
+                self.wait_for(editor, "vim.bo.filetype == 'TelescopePrompt'")
+                self.keys(editor, query)
+                self.wait_for(
+                    editor,
+                    "(function() for _,w in ipairs(vim.api.nvim_list_wins()) do "
+                    "local b=vim.api.nvim_win_get_buf(w); "
+                    "if vim.bo[b].filetype == 'TelescopeResults' then "
+                    "local row=vim.api.nvim_win_get_cursor(w)[1]; "
+                    "local line=vim.api.nvim_buf_get_lines(b,row-1,row,false)[1]; "
+                    f"if line and line:find('{query}',1,true) then return true end end end return false end)()",
+                    timeout=30,
+                )
+                self.keys(editor, "<CR>")
+                self.assertEqual(str(destination), editor.current.buffer.name)
+                self.assertEqual(3, editor.current.window.cursor[0])
+        layout, cursor = editor.eval("winlayout()"), editor.current.window.cursor
+        self.keys(editor, " s")
+        self.wait_for(editor, "vim.bo.filetype == 'TelescopePrompt'")
+        self.keys(editor, "<Esc>")
+        self.assertEqual(layout, editor.eval("winlayout()"))
+        self.assertEqual(cursor, editor.current.window.cursor)
+
+    def test_default_tab_and_indent_width_is_four_spaces(self):
+        editor = self.launch(self.root, file="notes.txt")
+        self.keys(editor, "i<Tab>first<CR><C-u>second<Esc>>>")
+        self.assertEqual(["    first", "    second"], editor.current.buffer[:])
+        self.assertEqual(4, editor.current.buffer.options["tabstop"])
+        self.assertEqual(4, editor.current.buffer.options["shiftwidth"])
+
     def test_review_symbol_definitions_use_current_worktree_without_leaving_review(
         self,
     ):
@@ -7273,7 +7325,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         self.assertEqual([-1, -1], editor.funcs.jobwait([first, second], 0))
         self.keys(editor, "o")
         self.assertEqual(second, editor.current.buffer.vars["terminal_job_id"])
-        self.keys(editor, "<Esc>:harness close<CR>:hl<CR>")
+        self.keys(editor, "<Esc>:hC<CR>:hc<CR>")
         self.assertNotIn("[open]", "\n".join(editor.current.buffer[:]))
         self.keys(editor, "o")
         self.assertEqual(first, editor.current.buffer.vars["terminal_job_id"])

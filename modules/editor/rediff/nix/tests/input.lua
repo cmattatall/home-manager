@@ -255,6 +255,10 @@ return function(equal)
 				"Input " .. keys .. " leaves real text " .. line .. " and hint " .. ghost
 			)
 		end
+		input(":hc ", "Harness connect ", "amp")
+		input("<C-C>", "", "")
+		input(":hC ", "Harness close ", "")
+		input("<C-C>", "", "")
 		input(":h", "h", "elp")
 		input("a", "ha", "rness")
 		input("<Left>", "ha", "")
