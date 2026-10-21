@@ -1546,20 +1546,20 @@ class EditorUI(unittest.TestCase):
         panel_text = "\n".join(editor.current.buffer[:])
         self.assertIn("external worktree", panel_text)
         self.assertIn("shell_command", panel_text)
-        self.assertIn(
-            "T-local · agent: idle · feedback: idle",
+        self.assertEqual(
+            "harness: amp-live · T-local",
             self.lua(editor, "return require('rediff.harness').statusline(s.root)"),
         )
         self.lua(editor, "emit_activity('T-local',s.root,1,'running','read_file')")
         pump(editor)
         self.assertIn(
-            "T-local · agent: running · feedback: idle",
+            "harness: amp-live · T-local",
             editor.api.eval_statusline(editor.options["statusline"], {})["str"],
         )
         self.lua(editor, "emit_activity('T-local',s.root,2,'unknown')")
         pump(editor)
-        self.assertIn(
-            "T-local · agent: unknown · feedback: idle",
+        self.assertEqual(
+            "harness: amp-live · T-local",
             self.lua(editor, "return require('rediff.harness').statusline(s.root)"),
         )
         self.assertEqual("T-local", self.lua(editor, "return s.harness.session"))
@@ -1596,8 +1596,8 @@ class EditorUI(unittest.TestCase):
             "Local annotation", annotation["payload"]["comments"][0]["text"]
         )
         self.assertEqual(0, self.lua(editor, "return #s.comments"))
-        self.assertIn(
-            "T-local · agent: running · feedback: accepted",
+        self.assertEqual(
+            "harness: amp-live · T-local",
             self.lua(editor, "return require('rediff.harness').statusline(s.root)"),
         )
         self.assertFalse(
@@ -6098,6 +6098,38 @@ func greeting() string {
         self.lua(editor, "r.leave()")
         self.keys(editor, ":setlocal nowrap<CR>")
         self.assertFalse(editor.current.window.options["wrap"])
+
+    def test_statusline_shows_open_directory_without_activity_banners(self):
+        root = Path(self.directory.name, "open%project")
+        shutil.move(self.root, root)
+        self.root = str(root)
+        editor = self.launch(self.root, file="auth.lua")
+        editor.exec_lua(
+            "local root=...; local h=require('rediff.harness'); "
+            "h.select(root,{name='amp-live',root=root,session='T-status',connection='/fake/status'}); "
+            "h.get(root).delivery='failed'",
+            self.root,
+        )
+
+        def check(mode):
+            editor.command("redrawstatus")
+            pump(editor)
+            status = editor.api.eval_statusline(editor.options["statusline"], {})["str"]
+            self.assertIn(mode, status)
+            self.assertIn("~/open%project", status)
+            self.assertIn("harness: amp-live", status)
+            for banner in ("agent:", "difftastic", "feedback:", "failed"):
+                self.assertNotIn(banner, status)
+
+        check("EDIT")
+        self.keys(editor, " a")
+        check("ANNOTATE")
+        self.keys(editor, " r")
+        check("REVIEW")
+        self.keys(editor, ":git diff HEAD HEAD<CR>")
+        check("BRANCH DIFF")
+        editor.ui_try_resize(100, 28)
+        check("BRANCH DIFF")
 
     def test_branch_and_manual_refresh(self):
         editor = self.launch(self.root)

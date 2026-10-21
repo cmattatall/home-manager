@@ -715,10 +715,12 @@ successful acknowledgment clears only those sent notes. An `accepted` ACK means
 the feedback was queued, not that the agent completed a turn. Disconnect keeps
 saved notes in this editor process and does not stop the agent.
 
-The bottom status bar shows the harness, session suffix, and delivery state in
-both Editing and Review. Use `:harness status` for the full session ID and last
-receipt status. This shows the selected binding and feedback delivery, not a
-live agent health check. `local` means feedback stays in the local outbox.
+The bottom status bar shows the open directory (using `~` for your home), harness,
+and session suffix in Editing, Annotation mode, and Review. Agent activity,
+diff-engine names, and feedback receipt states stay out of the bar. Use
+`:harness status` for the full session ID and last receipt, or `:harness list`
+for agent activity. Delivery errors still appear as notifications. `local`
+means feedback stays in the local outbox.
 
 Repeated writes of an unchanged annotation batch to the same target reuse the
 existing submission. `:Harness retry` retries the worktree's last immutable

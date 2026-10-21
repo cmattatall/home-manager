@@ -1921,16 +1921,19 @@ function M.open(root, comparison)
 end
 
 function M.statusline()
-	local s = M.state
-	if s and api.nvim_get_current_tabpage() == s.tab then
+	local s = M.active()
+	local annotation = require("rediff.annotations").active()
+	local root = (s and s.root) or (annotation and annotation.root) or vim.b.rediff_harness_root or vim.fn.getcwd()
+	local directory = vim.fn.strtrans(vim.fn.fnamemodify(root, ":~")):gsub("%%", "%%%%")
+	if s then
 		local file = s.current and vim.fn.strtrans(s.current.path):gsub("%%", "%%%%")
 			or (#s.entries > 0 and "No file selected" or "No changes")
 		return (s.comparison and "%#RediffMode# BRANCH DIFF %*· " or "%#RediffMode# REVIEW %*· ")
 			.. vim.fn.strtrans(s.reference or ""):gsub("%%", "%%%%")
 			.. " · "
-			.. harness.statusline(s.root)
+			.. directory
 			.. " · "
-			.. (s.current and s.diff_engine or "text")
+			.. harness.statusline(s.root)
 			.. " · "
 			.. #s.comments
 			.. " comments   %<"
@@ -1938,17 +1941,20 @@ function M.statusline()
 			.. (s.annotation_id and " · annotation snapshot · Space R to refresh" or "")
 			.. "%=%l:%c "
 	end
-	local file = require("rediff.annotations").active()
-	if file then
-		return "%#RediffMode# ANNOTATE %*· Space a to edit · "
-			.. #file.comments
+	if annotation then
+		return "%#RediffMode# ANNOTATE %*· "
+			.. directory
+			.. " · Space a to edit · "
+			.. #annotation.comments
 			.. " notes · "
-			.. harness.statusline(file.root)
+			.. harness.statusline(annotation.root)
 			.. " %<%f %m%=%l:%c %p%%"
 	end
 	return "%#RediffMode# EDIT · "
 		.. vim.fn.mode():upper()
 		.. " %*· "
+		.. directory
+		.. " · "
 		.. harness.statusline()
 		.. " %<%f %m%=%l:%c %p%%"
 end

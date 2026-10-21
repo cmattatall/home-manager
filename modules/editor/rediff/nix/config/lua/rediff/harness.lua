@@ -235,16 +235,7 @@ function M.statusline(root)
 	elseif s.target.name == "amp" or s.target.name == "omp" or s.target.name == "claude" then
 		label = label .. " · no session"
 	end
-	if id and feedback.is_live(s.target) then
-		local entry = connections.get(connections.key(vim.tbl_extend("force", s.target, { root = s.root })))
-		local activity = entry and entry.activity and entry.activity.state or "unknown"
-		if entry and entry.online == false then
-			activity = "offline"
-		end
-		label = label .. " · agent: " .. activity .. " · feedback: " .. s.delivery
-		return "harness: " .. vim.fn.strtrans(label):gsub("%%", "%%%%")
-	end
-	return "harness: " .. vim.fn.strtrans(label .. " · " .. s.delivery):gsub("%%", "%%%%")
+	return "harness: " .. vim.fn.strtrans(label):gsub("%%", "%%%%")
 end
 
 function M.select(root, target)

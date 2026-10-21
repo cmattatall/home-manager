@@ -161,7 +161,7 @@ return function(root, equal, fails, keys)
 	equal("amp", session.provider, "Use persists the worktree launch type")
 	equal("amp-live", s.harness.name, "Lowercase use connects Review feedback to the only live session")
 	equal(
-		"harness: amp-live · …44444444 · agent: unknown · feedback: idle",
+		"harness: amp-live · …44444444",
 		harness.statusline(root),
 		"Status names the live harness and thread suffix"
 	)
@@ -269,7 +269,7 @@ return function(root, equal, fails, keys)
 	vim.api.nvim_set_current_tabpage(s.previous_tab)
 	equal(
 		true,
-		review.statusline():find("harness: amp-live · T-second · agent: unknown · feedback: idle", 1, true) ~= nil,
+		review.statusline():find("harness: amp-live · T-second", 1, true) ~= nil,
 		"Editing also displays the binding"
 	)
 	local git = require("rediff.git")
@@ -278,7 +278,7 @@ return function(root, equal, fails, keys)
 		error("Status redraw must not run Git")
 	end
 	equal(
-		"harness: amp-live · T-second · agent: unknown · feedback: idle",
+		"harness: amp-live · T-second",
 		harness.statusline(),
 		"Repeated redraw reuses workspace context"
 	)
@@ -307,7 +307,7 @@ return function(root, equal, fails, keys)
 	vim.api.nvim_set_current_win(s.new_win)
 	keys(":w<CR>")
 	equal(true, feedback.busy(root), "Review feedback holds the in-flight lock")
-	equal("harness: custom · running", harness.statusline(root), "Status shows in-flight feedback")
+	equal("harness: custom", harness.statusline(root), "Status keeps the selected harness during delivery")
 	fails(function()
 		harness.select(root, { name = "none" })
 	end, "Wait for the current")
@@ -316,7 +316,7 @@ return function(root, equal, fails, keys)
 	assert(vim.wait(10000, function()
 		return not feedback.busy(root)
 	end))
-	equal("harness: custom · completed", harness.statusline(root), "Acknowledgment updates the persistent status bar")
+	equal("harness: custom", harness.statusline(root), "Acknowledgment does not add a delivery banner")
 	local path = session.last.path
 	equal(s.last_submission, path, "Review delivery is the harness retry target")
 	local review_payload = feedback.read(path)
@@ -331,7 +331,7 @@ return function(root, equal, fails, keys)
 	fails(harness.retry, "Harness changed")
 	fails(review.submit, "Feedback not sent")
 	equal(
-		"harness: amp · not connected · idle",
+		"harness: amp · not connected",
 		harness.statusline(root),
 		"Disconnect cannot attribute old delivery to a new target"
 	)
