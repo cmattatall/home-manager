@@ -23,6 +23,7 @@
     pkgs.vagrant
     pkgs.usbutils
     pkgs.procps
+    pkgs.nmap
   ];
 
   programs.direnv = {
