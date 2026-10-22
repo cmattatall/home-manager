@@ -6967,11 +6967,13 @@ func greeting() string {
         )
 
     def test_amp_clipboard_commands_copy_through_neovim(self):
+        copied = Path(self.directory.name, "clipboard")
+        os.environ["CLIPBOARD_CAPTURE"] = str(copied)
         editor = self.launch(self.root, before_init="""
             vim.g.clipboard = {
                 name = 'test clipboard', cache_enabled = 0,
                 copy = {
-                    ['+'] = function(lines, regtype) vim.g.copied = {lines, regtype} end,
+                    ['+'] = {'sh', '-c', 'cat > "$CLIPBOARD_CAPTURE"'},
                     ['*'] = function() error('unexpected primary selection') end,
                 },
                 paste = { ['+'] = function() return {{}, 'v'} end,
@@ -7003,11 +7005,13 @@ for line in sys.stdin:
         self.wait_for(editor, "table.concat(vim.api.nvim_buf_get_lines(0,0,-1,false),'\\n'):find('CLIPBOARD READY',1,true) ~= nil")
         for command in (["xclip", "-selection", "clipboard"], ["wl-copy"], ["pbcopy"]):
             with self.subTest(command=command):
-                editor.exec_lua("vim.g.copied = nil")
-                value = command[0] + ': café\nsecond\tline\n'
+                copied.unlink(missing_ok=True)
+                # Exercise real command-provider bytes: callback-only clipboard
+                # mocks miss Neovim's LF-inside-a-list-item -> NUL conversion.
+                value = '\n' + command[0] + ': café\n\nsecond\\\n\tline\n'
                 editor.funcs.chansend(job, json.dumps([command, value]) + "\n")
-                self.wait_for(editor, "vim.g.copied ~= nil")
-                self.assertEqual([value.split("\n"), "v"], editor.exec_lua("return vim.g.copied"))
+                self.wait_for(editor, f"vim.fn.getfsize(vim.env.CLIPBOARD_CAPTURE) == {len(value.encode())}")
+                self.assertEqual(value.encode(), copied.read_bytes())
                 self.wait_for(editor, f"table.concat(vim.api.nvim_buf_get_lines(0,0,-1,false),'\\n'):find('RESULT {command[0]} [0, \"\", \"\"]',1,true) ~= nil")
         self.assertEqual(parent_path, editor.exec_lua("return vim.env.PATH"))
         self.assertEqual("t", editor.api.get_mode()["mode"])
