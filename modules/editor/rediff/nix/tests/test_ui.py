@@ -949,7 +949,7 @@ class EditorUI(unittest.TestCase):
             f"#!{sys.executable}\n"
             "import json, os, sys\n"
             "with open(os.environ['HARNESS_TEST_LOG'], 'a') as log:\n"
-            "    log.write(json.dumps([os.getcwd(), sys.argv[1:]]) + '\\n')\n"
+            "    log.write(json.dumps([os.getcwd(), sys.argv[1:], os.environ['REDIFF_TERMINAL_ID']]) + '\\n')\n"
             "print('Live session resumed', flush=True)\n"
             "while True: print('received:' + input(), flush=True)\n"
         )
@@ -978,7 +978,10 @@ class EditorUI(unittest.TestCase):
                         for _,line in ipairs(vim.fn.readfile(vim.env.HARNESS_TEST_LOG)) do
                             local launched = vim.json.decode(line)
                             for _,row in ipairs(result) do
-                                if row.session==launched[2][3] then row.connection='/resumed/'..row.session end
+                                if row.session==launched[2][3] then
+                                    row.connection='/resumed/'..row.session
+                                    row.terminal=launched[3]
+                                end
                             end
                         end
                     end
@@ -1066,7 +1069,7 @@ class EditorUI(unittest.TestCase):
                 [root, ["threads", "continue", thread]]
                 for root, thread in zip([self.root, self.root, str(remote)], threads)
             ],
-            [json.loads(line) for line in log.read_text().splitlines()],
+            [json.loads(line)[:2] for line in log.read_text().splitlines()],
             "Each chosen live session starts once, in its own directory",
         )
 
@@ -1074,9 +1077,10 @@ class EditorUI(unittest.TestCase):
         binary = Path(self.directory.name, "bin")
         binary.mkdir()
         cli = binary / "amp"
-        cli.write_text('#!/bin/sh\necho "Resumed harness ready"\nexec sleep 600\n')
+        cli.write_text('#!/bin/sh\necho "$REDIFF_TERMINAL_ID" > "$HARNESS_TERMINAL_LOG"\necho "Resumed harness ready"\nexec sleep 600\n')
         cli.chmod(0o755)
         os.environ["PATH"] = str(binary) + os.pathsep + os.environ["PATH"]
+        os.environ["HARNESS_TERMINAL_LOG"] = str(binary / "terminal-id")
         self.fixture.exec_lua(
             """
             local root=...
@@ -1091,12 +1095,16 @@ class EditorUI(unittest.TestCase):
             self.root,
             before_init="""
             local system=vim.system
-            local initial=true
             vim.system=function(argv,opts,callback)
+                if argv[1]=='rediff-live' then
+                    local terminals=vim.tbl_filter(function(b) return vim.bo[b.bufnr].buftype=='terminal' end,vim.fn.getbufinfo())
+                    if #terminals>0 and not live_rows then _G.reconnect_reply=callback
+                    else callback({code=0,stdout=vim.json.encode(live_rows or {})}) end
+                    return
+                end
                 if argv[1]~='rediff-amp-live' then return system(argv,opts,callback) end
                 if argv[2]=='discover' then
-                    if initial then initial=false; callback({code=0,stdout='[]'})
-                    else _G.reconnect_reply=callback end
+                    callback({code=0,stdout='[]'})
                 elseif argv[2]=='startup' then
                     callback({code=0,stdout=vim.json.encode({
                         action='resume',session='T-11111111-2222-4333-8444-555555555555'})})
@@ -1118,7 +1126,7 @@ class EditorUI(unittest.TestCase):
         self.wait_for(editor, "s.composer == nil")
         self.keys(editor, ":w<CR>")
         self.assertFalse(editor.api.get_mode()["blocking"])
-        self.assertIn("Waiting for the resumed amp", editor.vars["startup_notice"])
+        self.assertIn("Amp feedback is not connected yet", editor.vars["startup_notice"])
         self.assertEqual(1, self.lua(editor, "return #s.comments"))
         self.assertIsNone(self.lua(editor, "return s.last_submission"))
         # Amp can recover from a network outage after the old 30-second cutoff.
@@ -1132,9 +1140,9 @@ class EditorUI(unittest.TestCase):
             editor,
             """
             reconnect_reply({code=0,stdout=vim.json.encode({
-                {root=s.root,session=s.harness.session,connection='/stale/connection.json'},
-                {root=s.root,session='T-other',connection='/other/thread'},
-                {root=s.root..'/other',session=s.harness.session,connection='/other/worktree'},
+                {provider='amp',root=s.root,session=s.harness.session,connection='/stale/connection.json'},
+                {provider='amp',root=s.root,session='T-other',connection='/other/thread',terminal=string.rep('f',64)},
+                {provider='amp',root=s.root..'/other',session=s.harness.session,connection='/other/worktree',terminal=vim.fn.readfile(vim.env.HARNESS_TERMINAL_LOG)[1]},
             })}); reconnect_reply=nil
         """,
         )
@@ -1146,9 +1154,9 @@ class EditorUI(unittest.TestCase):
         self.lua(
             editor,
             """
-            reconnect_reply({code=0,stdout=vim.json.encode({{
-                root=s.root,session=s.harness.session,connection='/fresh/connection.json'
-            }})})
+            live_rows={{provider='amp',root=s.root,session=s.harness.session,connection='/fresh/connection.json',
+                terminal=vim.fn.readfile(vim.env.HARNESS_TERMINAL_LOG)[1]}}
+            reconnect_reply({code=0,stdout=vim.json.encode(live_rows)})
         """,
         )
         self.wait_for(editor, "s.harness.connection == '/fresh/connection.json'")
@@ -1181,7 +1189,7 @@ class EditorUI(unittest.TestCase):
         # A delayed registration must not undo an explicit disconnect.
         self.lua(
             editor,
-            "require('rediff.harness').stop(s.root); reconnect_reply=nil; vim.fn.confirm=function() return 1 end",
+            "require('rediff.harness').stop(s.root); reconnect_reply=nil; live_rows=nil; vim.fn.confirm=function() return 1 end",
         )
         self.keys(editor, "<Esc>:harness resume<CR>")
         self.wait_for(editor, "reconnect_reply ~= nil")
@@ -1190,7 +1198,8 @@ class EditorUI(unittest.TestCase):
             editor,
             """
             reconnect_reply({code=0,stdout=vim.json.encode({{
-                root=s.root,session='T-11111111-2222-4333-8444-555555555555',connection='/late/connection.json'
+                provider='amp',root=s.root,session='T-11111111-2222-4333-8444-555555555555',connection='/late/connection.json',
+                terminal=vim.fn.readfile(vim.env.HARNESS_TERMINAL_LOG)[1]
             }})})
         """,
         )
@@ -1587,6 +1596,10 @@ class EditorUI(unittest.TestCase):
         pump(editor)
         self.assertIn("awaiting-approval", "\n".join(editor.current.buffer[:]))
         self.keys(editor, "q")
+        # An external CLI reload must update the sender as well as the registry,
+        # even with the list closed and no terminal owned by this editor.
+        self.lua(editor, "vim.g.local_connection='/fake/rotated'")
+        self.wait_for(editor, "s.harness.connection == '/fake/rotated'")
         self.lua(
             editor,
             "r.add_comment({file=s.current.path,side='new',snapshot_id=s.current.id,selection=require('rediff.selection').line(s.new_buf,5)},'Local annotation')",
@@ -1597,6 +1610,7 @@ class EditorUI(unittest.TestCase):
         self.assertEqual(1, self.lua(editor, "return #_G.sent_feedback"))
         annotation = self.lua(editor, "return _G.sent_feedback[1]")
         self.assertEqual("rediff-amp-live", annotation["argv"][0])
+        self.assertEqual("/fake/rotated", annotation["argv"][2])
         self.assertEqual("T-local", annotation["argv"][3])
         self.assertEqual(
             "Local annotation", annotation["payload"]["comments"][0]["text"]
@@ -1831,11 +1845,12 @@ class EditorUI(unittest.TestCase):
             """
             require('rediff.live').stop(s)
             _G.streams = {}
+            _G.discoverable = true
             local system = vim.system
             vim.system = function(argv, opts, callback)
                 if argv[1] ~= 'rediff-amp-live' and argv[1] ~= 'rediff-live' then return system(argv,opts,callback) end
                 if argv[2] == 'discover' then
-                    callback({code=0,stdout=vim.json.encode({target})})
+                    callback({code=0,stdout=vim.json.encode(discoverable and {target} or {})})
                     return
                 end
                 assert(argv[2] == 'watch')
@@ -1881,7 +1896,7 @@ class EditorUI(unittest.TestCase):
         )
         self.assertEqual("Working", self.lua(editor, "return registry.get(key).title"))
         self.assertFalse(self.lua(editor, "return streams[2].killed"))
-        self.lua(editor, "streams[2].out(nil,'false\\n')")
+        self.lua(editor, "discoverable=false; streams[2].out(nil,'false\\n')")
         pump(editor)
         self.assertTrue(
             self.lua(
@@ -1899,12 +1914,12 @@ class EditorUI(unittest.TestCase):
         )
         pump(editor)
         self.assertFalse(self.lua(editor, "return registry.get(key).online"))
-        self.lua(editor, "registry.discover(function() end)")
-        pump(editor)
+        self.lua(editor, "discoverable=true")
+        self.wait_for(editor, "registry.get(key).online")
         self.assertEqual(
             4,
             self.lua(editor, "return #streams"),
-            "Discovery reconnects a failed stream",
+            "A failed stream reconnects without opening the harness list",
         )
         self.lua(
             editor,
@@ -3973,11 +3988,19 @@ func greeting() string {
             "const {fork} = require('node:child_process');\n"
             "const {appendFileSync} = require('node:fs');\n"
             "console.log('Waiting for first prompt');\n"
-            "process.stdin.once('data', () => {\n"
-            f"  const child = fork({json.dumps(str(host))}, [process.cwd(), process.env.HARNESS_THREAD], {{stdio: ['ignore','ignore','inherit','ipc']}});\n"
+            "let child, activeThread;\n"
+            "function start(thread) {\n"
+            "  activeThread = thread;\n"
+            f"  child = fork({json.dumps(str(host))}, [process.cwd(), thread], {{stdio: ['ignore','ignore','inherit','ipc']}});\n"
             "  child.on('message', value => appendFileSync(process.env.HARNESS_FEEDBACK_LOG, JSON.stringify(value)+'\\n'));\n"
-            "  process.on('SIGTERM', () => {child.send('dispose'); child.once('exit', () => process.exit());});\n"
+            "}\n"
+            "process.stdin.on('data', data => {\n"
+            "  const thread = data.toString().trim();\n"
+            "  if (!child) start(process.env.HARNESS_THREAD);\n"
+            "  else if (thread === activeThread) {child.once('exit', () => start(thread)); child.send('dispose');}\n"
+            "  else {activeThread = thread; child.send({thread});}\n"
             "});\n"
+            "process.on('SIGTERM', () => {child.send('dispose'); child.once('exit', () => process.exit());});\n"
         )
         cli.chmod(0o755)
         os.environ["PATH"] = str(binary) + os.pathsep + os.environ["PATH"]
@@ -4045,16 +4068,72 @@ func greeting() string {
                 [{"ready": True}],
                 [json.loads(line) for line in other_log.read_text().splitlines()],
             )
+            # A plugin restart and then a thread switch inside the same TUI
+            # must recover without opening the list or manually connecting.
+            terminal = editor.current.buffer.number
+            job = editor.current.buffer.vars["terminal_job_id"]
+            for active_thread in (thread, "T-66666666-7777-4888-8999-aaaaaaaaaaaa"):
+                old_connection = self.lua(editor, "return s.harness.connection")
+                self.keys(editor, f"i{active_thread}<CR>")
+                self.wait_for(
+                    editor,
+                    f"s.harness.session == '{active_thread}' and "
+                    f"s.harness.connection ~= {json.dumps(old_connection)}",
+                    timeout=15,
+                )
+                self.assertEqual(terminal, editor.current.buffer.number)
+                self.assertEqual(job, editor.current.buffer.vars["terminal_job_id"])
+                self.lua(
+                    editor,
+                    "r.add_comment({file=s.current.path,side='new',snapshot_id=s.current.id,"
+                    "selection=require('rediff.selection').line(s.new_buf,5)},'After reconnect')",
+                )
+                self.keys(editor, "<Esc>:w<CR>")
+                self.wait_for(editor, "#s.comments == 0", timeout=15)
+                received = [json.loads(line) for line in log.read_text().splitlines() if '"message"' in line]
+                self.assertEqual(active_thread, received[-1]["thread"])
+                self.keys(editor, ":hl<CR>")
+                self.wait_for(editor, "require('rediff.harness_panel').state ~= nil")
+                self.assertEqual(
+                    [active_thread],
+                    self.lua(
+                        editor,
+                        "local h=require('rediff.harness'); return vim.tbl_map(function(e) return e.session end,"
+                        "vim.tbl_filter(h.is_open,require('rediff.connections').items()))",
+                    ),
+                )
+                self.assertNotIn("[open] offline", "\n".join(editor.current.buffer[:]))
+                self.keys(editor, "q")
+            # Selecting a different harness deliberately stops following this TUI
+            # for feedback, but its open marker must still follow its thread.
+            self.lua(
+                editor,
+                "for _,e in ipairs(require('rediff.connections').items()) do "
+                "if e.session=='T-other' then require('rediff.harness').select(s.root,e) end end",
+            )
+            self.keys(editor, f"i{thread}<CR><Esc>")
+            self.wait_for(
+                editor,
+                f"require('rediff.harness').is_open({{name='amp-live',root=s.root,session='{thread}'}})",
+            )
+            self.assertEqual("T-other", self.lua(editor, "return s.harness.session"))
+            self.assertEqual(
+                [{"ready": True}],
+                [json.loads(line) for line in other_log.read_text().splitlines()],
+            )
             # Explicit disconnect must not silently turn Send into a local queue.
             self.lua(
                 editor,
-                "local c=require('rediff.connections'); require('rediff.harness').disconnect(c.connected()[1])",
+                "local c=require('rediff.connections'); for _,e in ipairs(c.connected()) do "
+                "if e.session==s.harness.session then require('rediff.harness').disconnect(e) end end",
             )
+            time.sleep(1.5)
+            pump(editor)
             self.keys(editor, " diAnother note<Esc>:w<CR>:WriteFeedback<CR>")
             self.assertIn("Feedback not sent", editor.vars["startup_notice"])
             self.assertEqual(1, self.lua(editor, "return #s.comments"))
             self.assertEqual(
-                1,
+                3,
                 len(
                     [
                         line
@@ -4085,6 +4164,7 @@ func greeting() string {
             "registry.mkdir(parents=True, mode=0o700, exist_ok=True)\n"
             "directory = Path(tempfile.mkdtemp(prefix='session-', dir=registry))\n"
             f"identity = {{'version': 1, 'root': os.getcwd(), 'thread': '{thread}'}}\n"
+            "identity['terminal'] = os.environ['REDIFF_TERMINAL_ID']\n"
             "class Handler(BaseHTTPRequestHandler):\n"
             "    def do_GET(self):\n"
             "        self.send_response(200); self.end_headers()\n"
@@ -6272,6 +6352,10 @@ func greeting() string {
             local system=vim.system
             local streams={}
             vim.system=function(argv,opts,callback)
+                if argv[1] == 'rediff-live' and argv[2] == 'discover' then
+                    callback({code=0,stdout=vim.json.encode(require('rediff.connections').items())})
+                    return
+                end
                 if argv[1] ~= 'rediff-amp-live' or argv[2] ~= 'watch' then
                     return system(argv,opts,callback)
                 end

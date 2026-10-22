@@ -358,6 +358,9 @@ function M.discover(callback, restore_deleted)
 						if deleted[key] ~= true and deleted[key] ~= row.connection then
 							deleted[key] = nil
 							local entry = merge(row)
+							-- Only the active thread in a TUI advertises its terminal.
+							-- Clear the old association when that TUI switches threads.
+							entry.terminal = row.terminal
 							entry.online = true
 							seen[entry.key] = true
 							if entry.connected then

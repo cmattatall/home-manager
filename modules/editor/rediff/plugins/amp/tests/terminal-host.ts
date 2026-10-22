@@ -9,20 +9,23 @@ const observable = (value: string) => ({
   get: async () => value,
   subscribe: () => ({ unsubscribe() {} }),
 })
-const messages: any[] = []
-const thread = {
-  id, title: observable(id), state: observable('idle'),
-  messages: async ({ offset = 0, limit = 10 } = {}) => {
-    const end = Math.max(0, messages.length - offset)
-    return messages.slice(Math.max(0, end - limit), end)
-  },
-  appendUserMessage: async (message: { content: string }) => {
-    messages.push({ id: messages.length, role: 'user', content: [{ type: 'text', text: message.content }] })
-    process.send!({ message })
-  },
+function createThread(id: string) {
+  const messages: any[] = []
+  return {
+    id, title: observable(id), state: observable('idle'),
+    messages: async ({ offset = 0, limit = 10 } = {}) => {
+      const end = Math.max(0, messages.length - offset)
+      return messages.slice(Math.max(0, end - limit), end)
+    },
+    appendUserMessage: async (message: { content: string }) => {
+      messages.push({ id: messages.length, role: 'user', content: [{ type: 'text', text: message.content }] })
+      process.send!({ thread: id, message })
+    },
+  }
 }
+const threads = new Map([[id, createThread(id)]])
 await plugin({
-  threads: { get: () => thread },
+  threads: { get: (id: string) => threads.get(id) },
   helpers: { filePathFromURI: (uri: URL) => decodeURIComponent(uri.pathname) },
   logger: { log() {} },
   on(event: string, handler: (event: unknown, context: any) => unknown) {
@@ -37,10 +40,19 @@ await plugin({
 } as any)
 await handlers.get('session.start')!({}, {
   system: { workspaceRoot: pathToFileURL(root) },
-  thread,
+  thread: threads.get(id),
 })
 process.send!({ ready: true })
-process.once('message', async () => {
+process.on('message', async (message: { thread?: string } | string) => {
+  if (typeof message !== 'string' && message.thread) {
+    const id = message.thread
+    if (!threads.has(id)) threads.set(id, createThread(id))
+    await handlers.get('session.start')!({}, {
+      system: { workspaceRoot: pathToFileURL(root) },
+      thread: threads.get(id),
+    })
+    return
+  }
   await Promise.all(disposers.map(dispose => dispose()))
   process.disconnect()
 })

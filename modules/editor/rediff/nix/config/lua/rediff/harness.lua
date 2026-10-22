@@ -308,7 +308,9 @@ function M.close(target)
 	for _, win in ipairs(api.nvim_tabpage_list_wins(0)) do
 		local buf = api.nvim_win_get_buf(win)
 		local owned = (jobs[root] or {})[vim.b[buf].terminal_job_id]
-		if owned and (not target or (owned.session == target.session and owned.provider == feedback.provider(target))) then
+		if
+			owned and (not target or (owned.session == target.session and owned.provider == feedback.provider(target)))
+		then
 			-- Hide the pane, keeping the terminal job and feedback connection alive.
 			local windows = vim.tbl_filter(function(id)
 				return api.nvim_win_get_config(id).relative == ""
@@ -405,61 +407,67 @@ function M.move_pane(tab)
 	end
 end
 
-local function bind_new_terminal(root, job, owned)
-	local s = M.get(root)
-	local epoch = s.epoch
-	local function valid()
-		if s.epoch ~= epoch then
-			return false
-		end
-		if jobs[root][job] ~= owned then
-			s.connection_error = "Amp exited before feedback connected. Open a harness with :harness open, then retry. Notes are kept; nothing sent."
-			s.delivery = "disconnected"
-			vim.cmd.redrawstatus()
-			return false
-		end
-		return true
-	end
-	s.connection_error = "Amp feedback is not connected yet. Start a thread in the harness; if it stays disconnected, use :harness install amp, reload its plugin, then :harness connect amp. Notes are kept; nothing sent."
-	s.delivery = "connecting"
-	local function discover()
-		if not valid() then
-			return
-		end
-		vim.system({ "rediff-amp-live", "discover", root }, { text = true, timeout = 5000 }, function(result)
-			vim.schedule(function()
-				if not valid() then
-					return
-				end
-				local ok, matches = pcall(vim.json.decode, result.stdout or "")
-				if result.code == 0 and ok and type(matches) == "table" and not feedback.busy(root) then
-					local matching = vim.tbl_filter(function(entry)
-						return type(entry) == "table"
+local function reconcile_connections()
+	local entries = connections.items()
+	for root, s in pairs(sessions) do
+		if not s.restoring and not feedback.busy(root) then
+			local pending = false
+			for _, owned in pairs(jobs[root] or {}) do
+				if owned.provider == "amp" then
+					local matches = vim.tbl_filter(function(entry)
+						return entry.name == "amp-live"
 							and entry.root == root
+							and entry.online
 							and entry.terminal == owned.terminal
-							and type(entry.session) == "string"
-							and type(entry.connection) == "string"
-					end, matches)
-					if #matching == 1 then
-						owned.session = matching[1].session
-						M.select(root, vim.tbl_extend("force", matching[1], { name = "amp-live" }))
-						vim.cmd.redrawstatus()
-						return
+					end, entries)
+					if #matches == 1 then
+						local entry = matches[1]
+						local follow = owned.pending_epoch == s.epoch
+							or (s.target.name == "amp-live" and s.target.session == owned.session)
+						owned.session = entry.session
+						owned.pending_epoch = nil
+						if
+							follow
+							and (
+								s.target.session ~= entry.session
+								or s.target.connection ~= entry.connection
+								or s.connection_error
+							)
+						then
+							M.select(root, entry)
+						end
+					elseif owned.pending_epoch == s.epoch then
+						pending = true
 					end
 				end
-				-- A fresh TUI may not create a thread until its first prompt. Keep
-				-- waiting for this terminal, never guess from another same-root CLI.
-				vim.defer_fn(discover, 1000)
-			end)
-		end)
+			end
+			-- The selected thread is stable across plugin restarts; its endpoint is
+			-- not. Use the same discovered endpoint for the list and for annotations.
+			-- A launched TUI must first prove its terminal identity, not merely its ID.
+			if not pending and feedback.is_live(s.target) and s.target.session then
+				local entry = connections.get(connections.key(vim.tbl_extend("force", s.target, { root = root })))
+				if
+					entry
+					and entry.connected
+					and entry.online
+					and (entry.connection ~= s.target.connection or s.connection_error)
+				then
+					M.select(root, entry)
+				end
+			end
+		end
 	end
-	discover()
 end
 
 function M.launch(root, argv, target)
 	for _, owned in pairs(jobs[root] or {}) do
 		assert(
-			target and (not target.session or owned.session ~= target.session or owned.provider ~= feedback.provider(target)),
+			target
+				and (
+					not target.session
+					or owned.session ~= target.session
+					or owned.provider ~= feedback.provider(target)
+				),
 			"Harness already running in this editor; use :harness open"
 		)
 	end
@@ -562,6 +570,12 @@ function M.launch(root, argv, target)
 		env = env,
 		on_exit = function(id, code)
 			jobs[root][id] = nil
+			local s = M.get(root)
+			if owned.pending_epoch == s.epoch then
+				s.connection_error =
+					"Amp exited before feedback connected. Open a harness with :harness open, then retry. Notes are kept; nothing sent."
+				s.delivery = "disconnected"
+			end
 			if code ~= 0 and not owned.stopping then
 				vim.schedule(function()
 					notify("Harness exited with status " .. code .. " in " .. root .. "; worktree retained", "failed")
@@ -571,8 +585,13 @@ function M.launch(root, argv, target)
 	})
 	assert(job > 0, "Could not start harness; worktree retained at " .. root)
 	jobs[root][job] = owned
-	if owned.provider == "amp" and not owned.session then
-		bind_new_terminal(root, job, owned)
+	if owned.provider == "amp" then
+		local s = M.get(root)
+		owned.pending_epoch = s.epoch
+		s.connection_error =
+			"Amp feedback is not connected yet. Start a thread in the harness; if it stays disconnected, use :harness install amp, reload its plugin, then :harness connect amp. Notes are kept; nothing sent."
+		s.delivery = "connecting"
+		connections.discover(function() end)
 	end
 	vim.cmd.startinsert()
 	return job
@@ -962,55 +981,8 @@ local function resume(selected, automatic, request)
 	assert(vim.fn.isdirectory(root) == 1, "Harness worktree is unavailable: " .. root)
 	local argv = provider == "amp" and { executable, "threads", "continue", target.session }
 		or { executable, "--resume", target.session }
-	local job = M.launch(root, argv, target)
+	M.launch(root, argv, target)
 	finish_opening(request)
-	if feedback.is_live(target) then
-		s.connection_error = "Waiting for the resumed " .. provider .. " session to connect. Try again shortly."
-		s.delivery = "checking connection"
-		-- The CLI retries network failures itself. Keep discovering while its
-		-- process lives so a slow recovery does not leave feedback disconnected.
-		local function reconnect()
-			if s.epoch ~= epoch then
-				return -- An explicit harness selection supersedes this resume.
-			end
-			if not jobs[root][job] then
-				s.connection_error = "Resumed harness exited before connecting. Run :harness connect "
-					.. provider
-					.. "."
-				s.delivery = "disconnected"
-				return
-			end
-			vim.system({ "rediff-" .. target.name, "discover", root }, { text = true, timeout = 5000 }, function(result)
-				vim.schedule(function()
-					if s.epoch ~= epoch then
-						return
-					end
-					if not jobs[root][job] then
-						reconnect()
-						return
-					end
-					local ok, matches = pcall(vim.json.decode, result.stdout or "")
-					if result.code == 0 and ok and type(matches) == "table" and not feedback.busy(root) then
-						for _, match in ipairs(matches) do
-							if
-								type(match) == "table"
-								and match.root == root
-								and match.session == target.session
-								and type(match.connection) == "string"
-								and match.connection ~= ""
-								and match.connection ~= target.connection
-							then
-								M.select(root, vim.tbl_extend("force", match, { name = target.name }))
-								return
-							end
-						end
-					end
-					vim.defer_fn(reconnect, 1000)
-				end)
-			end)
-		end
-		reconnect()
-	end
 end
 
 function M.resume(selected, automatic, request, interactive)
@@ -1383,8 +1355,37 @@ end
 
 function M.setup()
 	connections.on_change(function()
+		reconcile_connections()
 		vim.cmd.redrawstatus()
 	end)
+	-- Recovery belongs to the harness lifecycle, not to the list being visible.
+	local timer = vim.uv.new_timer()
+	timer:start(
+		1000,
+		1000,
+		vim.schedule_wrap(function()
+			for _, processes in pairs(jobs) do
+				for _, owned in pairs(processes) do
+					if owned.provider == "amp" then
+						connections.discover(function() end)
+						return
+					end
+				end
+			end
+			for _, entry in ipairs(connections.connected()) do
+				if feedback.is_live(entry) then
+					connections.discover(function() end)
+					return
+				end
+			end
+		end)
+	)
+	api.nvim_create_autocmd("VimLeavePre", {
+		callback = function()
+			timer:stop()
+			timer:close()
+		end,
+	})
 	api.nvim_create_autocmd("WinScrolled", {
 		callback = function()
 			for id in pairs(vim.v.event) do
