@@ -2,6 +2,7 @@
   config,
   lib,
   pkgs,
+  nixpkgs-unstable,
   ...
 }:
 let
@@ -72,6 +73,10 @@ in
       else
         pkgs.gcc-arm-embedded
     )
+  ]
+  # Herdr is absent from stable; unstable no longer supports Intel Macs.
+  ++ lib.optionals (pkgs.stdenv.hostPlatform.system != "x86_64-darwin") [
+    nixpkgs-unstable.legacyPackages.${pkgs.stdenv.hostPlatform.system}.herdr
   ]
   ++ lib.optionals (!pkgs.stdenv.hostPlatform.isDarwin) [ pkgs.openssh ];
   xdg.configFile."shellrc.d".source = ./shell;
