@@ -38,6 +38,7 @@ REVIEW QUICK REFERENCE
   i                   Edit annotation here, or create one
   v / V / Ctrl-v, a   Annotate a character / line / block selection
   @ / :al             Search annotations and jump to one
+  d in :al            Delete selected annotation without closing the panel
   } / {               Next/previous annotation
   d                   Delete annotation here (source panes only)
   :w in annotation    Save note locally and close
@@ -139,10 +140,13 @@ Further Escape presses leave the note open. Use :q to close and retain its draft
 Reopen the same line/range to resume its draft.
 
 Saved notes appear as orange text under their source range. Orange >> in the gutter
-marks notes at the cursor. @ searches filenames and note text; Enter jumps, Esc
-cancels. i edits that note. } / { cycles in creation order across files/sides;
-counts work (3}). d deletes a note, not source or already-sent feedback. These
-bindings leave ordinary files/note text unchanged.
+marks notes at the cursor. @ / :al opens the annotation panel in Normal mode:
+j/k selects, Enter jumps, d deletes without closing, and i or / searches filenames
+and note text. Esc leaves search mode; Esc in Normal mode closes the panel.
+Deletion keeps the search query, including when no matching notes remain.
+Back in the source pane, i edits that note. } / { cycles in creation order across
+files/sides; counts work (3}). d deletes a note, not source or already-sent
+feedback. These bindings leave ordinary files/note text unchanged.
 
 A file with saved notes has an orange ● at the right edge of its tree row.
 Both rows are marked if the file appears in STAGED and UNSTAGED. The dot includes

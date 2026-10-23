@@ -3380,10 +3380,10 @@ func greeting() string {
 
         def choose(opening, query):
             self.keys(editor, opening)
-            self.wait_for(editor, 'vim.bo.filetype == "fzf"')
-            self.keys(editor, query)
+            self.wait_for(editor, 'vim.bo.filetype == "TelescopePrompt"')
+            self.keys(editor, "i" + query)
             self.keys(editor, "<CR>")
-            self.wait_for(editor, 'vim.bo.filetype ~= "fzf"')
+            self.wait_for(editor, 'vim.bo.filetype ~= "TelescopePrompt"')
 
         for pane in ("tree_win", "old_win", "new_win"):
             self.lua(editor, f"vim.api.nvim_set_current_win(s.{pane})")
@@ -3391,7 +3391,7 @@ func greeting() string {
                 "", self.lua(editor, 'return vim.fn.maparg("<leader>c", "n")')
             )
             self.keys(editor, "@")
-            self.wait_for(editor, 'vim.bo.filetype == "fzf"')
+            self.wait_for(editor, 'vim.bo.filetype == "TelescopePrompt"')
             self.keys(editor, "<Esc>")
         choose(":al<CR>", "lease timeout")
         self.assertEqual(
@@ -3484,6 +3484,75 @@ func greeting() string {
                 'return vim.fn.maparg("{", "n") == "" and vim.fn.maparg("}", "n") == "" and vim.fn.maparg("@", "n") == ""',
             )
         )
+
+    def test_annotation_picker_delete_keeps_panel_and_search(self):
+        for file_mode in (False, True):
+            with self.subTest(file_mode=file_mode):
+                editor = self.launch(self.root, file="auth.lua" if file_mode else None)
+                if file_mode:
+                    self.keys(editor, " a")
+                notes = self.lua(
+                    editor,
+                    """
+                    local s = r.active() or require('rediff.annotations').context()
+                    local selection = require('rediff.selection')
+                    for i, text in ipairs({'Boundary note', 'Remove this', 'Keep this'}) do
+                        r.add_comment({file=s.current.path, side='new', snapshot_id=s.current.id,
+                            selection=selection.line(s.new_buf, i + 3)}, text)
+                    end
+                    return s.comments
+                    """,
+                )
+
+                def remaining(editor=editor):
+                    return self.lua(editor, "return r.notes(vim.fn.getcwd()).comments")
+
+                opening = "@" if file_mode else ":al<CR>"
+                self.keys(editor, opening)
+                self.wait_for(editor, 'vim.bo.filetype == "TelescopePrompt"')
+                self.keys(editor, "jd")
+                self.assertEqual([notes[0], notes[2]], remaining())
+                self.assertEqual(
+                    "TelescopePrompt", editor.current.buffer.options["filetype"]
+                )
+                self.assertEqual(
+                    notes[2]["id"],
+                    self.lua(
+                        editor,
+                        "return require('telescope.actions.state').get_selected_entry().value.id",
+                    ),
+                )
+
+                # Searching for a word containing d must not delete anything.
+                self.keys(editor, "/Boundary<Esc>")
+                self.assertEqual([notes[0], notes[2]], remaining())
+                self.keys(editor, "d")
+                self.assertEqual([notes[2]], remaining())
+                self.assertIn("Boundary", editor.current.buffer[0])
+                self.assertEqual(
+                    "TelescopePrompt", editor.current.buffer.options["filetype"]
+                )
+                self.assertTrue(
+                    self.lua(
+                        editor,
+                        "return require('telescope.actions.state').get_selected_entry() == nil",
+                    )
+                )
+                self.keys(editor, "d")  # Empty filtered results are a no-op.
+                self.assertEqual([notes[2]], remaining())
+
+                self.keys(editor, "/" + "<BS>" * len("Boundary") + "<Esc>")
+                self.keys(editor, "d")
+                self.assertEqual([], remaining())
+                self.assertEqual(
+                    "TelescopePrompt", editor.current.buffer.options["filetype"]
+                )
+                self.keys(editor, "d<Esc>")
+                self.wait_for(editor, 'vim.bo.filetype ~= "TelescopePrompt"')
+                self.keys(editor, opening)
+                self.assertEqual(
+                    "No annotations", self.lua(editor, "return vim.g.startup_notice")
+                )
 
     def test_annotation_freshness_tracks_only_annotated_lines(self):
         editor = self.launch(self.root)

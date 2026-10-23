@@ -1587,8 +1587,8 @@ function M.archive()
 	notify("Draft round archived locally; nothing sent to the agent")
 end
 
-local function remove_comment(comment)
-	local s = annotation_state()
+local function remove_comment(comment, s)
+	s = s or annotation_state()
 	for i, item in ipairs(s.comments) do
 		if item.id == comment.id then
 			table.remove(s.comments, i)
@@ -1603,8 +1603,8 @@ local function remove_comment(comment)
 					draft.comment_id = nil
 				end
 			end
-			save()
-			render_comments()
+			save(s)
+			render_comments(false, s)
 			return
 		end
 	end
@@ -1638,12 +1638,12 @@ local function pick_comments(comments, action)
 		return
 	end
 	M.refresh_annotations(s.root)
-	local items = {}
-	for i, comment in ipairs(comments) do
+	local actions = require("telescope.actions")
+	local action_state = require("telescope.actions.state")
+	local function entry_maker(comment)
 		local snapshot = s.snapshots[comment.snapshot_id]
-		items[i] = string.format(
-			"%d\t%s:%d-%d [%s/%s] %s",
-			i,
+		local label = string.format(
+			"%s:%d-%d [%s/%s] %s",
 			vim.fn.strtrans(comment.file),
 			comment.line,
 			comment.line_end,
@@ -1652,22 +1652,47 @@ local function pick_comments(comments, action)
 			(annotation_changed(s, comment) and "◆ (changed since annotated) " or "")
 				.. vim.fn.strtrans((comment.text:gsub("\n", " ")))
 		)
+		return { value = comment, display = label, ordinal = label }
 	end
-	require("fzf-lua").fzf_exec(items, {
-		prompt = "Annotations> ",
-		previewer = false,
-		fzf_opts = { ["--delimiter"] = "\t", ["--with-nth"] = "2..", ["--no-multi"] = true },
-		actions = {
-			enter = guard(function(selected)
-				if annotation_state() == s and selected[1] then
-					local comment = comments[tonumber(selected[1]:match("^(%d+)\t"))]
-					if comment then
-						action(comment)
+	require("telescope.pickers")
+		.new({}, {
+			prompt_title = "Annotations",
+			results_title = "d: delete | i /: search | Enter: open",
+			initial_mode = "normal",
+			previewer = false,
+			sorting_strategy = "ascending",
+			layout_config = { width = 0.85, height = 0.8, prompt_position = "top" },
+			finder = require("telescope.finders").new_table({ results = comments, entry_maker = entry_maker }),
+			sorter = require("telescope.config").values.generic_sorter({}),
+			attach_mappings = function(prompt_buf, map_key)
+				actions.select_default:replace(guard(function()
+					local entry = action_state.get_selected_entry()
+					if entry then
+						actions.close(prompt_buf)
+						if annotation_state() == s then
+							action(entry.value)
+						end
 					end
-				end
-			end),
-		},
-	})
+				end))
+				map_key(
+					"n",
+					"d",
+					guard(function()
+						action_state.get_current_picker(prompt_buf):delete_selection(function(entry)
+							remove_comment(entry.value, s)
+						end)
+					end)
+				)
+				map_key("n", "/", function()
+					vim.cmd.startinsert({ bang = true })
+				end)
+				map_key("i", "<Esc>", function()
+					vim.cmd.stopinsert()
+				end)
+				return true
+			end,
+		})
+		:find()
 end
 
 function M.jump_comment(comment)
