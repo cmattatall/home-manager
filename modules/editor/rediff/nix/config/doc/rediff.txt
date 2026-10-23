@@ -99,6 +99,9 @@ path from either tree or a Review diff pane. Trees use the selected row; diff
 panes use the displayed file. Headers and blank tree rows do nothing. Your terminal
 must forward these keys to Neovim instead of using them for terminal text copying.
 
+With text selected (by mouse or Visual mode), Cmd+C copies the selection to the
+system clipboard instead, including in Review, without opening an annotation.
+
 ANNOTATING ORDINARY FILES
 
 Space a (or :AnnotationMode) toggles annotation mode for the current named file

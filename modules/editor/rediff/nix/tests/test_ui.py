@@ -4767,6 +4767,45 @@ func greeting() string {
                     editor.api.set_current_win(win)
                     pump(editor)
                     copy_keys(editor, path, str(Path(self.root, path)))
+
+        self.lua(
+            editor,
+            "for i,e in ipairs(s.entries) do if e.path=='auth.lua' then r.show(i) end end",
+        )
+        for side in ("old", "new"):
+            self.lua(editor, f"vim.api.nvim_set_current_win(s.{side}_win)")
+            source = editor.current.buffer[:]
+            for selection, expected, regtype in (
+                ("3G10|vj06l", ["M.authorize(token)", "  if to"], "v"),
+                (
+                    "5GVk",
+                    ["  if token == nil then", f"    return {'false' if side == 'old' else 'true'}", ""],
+                    "V",
+                ),
+                ("4G6|<C-v>j3l", ["toke", "etur", ""], "b"),
+                ("mouse", ["function"], "v"),
+            ):
+                with self.subTest(side=side, selection=selection):
+                    editor.vars["copied"] = [["unchanged"], "v"]
+                    if selection == "mouse":
+                        editor.options["mousetime"] = 0
+                        position = editor.funcs.screenpos(editor.current.window.handle, 3, 1)
+                        row, col = position["row"] - 1, position["col"] - 1
+                        for action, column in (
+                            ("press", col), ("drag", col + 7), ("release", col + 7)
+                        ):
+                            editor.api.input_mouse("left", action, "", 0, row, column)
+                            pump(editor)
+                    else:
+                        self.keys(editor, selection)
+                    self.assertIn(editor.api.get_mode()["mode"], ("v", "V", "\x16"))
+                    self.keys(editor, "<D-c>")
+                    self.assertEqual([expected, regtype], editor.vars["copied"])
+                    self.assertIsNone(self.lua(editor, "return s.composer"))
+                    self.assertEqual([], self.lua(editor, "return s.comments"))
+                    self.assertEqual(source, editor.current.buffer[:])
+                    self.assertEqual("n", editor.api.get_mode()["mode"])
+
         # Headers and blank rows must not offer a stale path from the previous menu.
         for row in (1, 2, self.lua(editor, "return s.group_rows.unstaged")):
             click(editor, tree, row, None)

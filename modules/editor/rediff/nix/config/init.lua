@@ -62,6 +62,7 @@ require("gitsigns").setup({
 vim.keymap.set("n", "<D-w>", "<C-w>", { desc = "Window command prefix (Cmd-w)" })
 vim.keymap.set({ "i", "x" }, "<D-w>", "<Esc><C-w>", { desc = "Leave editing/selection for window command" })
 vim.keymap.set({ "n", "x" }, "<C-w>", "<Nop>", { desc = "Use Cmd-w for window commands" })
+vim.keymap.set("x", "<D-c>", '"+y', { desc = "Copy selection to system clipboard" })
 vim.keymap.set("i", "<C-a>", "<Home>", { desc = "Start of line" })
 vim.keymap.set("i", "<C-e>", "<End>", { desc = "End of line" })
 vim.keymap.set("c", "<C-a>", "<C-b>", { desc = "Start of command line" })

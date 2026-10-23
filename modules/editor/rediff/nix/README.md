@@ -80,6 +80,9 @@ row; diff shortcuts use the displayed file. Headers and blank tree rows do nothi
 The terminal must forward these keys to Neovim rather than handle them as terminal
 text-copy shortcuts.
 
+With text selected (by mouse or Visual mode), **Cmd+C** copies the selection to
+the system clipboard instead, including in Review, without opening an annotation.
+
 **Ctrl-A / Ctrl-E** move to the start/end of the line in Insert mode (files
 and annotations) and in command/search input. Normal-mode
 Vim bindings remain unchanged. Typed **:ft** expands to `:Explorer` and focuses
