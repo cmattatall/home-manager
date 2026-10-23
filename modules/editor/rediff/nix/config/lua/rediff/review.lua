@@ -1499,6 +1499,7 @@ function M.clear_sent(root, path)
 		render_comments(false, s)
 	end
 	require("rediff.annotations").refresh()
+	api.nvim_exec_autocmds("User", { pattern = "ReviewAnnotationsSent", data = { root = root } })
 end
 
 function M.submit(retry)
@@ -1665,6 +1666,27 @@ local function pick_comments(comments, action)
 			finder = require("telescope.finders").new_table({ results = comments, entry_maker = entry_maker }),
 			sorter = require("telescope.config").values.generic_sorter({}),
 			attach_mappings = function(prompt_buf, map_key)
+				local refresh = api.nvim_create_autocmd("User", {
+					pattern = "ReviewAnnotationsSent",
+					callback = function(event)
+						if event.data.root == s.root then
+							retain(comments, function(comment)
+								return vim.tbl_contains(s.comments, comment)
+							end)
+							action_state.get_current_picker(prompt_buf):refresh(
+								require("telescope.finders").new_table({ results = comments, entry_maker = entry_maker }),
+								{ reset_prompt = false }
+							)
+						end
+					end,
+				})
+				api.nvim_create_autocmd("BufWipeout", {
+					buffer = prompt_buf,
+					once = true,
+					callback = function()
+						api.nvim_del_autocmd(refresh)
+					end,
+				})
 				actions.select_default:replace(guard(function()
 					local entry = action_state.get_selected_entry()
 					if entry then

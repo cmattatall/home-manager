@@ -210,10 +210,12 @@ connected sessions, their worktrees, and activity. Multiple connections are
 supported; annotations stay associated with their originating worktree.
 
 Amp feedback clears annotations only after a new matching user message is visible
-in the target thread. If it is still queued or delivery cannot be confirmed,
-notes stay in the editor. Check `:Harness status`, then use `:ReviewRetry` to
-check the same submission without appending it again. `:ReviewOutbox` retains
-the submitted annotations even after they clear.
+in the target thread. Queued feedback is checked automatically for up to five
+minutes; confirmation also updates an open annotation panel without losing its
+search. If delivery remains unconfirmed, notes stay in the editor. Check
+`:Harness status`, then use `:ReviewRetry` to check the same submission without
+appending it again. `:ReviewOutbox` retains the submitted annotations even after
+they clear.
 
 For **oh-my-pi**, enable `programs.harnesses.omp.enable` to install the CLI.
 Separately, enable `programs.rediff.ompPlugin.enable` or run

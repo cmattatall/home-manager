@@ -9,6 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 import uuid
 from pathlib import Path
@@ -16,6 +17,7 @@ from pathlib import Path
 from harness import feedback_prompt
 
 MAX_BODY = 1024 * 1024
+CONFIRM_TIMEOUT = 300
 LABELS = {"amp": "Amp", "omp": "oh-my-pi"}
 
 
@@ -311,6 +313,14 @@ def send(connection_path, expected_thread, submission_path, provider="amp"):
         if not isinstance(identity, dict) or any(identity.get(key) != desc[key] for key in ("version", "root", "thread")):
             raise RuntimeError(f"{label} connection identity changed; nothing sent")
         status, _ = _request(desc, port, "POST", body, timeout=15)
+        deadline = time.monotonic() + CONFIRM_TIMEOUT
+        while status == 202 and time.monotonic() < deadline:
+            # The live plugin caches this ID: another POST checks the original
+            # append, never queues a second message. Keep notes until confirmed.
+            time.sleep(1)
+            if _load(connection_path, provider)[3] != generation:
+                raise RuntimeError(f"{label} connection changed while confirming delivery; notes retained")
+            status, _ = _request(desc, port, "POST", body, timeout=15)
     except (OSError, http.client.HTTPException) as error:
         raise RuntimeError(f"{label} delivery is unconfirmed; retry the same submission") from error
     if status == 202:

@@ -3554,6 +3554,74 @@ func greeting() string {
                     "No annotations", self.lua(editor, "return vim.g.startup_notice")
                 )
 
+    def test_annotation_picker_updates_when_delivery_finishes(self):
+        for file_mode in (False, True):
+            with self.subTest(file_mode=file_mode):
+                editor = self.launch(self.root, file="auth.lua" if file_mode else None)
+                if file_mode:
+                    self.keys(editor, " a")
+                editor.exec_lua(
+                    """
+                    local receiver = ...
+                    local r = require('rediff.review')
+                    local s = r.active() or require('rediff.annotations').context()
+                    _G.note_context = s
+                    require('rediff.feedback').settings = function()
+                        return {feedback_command={vim.v.progpath,'--headless','-u','NONE','-l',receiver,'wait'}}
+                    end
+                    require('rediff.harness').select(s.root, {name='custom'})
+                    for i, text in ipairs({'Boundary sent', 'Boundary edited'}) do
+                        r.add_comment({file=s.current.path,side='new',snapshot_id=s.current.id,
+                            selection=require('rediff.selection').line(s.new_buf,i+3)},text)
+                    end
+                    """,
+                    str(Path(__file__).with_name("receiver.lua").resolve()),
+                )
+                self.keys(editor, ":w<CR>")
+                self.wait_for(editor, "require('rediff.feedback').busy(note_context.root)")
+                self.lua(
+                    editor,
+                    """
+                    local s = note_context
+                    s.comments[2].text = 'Boundary edited after sending'
+                    r.add_comment({file=s.current.path,side='new',snapshot_id=s.current.id,
+                        selection=require('rediff.selection').line(s.new_buf,6)},'Boundary new')
+                    """,
+                )
+                opening = "@" if file_mode else ":al<CR>"
+                self.keys(editor, opening)
+                self.wait_for(editor, 'vim.bo.filetype == "TelescopePrompt"')
+                self.keys(editor, "/Boundary<Esc>")
+                self.lua(editor, "vim.fn.writefile({}, note_context.last_submission .. '.release')")
+                self.wait_for(editor, "not require('rediff.feedback').busy(note_context.root)")
+                self.assertEqual(2, self.lua(editor, "return #note_context.comments"))
+                self.assertEqual("TelescopePrompt", editor.current.buffer.options["filetype"])
+                self.assertIn("Boundary", editor.current.buffer[0])
+
+                def rows(editor=editor):
+                    return self.lua(
+                        editor,
+                        "local p=require('telescope.actions.state').get_current_picker(vim.api.nvim_get_current_buf()); "
+                        "return vim.api.nvim_buf_get_lines(p.results_bufnr,0,-1,false)",
+                    )
+
+                result = "\n".join(rows())
+                self.assertNotIn("Boundary sent", result)
+                self.assertIn("Boundary edited after sending", result)
+                self.assertIn("Boundary new", result)
+                self.keys(editor, "<Esc>")
+                self.keys(editor, ":w<CR>")
+                self.wait_for(editor, "require('rediff.feedback').busy(note_context.root)")
+                self.keys(editor, opening)
+                self.wait_for(editor, 'vim.bo.filetype == "TelescopePrompt"')
+                self.lua(editor, "vim.fn.writefile({}, note_context.last_submission .. '.release')")
+                self.wait_for(editor, "not require('rediff.feedback').busy(note_context.root)")
+                self.assertEqual(0, self.lua(editor, "return #note_context.comments"))
+                self.assertFalse(any(line.strip() for line in rows()))
+                self.keys(editor, "d<CR><Esc>")
+                self.keys(editor, opening)
+                self.assertEqual("No annotations", self.lua(editor, "return vim.g.startup_notice"))
+
     def test_annotation_freshness_tracks_only_annotated_lines(self):
         editor = self.launch(self.root)
         path = Path(self.root, "auth.lua")

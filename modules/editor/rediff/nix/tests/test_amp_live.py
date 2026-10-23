@@ -9,6 +9,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("amp_live", sys.argv.pop(1))
@@ -23,6 +24,7 @@ class Handler(BaseHTTPRequestHandler):
     requests = []
     descriptor = None
     post_status = 204
+    post_statuses: ClassVar[list[int]] = []
     events = b""
 
     def _auth(self):
@@ -38,7 +40,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers["Content-Length"]))
         type(self).requests.append(("POST", self._auth(), json.loads(body)))
-        self.send_response(type(self).post_status if self._auth() else 401)
+        status = type(self).post_statuses.pop(0) if type(self).post_statuses else type(self).post_status
+        self.send_response(status if self._auth() else 401)
         self.end_headers()
 
     def log_message(self, *_):
@@ -66,6 +69,7 @@ class AmpLiveTests(unittest.TestCase):
         Handler.descriptor = dict(self.descriptor)
         Handler.requests = []
         Handler.post_status = 204
+        Handler.post_statuses = []
         Handler.events = b""
         self.write_descriptor()
         self.payload = Path(self.temp.name) / "submission.json"
@@ -315,13 +319,47 @@ class AmpLiveTests(unittest.TestCase):
         self.payload_write()
         for status, diagnostic in ((500, "HTTP 500"), (202, "not yet visible")):
             Handler.post_status = status
-            with self.assertRaisesRegex(RuntimeError, diagnostic):
+            with patch.object(amp_live, "CONFIRM_TIMEOUT", 0), self.assertRaisesRegex(RuntimeError, diagnostic):
                 amp_live.send(self.connection, THREAD, self.payload)
             receipt = json.loads(Path(str(self.payload) + ".amp-live-receipt.json").read_text())
             self.assertEqual("uncertain", receipt["status"])
         Handler.post_status = 204
         amp_live.send(self.connection, THREAD, self.payload)
         self.assertEqual(["one"] * 3, [body["id"] for method, _, body in Handler.requests if method == "POST"])
+
+    def test_queued_delivery_is_confirmed_automatically_without_changing_submission(self):
+        self.payload_write()
+        Handler.post_statuses = [202, 202, 204]
+        with patch.object(amp_live.time, "sleep"):
+            ack = amp_live.send(self.connection, THREAD, self.payload)
+        self.assertEqual("accepted", ack["status"])
+        posts = [body for method, _, body in Handler.requests if method == "POST"]
+        self.assertEqual(3, len(posts))
+        self.assertEqual([posts[0]] * 3, posts)
+        receipt = json.loads(Path(str(self.payload) + ".amp-live-receipt.json").read_text())
+        self.assertEqual("accepted", receipt["status"])
+        self.assertEqual(ack, amp_live.send(self.connection, THREAD, self.payload))
+        self.assertEqual(3, sum(method == "POST" for method, *_ in Handler.requests))
+
+    def test_queued_confirmation_stops_on_connection_change_or_transport_failure(self):
+        self.payload_write()
+        Handler.post_status = 202
+
+        def replace_connection(_):
+            self.descriptor["token"] = "replacement"
+            self.write_descriptor()
+
+        with (patch.object(amp_live.time, "sleep", side_effect=replace_connection),
+              self.assertRaisesRegex(RuntimeError, "connection changed")):
+            amp_live.send(self.connection, THREAD, self.payload)
+        self.assertEqual(1, sum(method == "POST" for method, *_ in Handler.requests))
+        self.descriptor["token"] = "secret"
+        self.write_descriptor()
+        Handler.post_statuses = [202, 500]
+        with patch.object(amp_live.time, "sleep"), self.assertRaisesRegex(RuntimeError, "HTTP 500"):
+            amp_live.send(self.connection, THREAD, self.payload)
+        receipt = json.loads(Path(str(self.payload) + ".amp-live-receipt.json").read_text())
+        self.assertEqual("uncertain", receipt["status"])
 
     def test_review_sends_references_not_full_files_and_keeps_archive(self):
         note = {"file": "src/space name.lua", "side": "old", "line": 17, "line_end": 19,
