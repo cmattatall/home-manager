@@ -2,7 +2,7 @@
   config,
   lib,
   pkgs,
-  nixpkgs-unstable,
+  herdr-nix,
   ...
 }:
 let
@@ -74,9 +74,9 @@ in
         pkgs.gcc-arm-embedded
     )
   ]
-  # Herdr is absent from stable; unstable no longer supports Intel Macs.
+  # Use official binaries: the Nixpkgs source build fails to link on Linux.
   ++ lib.optionals (pkgs.stdenv.hostPlatform.system != "x86_64-darwin") [
-    nixpkgs-unstable.legacyPackages.${pkgs.stdenv.hostPlatform.system}.herdr
+    herdr-nix.packages.${pkgs.stdenv.hostPlatform.system}.default
   ]
   ++ lib.optionals (!pkgs.stdenv.hostPlatform.isDarwin) [ pkgs.openssh ];
   xdg.configFile."shellrc.d".source = ./shell;

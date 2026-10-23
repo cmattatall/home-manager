@@ -4,6 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    herdr-nix.url = "github:herdrdev/herdr-nix";
     home-manager = {
       url = "github:nix-community/home-manager/release-26.05";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -19,6 +20,7 @@
     {
       nixpkgs,
       nixpkgs-unstable,
+      herdr-nix,
       home-manager,
       readiff,
       ...
@@ -26,7 +28,7 @@
     let
       shared = {
         imports = [ ./home.nix ];
-        _module.args = { inherit readiff nixpkgs-unstable; };
+        _module.args = { inherit readiff nixpkgs-unstable herdr-nix; };
       };
       mkHome =
         system: username: module:
