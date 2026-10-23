@@ -58,7 +58,7 @@ function M.copy_path(absolute)
 	end
 end
 
-function M.definition()
+function M.definition(peek)
 	local s = assert(review.active(), "Enter Review first")
 	local win, buf = api.nvim_get_current_win(), api.nvim_get_current_buf()
 	assert(buf == s.old_buf or buf == s.new_buf, "Select a symbol in a Review source pane")
@@ -111,6 +111,41 @@ function M.definition()
 			vim.lsp.buf.definition({
 				on_list = function(list)
 					if not current() then
+						return
+					end
+					if peek then
+						local actions = require("telescope.actions")
+						local config = require("telescope.config").values
+						require("telescope.pickers")
+							.new({}, {
+								prompt_title = "Peek definition · current worktree",
+								results_title = "Enter: open in tab | Esc: back to Review",
+								initial_mode = "normal",
+								sorting_strategy = "ascending",
+								layout_strategy = "flex",
+								layout_config = {
+									width = 0.9,
+									height = 0.8,
+									prompt_position = "top",
+									flip_columns = 120,
+									flip_lines = 0,
+									vertical = { preview_cutoff = 0 },
+								},
+								preview_title = "Definition",
+								finder = require("telescope.finders").new_table({
+									results = list.items,
+									entry_maker = require("telescope.make_entry").gen_from_quickfix({
+										show_line = false,
+									}),
+								}),
+								previewer = config.qflist_previewer({}),
+								sorter = config.generic_sorter({}),
+								attach_mappings = function()
+									actions.select_default:replace(actions.select_tab)
+									return true
+								end,
+							})
+							:find()
 						return
 					end
 					vim.cmd.tabnew()

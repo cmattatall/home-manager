@@ -365,6 +365,14 @@ workspace symbols as you type. Both use the attached language server and require
 its symbol support; Review snapshots do not have attached servers. Enter jumps
 to a symbol; Esc closes the picker. Existing file/text pickers stay unchanged.
 
+In Review source panes, **gd** / **Alt+Enter** goes to a definition in a separate
+tab; **gT** returns to the review. **gD** peeks in a floating definition picker
+with a source preview: **j/k** selects a match, **Enter** opens it in a separate
+tab, and **Esc** returns to the unchanged diff. Both use LSP against the current
+worktree, mapping unchanged lines from OLD/NEW snapshots rather than attaching
+servers to the snapshots. Lines changed since the snapshot and deleted source
+files cannot be resolved safely; refresh or open the current file instead.
+
 | Key/command | Action |
 | --- | --- |
 | Space e / `:ft` / `:Explorer` | Focus Git sidebar in Review; focus Neo-tree while editing |

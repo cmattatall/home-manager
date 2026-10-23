@@ -2455,12 +2455,15 @@ class EditorUI(unittest.TestCase):
             "r.add_comment({file=s.current.path,side='new',snapshot_id=s.current.id,selection=require('rediff.selection').line(s.new_buf,5)},'Keep this note')",
         )
         review_tab = editor.current.tabpage.handle
-        for layout, side, line, key, destination, destination_line in (
-            ("split", "old", 3, "<M-CR>", source, 5),
-            ("split", "new", 9, "<M-CR>", helper, 3),
-            ("merged", "new", 9, "gd", helper, 3),
+        for layout, side, line, key, destination, destination_line, columns in (
+            ("split", "old", 3, "<M-CR>", source, 5, 132),
+            ("split", "new", 9, "<M-CR>", helper, 3, 132),
+            ("merged", "new", 9, "gd", helper, 3, 132),
+            ("merged", "new", 9, "gd", helper, 3, 80),
         ):
-            with self.subTest(layout=layout, side=side):
+            with self.subTest(layout=layout, side=side, columns=columns):
+                editor.ui_try_resize(columns, 32)
+                pump(editor)
                 editor.command("View " + layout)
                 self.lua(editor, f"vim.api.nvim_set_current_win(s.{side}_win)")
                 column = (
@@ -2474,6 +2477,26 @@ class EditorUI(unittest.TestCase):
                 )
                 editor.current.window.cursor = [line, column]
                 panes = editor.eval("winlayout()")
+                source_window = editor.current.window.handle
+                self.keys(editor, "gD")
+                self.wait_for(editor, "vim.bo.filetype == 'TelescopePrompt'")
+                self.assertEqual(review_tab, editor.current.tabpage.handle)
+                self.assertEqual(
+                    str(destination),
+                    self.lua(editor, "return require('telescope.actions.state').get_selected_entry().filename"),
+                )
+                self.wait_for(
+                    editor,
+                    "(function() local p=require('telescope.actions.state').get_current_picker(vim.api.nvim_get_current_buf()); "
+                    "local w=p.previewer.state.winid; "
+                    f"return vim.api.nvim_win_get_cursor(w)[1] == {destination_line} "
+                    "and table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(w),0,-1,false),'\\n')"
+                    f":find('function M.{'authorize' if side == 'old' else 'lookup_target'}',1,true) ~= nil end)()",
+                )
+                self.keys(editor, "<Esc>")
+                self.assertEqual(source_window, editor.current.window.handle)
+                self.assertEqual([line, column], list(editor.current.window.cursor))
+                self.assertEqual(panes, editor.eval("winlayout()"))
                 self.keys(editor, key)
                 self.wait_for(
                     editor, f"vim.api.nvim_get_current_tabpage() ~= {review_tab}"
@@ -2768,6 +2791,14 @@ func greeting() string {
                     """,
                     )
                     self.wait_for(editor, "vim.g.rust_ready == true", timeout=60)
+                self.keys(editor, "gD")
+                self.wait_for(editor, "vim.bo.filetype == 'TelescopePrompt'", timeout=30)
+                self.assertEqual(review_tab, editor.current.tabpage.handle)
+                self.assertEqual(
+                    str(Path(self.root, name)),
+                    self.lua(editor, "return require('telescope.actions.state').get_selected_entry().filename"),
+                )
+                self.keys(editor, "<Esc>")
                 self.keys(editor, "gd")
                 self.wait_for(
                     editor,
@@ -2815,6 +2846,28 @@ func greeting() string {
         self.assertEqual(
             4, editor.current.window.cursor[0], "Stale lookup must not steal focus"
         )
+        self.lua(editor, "_G.definition_result=nil")
+        self.keys(editor, "gD")
+        self.wait_for(editor, "definition_result ~= nil")
+        self.keys(editor, "j")
+        self.lua(editor, "definition_result({items={{filename=s.root..'/auth.lua',lnum=3,col=1}}})")
+        pump(editor)
+        self.assertEqual(tab, editor.current.tabpage.handle)
+        self.assertNotEqual("TelescopePrompt", editor.current.buffer.options["filetype"])
+        self.lua(editor, "_G.definition_result=nil")
+        self.keys(editor, "gD")
+        self.wait_for(editor, "definition_result ~= nil")
+        self.lua(
+            editor,
+            "definition_result({items={{filename=s.root..'/auth.lua',lnum=3,col=1,text='authorize'},"
+            "{filename=s.root..'/auth.lua',lnum=16,col=1,text='refresh'}}})",
+        )
+        self.wait_for(editor, "vim.bo.filetype == 'TelescopePrompt'")
+        self.keys(editor, "j<CR>")
+        self.wait_for(editor, f"vim.api.nvim_get_current_tabpage() ~= {tab}")
+        self.assertEqual(str(Path(self.root, "auth.lua")), editor.current.buffer.name)
+        self.assertEqual(16, editor.current.window.cursor[0])
+        self.keys(editor, "gT")
         self.lua(
             editor,
             "vim.api.nvim_win_set_cursor(s.new_win,{3,12}); _G.definition_result=nil",

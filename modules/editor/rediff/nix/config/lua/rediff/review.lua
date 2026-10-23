@@ -1931,6 +1931,9 @@ function M.open(root, comparison)
 				require("rediff.navigation").definition()
 			end, "Find symbol definitions in current worktree")
 		end
+		map(buf, "n", "gD", function()
+			require("rediff.navigation").definition(true)
+		end, "Peek symbol definitions without leaving Review")
 	end
 	for _, buf in ipairs({ s.tree_buf, s.old_buf, s.new_buf }) do
 		require("rediff.annotations").bind(buf, buf ~= s.tree_buf)

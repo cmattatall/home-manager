@@ -30,6 +30,8 @@ REVIEW QUICK REFERENCE
   Right-click path    Menu with Copy Relative Path option (either tree)
   Cmd+C               Copy relative file path (tree or diff, Normal mode)
   Ctrl+Shift+C        Copy full file path (tree or diff, Normal mode)
+  gd / Alt+Enter      Go to definition in a separate tab; gT returns
+  gD                  Peek definition; Esc returns, Enter opens in a tab
   ] / [               Next/previous hunk within the current Git group
   Ctrl+Shift+] / [    Next/previous unseen hunk within the current Git group
   :fs / :fu           Focus STAGED / UNSTAGED
@@ -602,6 +604,16 @@ editing tab; multiple matches also open the quickfix list. gT returns to Review
 without losing notes. Lookup is asynchronous and never edits source, stages,
 or sends feedback.
 
+gD peeks at definitions in a floating picker with a source preview, including
+when there is only one match. j/k selects a match; Enter opens it in a separate
+tab. Esc closes the peek and restores your Review pane and cursor.
+
+Both actions resolve against the current worktree, not historical code. They
+work in OLD and NEW panes and merged view. Unchanged lines are mapped across
+insertions/deletions; a line that changed or a missing source file is rejected
+instead of looking up the wrong symbol. Refresh Review or open the current file
+in that case. Review snapshot buffers stay detached from language servers.
+
 Nix bundles nvim-lspconfig and servers for Lua, Nix, Python, JS/TypeScript,
 Go (gopls), and Rust (rust-analyzer). Go and Rust use your project's toolchain;
 provide go or cargo/rustc on PATH. Nix supplies Rust standard-library sources;
@@ -709,7 +721,7 @@ Choose your receiver carefully.
 
 LIMITS                                                        *rediff-parity*
 Binary files, merge conflicts and files over 2 MiB are unsupported. Notes are
-not re-anchored automatically. File/hunk annotation scopes, LSP inspection
+not re-anchored automatically. File/hunk annotation scopes, historical LSP inspection
 and collapsed/compact diffs are not implemented. See FEATURES.md for the inventory.
 
  vim:tw=78:ts=8:ft=help:norl:
