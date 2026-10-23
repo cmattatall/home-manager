@@ -18,6 +18,7 @@ class ObservableMock<T> {
   private value: T
   private readonly failure?: Error
   constructor(value: T, failure?: Error) { this.value = value; this.failure = failure }
+  get current(): T { return this.value }
   async get(): Promise<T> { if (this.failure) throw this.failure; return this.value }
   subscribe(observer: ((value: T) => void) | { next?: (value: T) => void }) {
     const next = typeof observer === 'function' ? observer : (value: T) => observer.next?.(value)
@@ -51,6 +52,7 @@ function fakeAmp(root = process.cwd()) {
   const notifications: string[] = []
   const threads = new Map<string, any>()
   const amp: any = {
+    activeThread: new ObservableMock<{ id: string } | null>(null),
     threads: { get: (id: string) => threads.get(id) },
     helpers: { filePathFromURI: fileURLToPath, filesModifiedByToolCall: () => null },
     logger: { log() {} },
@@ -540,10 +542,12 @@ test('discovers and sends across independent terminal hosts and worktrees', { ti
   assert.deepEqual((await run('discover', '--all')).map((entry: any) => entry.session), ['T-terminal-one'])
 })
 
-test('terminal identity follows the active thread, not older connections in the same CLI', async (t) => {
+test('terminal identity follows UI focus, not lifecycle events or manual connections', async (t) => {
   const previous = process.env.REDIFF_TERMINAL_ID
   process.env.REDIFF_TERMINAL_ID = 'a'.repeat(64)
   const f = fakeAmp()
+  // Reloading a plugin need not replay session.start for the foreground thread.
+  f.amp.activeThread.emit({ id: 'T-first' })
   try { await plugin(f.amp) } finally {
     if (previous === undefined) delete process.env.REDIFF_TERMINAL_ID
     else process.env.REDIFF_TERMINAL_ID = previous
@@ -554,11 +558,18 @@ test('terminal identity follows the active thread, not older connections in the 
   const identity = async (c: typeof first) => (await fetch(c.descriptor.url, {
     headers: { authorization: `Bearer ${c.descriptor.token}` },
   })).json()
-  assert.equal((await identity(first)).terminal, undefined)
-  assert.equal((await identity(second)).terminal, 'a'.repeat(64))
-  await f.events.get('session.start')!({}, f.context('T-first'))
   assert.equal((await identity(first)).terminal, 'a'.repeat(64))
   assert.equal((await identity(second)).terminal, undefined)
+  await f.events.get('session.start')!({}, f.context('T-second'))
+  await f.events.get('agent.start')!({}, f.context('T-second'))
+  assert.equal((await identity(first)).terminal, 'a'.repeat(64), 'background events cannot take terminal ownership')
+  assert.equal((await identity(second)).terminal, undefined)
+  f.amp.activeThread.emit({ id: 'T-second' })
+  assert.equal((await identity(first)).terminal, undefined)
+  assert.equal((await identity(second)).terminal, 'a'.repeat(64), 'focus changes need no lifecycle event')
+  f.amp.activeThread.emit(null)
+  assert.equal((await identity(first)).terminal, undefined)
+  assert.equal((await identity(second)).terminal, undefined, 'leaving the thread clears terminal ownership')
 })
 
 test('editor bridge sends rules once before annotations or message, without prose wrappers', async (t) => {

@@ -24,7 +24,9 @@ function createThread(id: string) {
   }
 }
 const threads = new Map([[id, createThread(id)]])
+const activeThread = { current: { id } }
 await plugin({
+  activeThread,
   threads: { get: (id: string) => threads.get(id) },
   helpers: { filePathFromURI: (uri: URL) => decodeURIComponent(uri.pathname) },
   logger: { log() {} },
@@ -47,6 +49,7 @@ process.on('message', async (message: { thread?: string } | string) => {
   if (typeof message !== 'string' && message.thread) {
     const id = message.thread
     if (!threads.has(id)) threads.set(id, createThread(id))
+    activeThread.current = { id }
     await handlers.get('session.start')!({}, {
       system: { workspaceRoot: pathToFileURL(root) },
       thread: threads.get(id),
