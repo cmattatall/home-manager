@@ -3619,6 +3619,7 @@ func greeting() string {
                     local r = require('rediff.review')
                     local s = r.active() or require('rediff.annotations').context()
                     _G.note_context = s
+                    require('rediff.live').stop(s)
                     require('rediff.feedback').settings = function()
                         return {feedback_command={vim.v.progpath,'--headless','-u','NONE','-l',receiver,'wait'}}
                     end
@@ -3630,8 +3631,22 @@ func greeting() string {
                     """,
                     str(Path(__file__).with_name("receiver.lua").resolve()),
                 )
+                # Send notes whose original source has changed, keeping their
+                # immutable anchors visible in the editor during delivery.
+                source = Path(self.root, "auth.lua")
+                lines = source.read_text().splitlines(keepends=True)
+                lines[3] = f"-- changed since the first annotation ({file_mode})\n"
+                lines[4] = f"-- changed since the second annotation ({file_mode})\n"
+                source.write_text("".join(lines))
                 self.keys(editor, ":w<CR>")
                 self.wait_for(editor, "require('rediff.feedback').busy(note_context.root)")
+                self.assertEqual(
+                    ["changed"],
+                    self.lua(
+                        editor,
+                        "return vim.tbl_values(require('rediff.feedback').read(note_context.last_submission).snapshot_status)",
+                    ),
+                )
                 self.lua(
                     editor,
                     """
@@ -3662,6 +3677,24 @@ func greeting() string {
                 self.assertNotIn("Boundary sent", result)
                 self.assertIn("Boundary edited after sending", result)
                 self.assertIn("Boundary new", result)
+
+                def inline_notes(editor=editor):
+                    return self.lua(
+                        editor,
+                        """
+                        local lines = {}
+                        for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(note_context.new_buf,
+                            vim.api.nvim_get_namespaces()['rediff.annotations'],0,-1,{details=true})) do
+                            for _, row in ipairs(mark[4].virt_lines or {}) do
+                                for _, chunk in ipairs(row) do table.insert(lines, chunk[1]) end
+                            end
+                        end
+                        return table.concat(lines, '\\n')
+                        """,
+                    )
+
+                self.assertNotIn("Boundary sent", inline_notes())
+                self.assertIn("Boundary edited after sending", inline_notes())
                 self.keys(editor, "<Esc>")
                 self.keys(editor, ":w<CR>")
                 self.wait_for(editor, "require('rediff.feedback').busy(note_context.root)")
@@ -3671,6 +3704,7 @@ func greeting() string {
                 self.wait_for(editor, "not require('rediff.feedback').busy(note_context.root)")
                 self.assertEqual(0, self.lua(editor, "return #note_context.comments"))
                 self.assertFalse(any(line.strip() for line in rows()))
+                self.assertNotIn("Boundary", inline_notes())
                 self.keys(editor, "d<CR><Esc>")
                 self.keys(editor, opening)
                 self.assertEqual("No annotations", self.lua(editor, "return vim.g.startup_notice"))
