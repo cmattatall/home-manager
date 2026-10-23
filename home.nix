@@ -42,6 +42,7 @@ in
     pkgs.zsh
     pkgs.fzf
     pkgs.bat
+    pkgs.btop
     pkgs.presenterm
     pkgs.git
     pkgs.gh
