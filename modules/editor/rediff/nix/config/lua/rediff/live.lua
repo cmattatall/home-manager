@@ -5,13 +5,15 @@ local watchers = {}
 function M.ready(s)
 	local win = api.nvim_get_current_win()
 	local terminal = vim.bo.buftype == "terminal" and vim.b.rediff_harness_root ~= nil
+	local panel = require("rediff.harness_panel").state
+	local in_panel = panel and (win == panel.win or win == panel.filter_win)
 	local mode = vim.fn.mode()
 	return require("rediff.review").active() == s
 		and not s.composer
 		and not s.annotation_id
-		-- Harness terminal input is separate from the diff buffers.
-		and (mode == "n" or (terminal and mode == "t"))
-		and (win == s.tree_win or win == s.old_win or win == s.new_win or terminal)
+		-- Harness input is separate from the diff buffers.
+		and (mode == "n" or (terminal and mode == "t") or (in_panel and mode == "i"))
+		and (win == s.tree_win or win == s.old_win or win == s.new_win or terminal or in_panel)
 		and not require("rediff.feedback").busy(s.root)
 end
 

@@ -7104,6 +7104,49 @@ func greeting() string {
             self.lua(editor, "return s == nil and left_review.live_refresh == nil")
         )
 
+    def test_live_refresh_with_harness_panel_focus(self):
+        editor = self.launch(self.root)
+        path = Path(self.root, "auth.lua")
+        self.keys(editor, ":harness list<CR>")
+        self.assertEqual(
+            "rediff-harness-panel", editor.current.buffer.options["filetype"]
+        )
+
+        for interval in (1, 0):
+            with self.subTest(interval=interval):
+                self.lua(
+                    editor,
+                    "local f=require('rediff.feedback'); local p=vim.fn.stdpath('config'); "
+                    "vim.fn.mkdir(p,'p'); "
+                    f"f.write(p..'/settings.json',{{review_refresh_interval={interval}}}); "
+                    "require('rediff.live').start(s)",
+                )
+                for filtering in (False, True):
+                    with self.subTest(filtering=filtering):
+                        if filtering:
+                            self.keys(editor, "/agent")
+                        window = editor.current.window.handle
+                        buffer = editor.current.buffer.number
+                        mode = editor.api.get_mode()["mode"]
+                        text = f"return 'updated {interval} {filtering}'\n"
+                        path.write_text(text)
+                        if interval == 0:
+                            self.lua(editor, "require('rediff.live').changed(s.root)")
+                        self.wait_for(editor, f"s.current.new == {json.dumps(text)}")
+                        self.assertEqual(window, editor.current.window.handle)
+                        self.assertEqual(buffer, editor.current.buffer.number)
+                        self.assertEqual(mode, editor.api.get_mode()["mode"])
+                        self.assertEqual(
+                            [text.rstrip("\n")],
+                            self.lua(
+                                editor,
+                                "return vim.api.nvim_buf_get_lines(s.new_buf,0,-1,false)",
+                            ),
+                        )
+                        if filtering:
+                            self.assertEqual(["agent"], editor.current.buffer[:])
+                            self.keys(editor, "<C-u><Esc>")
+
     def test_live_refresh_interval_setting_and_disable(self):
         editor = self.launch(self.root)
 
