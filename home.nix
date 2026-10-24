@@ -19,7 +19,6 @@ in
     enable = lib.mkDefault true;
     nvimAlias = lib.mkDefault true;
     vimAlias = lib.mkDefault true;
-    # Preserve settings and plugins already managed outside Home Manager.
     manageSettings = lib.mkDefault false;
     ampPlugin.enable = lib.mkDefault false;
     ompPlugin.enable = lib.mkDefault false;
@@ -83,6 +82,15 @@ in
   xdg.configFile."shellrc.d".source = ./shell;
   programs.bash.initExtra = lib.mkAfter shellInit;
   programs.zsh.initContent = lib.mkAfter shellInit;
+
+  home.file.".config/amp/plugins/readiff.ts" = {
+    source = ./modules/editor/rediff/plugins/amp/readiff.ts;
+    force = true;
+  };
+  home.file.".config/amp/plugins/desloppify.ts" = {
+    source = ./modules/editor/rediff/plugins/amp/desloppify.ts;
+    force = true;
+  };
 
   # Merge only these keys: Amp must retain a writable, machine-local settings file.
   home.activation.ampKeymap = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
