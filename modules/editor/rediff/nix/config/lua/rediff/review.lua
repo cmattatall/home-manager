@@ -1158,6 +1158,7 @@ function M.stage(whole_file, unstage)
 	end
 	assert(snapshot, "No changed file selected")
 	if whole_file then
+		snapshot = git.snapshot(s.root, snapshot)
 		tree_group = snapshot.group == "staged" and "staged" or "unstaged"
 		for i = index + 1, #s.entries do
 			if (s.entries[i].group == "staged") == (tree_group == "staged") then

@@ -6517,6 +6517,61 @@ func greeting() string {
             )
         )
 
+    def test_whole_file_staging_uses_current_content_with_submitted_annotations(self):
+        def git(*args):
+            return subprocess.check_output(["git", "-C", self.root, *args])
+
+        path = Path(self.root, "auth.lua")
+        original = path.read_text()
+        initial_index = git("write-tree")
+        editor = self.launch(self.root)
+        submission = self.lua(
+            editor,
+            """
+            require('rediff.live').stop(s)
+            r.select_harness('none')
+            r.add_comment({file=s.current.path, side='new', snapshot_id=s.current.id,
+                selection=require('rediff.selection').line(s.new_buf,5)}, 'Check this return value')
+            return r.submit()
+            """,
+        )
+        payload = Path(submission).read_bytes()
+        comments = self.lua(editor, "return s.comments")
+
+        for pane in ("tree", "old", "new"):
+            with self.subTest(pane=pane):
+                self.lua(editor, "r.refresh(); r.focus('unstaged')")
+                latest = original.replace("return true", f"return '{pane} agent edit'")
+                path.write_text(latest)
+                self.lua(editor, "r.refresh_annotations(s.root)")
+                self.assertEqual(
+                    ["changed"],
+                    self.lua(editor, "return vim.tbl_values(s.annotation_status)"),
+                )
+
+                self.lua(editor, "vim.api.nvim_set_current_win(s.new_win)")
+                self.keys(editor, "s")
+                self.assertEqual(initial_index, git("write-tree"))
+                self.assertIn("Reviewed content changed", editor.vars["startup_notice"])
+
+                self.lua(editor, f"vim.api.nvim_set_current_win(s.{pane}_win)")
+                self.keys(editor, "S")
+                self.assertEqual(latest.encode(), git("show", ":auth.lua"))
+                self.assertEqual(b"auth.lua\n", git("diff", "--cached", "--name-only"))
+                self.assertEqual(latest, path.read_text())
+
+                self.lua(editor, "r.focus('staged')")
+                path.write_text(latest + "-- additional index edit\n")
+                git("add", "--", "auth.lua")
+                worktree = latest + "-- worktree-only edit\n"
+                path.write_text(worktree)
+                self.lua(editor, f"vim.api.nvim_set_current_win(s.{pane}_win)")
+                self.keys(editor, "S")
+                self.assertEqual(initial_index, git("write-tree"))
+                self.assertEqual(worktree, path.read_text())
+                self.assertEqual(comments, self.lua(editor, "return s.comments"))
+                self.assertEqual(payload, Path(submission).read_bytes())
+
     def test_diff_file_staging_keeps_tree_selection_in_original_group(self):
         editor = self.launch(self.root)
         self.lua(editor, "require('rediff.live').stop(s)")
