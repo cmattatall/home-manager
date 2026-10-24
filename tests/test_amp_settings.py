@@ -17,41 +17,60 @@ BINDINGS = {"thread.interrupt": ["ctrl+l", "esc esc"]}
 @unittest.skipUnless(shutil.which("nix"), "Nix is required")
 class AmpPluginsTest(unittest.TestCase):
     def test_profiles_install_both_plugins_with_or_without_editor(self):
+        expression = """
+            let
+              flake = builtins.getFlake ("path:" + toString ./.);
+              plugins = home: flake.inputs.nixpkgs.lib.genAttrs [ "readiff" "desloppify" ] (name:
+                let file = home.config.home.file.".config/amp/plugins/${name}.ts";
+                in {
+                  inherit (file) enable force target;
+                  contents = builtins.readFile file.source;
+                }
+              );
+            in builtins.mapAttrs (_: home: {
+              default = plugins home;
+              withoutEditor = plugins (home.extendModules {
+                modules = [ { programs.rediff.enable = false; } ];
+              });
+            }) flake.homeConfigurations
+        """
         result = subprocess.run(
-            ["nix", "--extra-experimental-features", "nix-command flakes",
-             "eval", "--impure", "--json", "--expr", '''
-                let
-                  flake = builtins.getFlake ("path:" + toString ./.);
-                  plugins = home: builtins.map (name:
-                    let file = home.config.home.file.".config/amp/plugins/${name}.ts";
-                    in {
-                      inherit name;
-                      inherit (file) enable force target;
-                      contents = builtins.readFile file.source;
-                    }
-                  ) [ "readiff" "desloppify" ];
-                in builtins.mapAttrs (_: home: {
-                  default = plugins home;
-                  withoutEditor = plugins (home.extendModules {
-                    modules = [ { programs.rediff.enable = false; } ];
-                  });
-                }) flake.homeConfigurations
-             '''],
-            cwd=REPO, text=True, capture_output=True, check=False, timeout=180,
+            [
+                "nix",
+                "--extra-experimental-features",
+                "nix-command flakes",
+                "eval",
+                "--impure",
+                "--json",
+                "--expr",
+                expression,
+            ],
+            cwd=REPO,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=180,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         profiles = json.loads(result.stdout)
-        self.assertEqual(set(profiles), {"macbook", "macbook-intel", "development-node"})
+        self.assertEqual(
+            set(profiles), {"macbook", "macbook-intel", "development-node"}
+        )
+
+        expected_plugins = {}
+        for name in ("readiff", "desloppify"):
+            source = REPO / f"modules/editor/rediff/plugins/amp/{name}.ts"
+            expected_plugins[name] = {
+                "enable": True,
+                "force": True,
+                "target": f".config/amp/plugins/{name}.ts",
+                "contents": source.read_text(),
+            }
+
         for profile, variants in profiles.items():
             for variant, plugins in variants.items():
-                for plugin in plugins:
-                    with self.subTest(profile=profile, variant=variant, plugin=plugin["name"]):
-                        name = plugin["name"]
-                        self.assertTrue(plugin["enable"])
-                        self.assertTrue(plugin["force"])
-                        self.assertEqual(plugin["target"], f".config/amp/plugins/{name}.ts")
-                        source = REPO / f"modules/editor/rediff/plugins/amp/{name}.ts"
-                        self.assertEqual(plugin["contents"], source.read_text())
+                with self.subTest(profile=profile, variant=variant):
+                    self.assertEqual(plugins, expected_plugins)
 
 
 class AmpSettingsTest(unittest.TestCase):

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Install the Amp plugins and interrupt keys. The editor is installed with Nix.
 set -euo pipefail
 
 case "${1:-}" in
@@ -30,8 +29,8 @@ for name in readiff desloppify; do
     cp "$source_dir/$name.ts" "$temporary/$name.ts"
     chmod 644 "$temporary/$name.ts"
 done
-# Validate and merge settings before replacing plugins. Never discard an
-# unreadable settings file or other user keybindings to install this shortcut.
+
+# Validate settings first so a failed merge leaves the installed plugins intact.
 python3 - "$settings" <<'PY'
 import json
 import os

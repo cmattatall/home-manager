@@ -203,9 +203,9 @@ preserve a user-managed settings file. `ampPlugin.enable` and `ompPlugin.enable`
 independently manage their plugin files; by default they follow the selected
 harness. See [the editor module documentation](modules/editor/rediff/README.md#use-your-own-home-manager-configuration).
 
-The personal profiles enable readiff and both aliases by default, with editor
-settings and OMP plugins user-managed. Home Manager manages the Amp plugins
-separately, including when `programs.rediff.enable = false` omits the editor.
+The personal profiles enable readiff and both aliases by default. Set
+`programs.rediff.enable = false` to omit the editor. See [Amp plugins](#amp-plugins)
+for their separate installation settings.
 `modules/editor/rediff/` is a self-contained project with its
 own flake, module, tests, and installer, independently publishable at a repository
 root. It is a complete isolated Neovim profile,
@@ -300,17 +300,18 @@ Amp binaries, settings, and credentials are not deleted; use `type -a amp` to
 check for a standalone installation ahead of `~/.nix-profile/bin` on `PATH`.
 Only Amp and Vagrant are allowed as unfree packages, not every unfree package.
 
+### Amp plugins
+
 Home Manager installs and updates both `readiff` and `desloppify` Amp plugins
 through the normal `./scripts/install-home-manager.sh` or `hm switch` workflow.
-They are available in standalone Amp as well as in the editor. Restart Amp after
-switching to load the updated plugins. Desloppify guidance applies automatically
-to new threads; use `code: desloppify` for a cleanup pass in the active thread.
+Each switch replaces `~/.config/amp/plugins/readiff.ts` and `desloppify.ts` with
+the repository versions, including on the first installation. Make plugin changes
+here and switch to apply them. Restart Amp to load updates.
 
-Home Manager is the source of truth for `~/.config/amp/plugins/readiff.ts`
-and `desloppify.ts`. Each switch replaces existing copies with the versions
-in this configuration, including on the first installation. Make plugin changes
-in this repository and switch to apply them. To opt out of either plugin, set
-its file's `enable` option, for example:
+Both plugins are installed even when `programs.rediff.enable = false`.
+Desloppify supplies coding guidance on every turn, including the first. Use
+`code: desloppify` for a behavior-preserving cleanup of the active thread's work.
+To opt out of either plugin, set its file's `enable` option, for example:
 
 ```nix
 home.file.".config/amp/plugins/desloppify.ts".enable = false;
@@ -325,6 +326,8 @@ standalone Amp; in the readiff pane, Ctrl+L dismisses/backtracks and **Ctrl+L tw
 interrupts. Pull and activate this configuration on each remote machine too
 (`hm_pull` for revision-pinned installations); a local activation does not update
 remote hosts. No plugin installation or reload is needed for this setting.
+
+### External prerequisites
 
 These prerequisites remain outside Home Manager:
 
@@ -473,8 +476,7 @@ when invoked directly.
 
 This repository installs `rediff` and makes `nvim` and `vim` invoke it. The
 editor is configured through `modules/editor/rediff.nix`, with editor settings
-and OMP plugins user-managed. Home Manager installs both Amp plugins during
-activation; restart Amp to load updates. The packaged editor uses its isolated
+and OMP plugins user-managed. The packaged editor uses its isolated
 `rediff` profile and does not overwrite `~/.config/nvim`. Plugins are built by
 Nix, not downloaded at editor startup. Intel macOS still builds the package through
 `homeConfigurations.macbook-intel`.
