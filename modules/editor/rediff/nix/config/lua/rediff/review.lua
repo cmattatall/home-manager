@@ -716,10 +716,15 @@ function M.refresh(preferred, changes)
 	changes = changes or read_changes(s, preferred)
 	s.annotation_id = nil
 	s.entries, s.reference = changes.entries, changes.reference
-	local lines, rows = { s.comparison and " BRANCH DIFF · Commits" or " REVIEW · Git changes", "" }, {}
+	local lines = {
+		s.comparison and " BRANCH DIFF · Commits" or " REVIEW · Git changes",
+		" /: filter files",
+	}
 	if s.file_filter and s.file_filter ~= "" then
 		lines[2] = " / " .. vim.fn.strtrans(s.file_filter)
+		lines[3] = " / Ctrl-U Enter: clear"
 	end
+	local rows = {}
 	s.group_rows = {}
 	for _, group in ipairs(s.groups) do
 		local count = 0

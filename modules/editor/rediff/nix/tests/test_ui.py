@@ -318,6 +318,7 @@ class EditorUI(unittest.TestCase):
             )
 
         original = tree()
+        self.assertIn(" /: filter files", original)
         self.keys(editor, "/plan<Esc>")
         self.assertEqual(original, tree())
         filter_to("PLAN")
@@ -326,6 +327,8 @@ class EditorUI(unittest.TestCase):
             [line for line in tree() if line.startswith(" U ")],
         )
         self.assertIn(" / PLAN", tree())
+        self.assertIn(" / Ctrl-U Enter: clear", tree())
+        self.assertNotIn(" /: filter files", tree())
         self.assertNotIn(" M auth.lua", tree())
         self.assertNotIn(" D removed.lua", tree())
         self.keys(editor, " j e")
@@ -363,6 +366,8 @@ class EditorUI(unittest.TestCase):
 
         filter_to("no-such-file")
         self.assertEqual(0, self.lua(editor, "return #s.entries"))
+        self.assertIn(" / no-such-file", tree())
+        self.assertIn(" / Ctrl-U Enter: clear", tree())
         self.assertIn(
             "No matching files", self.lua(editor, "return vim.wo[s.new_win].winbar")
         )
@@ -379,6 +384,7 @@ class EditorUI(unittest.TestCase):
         self.assertIn(" D removed.lua", tree())
         self.assertIn(" U plan.md", tree())
         self.assertIn(" A src/Plan[1].md", tree())
+        self.assertIn(" /: filter files", tree())
         self.assertFalse(any(line.startswith(" / ") for line in tree()))
 
     def test_tree_filter_matches_names_paths_globs_and_regex(self):
