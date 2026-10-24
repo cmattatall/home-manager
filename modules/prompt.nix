@@ -13,7 +13,7 @@ in
     enable = lib.mkEnableOption "the personal Starship prompt for Bash/Zsh";
     host = {
       enable = enabledByDefault "the hostname prefix";
-      showOS = enabledByDefault "the operating system in the hostname prefix";
+      showOS = lib.mkEnableOption "the operating system in the hostname prefix";
       showSSH = enabledByDefault "the SSH indicator in the hostname prefix";
     };
     directory.enable = enabledByDefault "the current directory segment";
@@ -32,7 +32,8 @@ in
       settings = lib.mapAttrsRecursive (_: lib.mkDefault) (
         lib.recursiveUpdate (builtins.fromTOML (builtins.readFile ../shell/starship.toml)) {
           hostname.disabled = !cfg.host.enable;
-          hostname.ssh_symbol = if cfg.host.showSSH then "ssh:" else "";
+          custom.username.disabled = !cfg.host.enable;
+          env_var.SSH_CONNECTION.disabled = !(cfg.host.enable && cfg.host.showSSH);
           os.disabled = !(cfg.host.enable && cfg.host.showOS);
           directory.disabled = !cfg.directory.enable;
           git_branch.disabled = !cfg.git.enable;

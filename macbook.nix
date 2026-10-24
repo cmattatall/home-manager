@@ -66,6 +66,7 @@ in
     settings = {
       term = "xterm-256color";
       enabled_layouts = "splits";
+      paste_actions = "no-op";
       # Left Option sends Alt shortcuts; Right Option keeps special characters.
       macos_option_as_alt = "left";
     };

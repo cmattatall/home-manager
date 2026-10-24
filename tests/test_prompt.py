@@ -51,6 +51,7 @@ class PromptTest(unittest.TestCase):
                     cwd=home,
                     env={
                         "HOME": home,
+                        "USER": "carl",
                         "PATH": os.environ["PATH"],
                         "TERM": "xterm-256color",
                         "LANG": "en_US.UTF-8",
@@ -94,7 +95,8 @@ class PromptTest(unittest.TestCase):
                     )
                     failed = command("(exit 7)")
                     self.assertIn("[7]", failed)
-                    self.assertIn(os.uname().nodename.split(".")[0], failed)
+                    host = os.uname().nodename.split(".")[0]
+                    self.assertIn(f"[carl@{host}]", failed)
                     self.assertIn("~", failed)
                     self.assertNotIn("ssh:", failed)
                     self.assertNotIn("[nix]", failed)
@@ -114,14 +116,17 @@ class PromptTest(unittest.TestCase):
                     self.assertNotIn("(dev)", command("unset AWS_PROFILE"))
                     self.assertNotIn("()", command("export AWS_PROFILE=''"))
 
-                    command("export SSH_CONNECTION='192.0.2.1 1234 192.0.2.2 22'")
+                    command("export SSH_CONNECTION='192.0.2.1 1234 192.0.2.2 22' USER=cmattatall IN_NIX_SHELL=impure")
                     remote = command("(exit 19)")
                     self.assertEqual(remote.count("ssh:"), 1)
+                    self.assertIn(f"ssh:[cmatt@{host}] ~ [nix] $ ", remote)
+                    self.assertNotIn("cmattatall", remote)
                     self.assertEqual(remote.count("[19]"), 1)
                     local = command(
-                        "unset SSH_CONNECTION SSH_TTY; export SSH_AUTH_SOCK=/tmp/agent.sock"
+                        "unset SSH_CONNECTION SSH_TTY IN_NIX_SHELL; export SSH_AUTH_SOCK=/tmp/agent.sock"
                     )
                     self.assertNotIn("ssh:", local)
+                    self.assertIn(f"[cmatt@{host}]", local)
 
                     branch = command("git -c init.defaultBranch=prompt-test init -q")
                     self.assertIn("(prompt-test)", branch)

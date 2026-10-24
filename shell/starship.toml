@@ -1,13 +1,21 @@
 add_newline = false
-format = '$status([\[$hostname$os\]](220) )$directory$git_branch$nix_shell$aws$character'
+format = '$status${env_var.SSH_CONNECTION}([\[${custom.username}$hostname$os\]](220) )$directory$git_branch$nix_shell$aws$character'
+
+[env_var.SSH_CONNECTION]
+format = '[ssh:](205)'
+
+[custom.username]
+command = 'user=${USER:-$(id -un)}; printf "%s" "${user:0:5}"'
+shell = ['bash', '--noprofile', '--norc']
+when = true
+format = '$output@'
 
 [hostname]
 ssh_only = false
-ssh_symbol = 'ssh:'
-format = '[$ssh_symbol](205)$hostname'
+format = '$hostname'
 
 [os]
-disabled = false
+disabled = true
 format = ' \($name\)'
 
 [directory]

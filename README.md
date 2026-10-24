@@ -108,13 +108,14 @@ For a project with `nix/flake.nix`, create `.envrc` containing
 Entering the checkout loads its pinned toolchain into your current shell;
 leaving restores the previous environment. No Bash subshell is needed.
 
-Starship renders the Bash/Zsh prompt. It shows the hostname and OS name in gold,
-an `ssh:` indicator in pink for remote sessions, the directory in magenta, the
-Git branch in green, `[nix]` in cyan inside Nix environments, and the AWS profile
-in yellow (`prod` retains the `🚨 prod 🚨` warning). Failed commands add a red
-`[exit-code]` prefix; the next successful command clears it. The OS label uses
-Starship's name, such as `Mac OS` or the Linux distribution name.
-The pinned Starship detects SSH through `SSH_CONNECTION`, not `SSH_TTY` alone.
+Starship renders the Bash/Zsh prompt. It shows `[user@hostname]` in gold, with
+the username limited to its first five characters and no OS label by default.
+An `ssh:` indicator appears in pink before the brackets for remote sessions.
+The directory is magenta, the Git branch green, `[nix]` cyan inside Nix
+environments, and the AWS profile yellow (`prod` retains the `🚨 prod 🚨` warning).
+Failed commands add a red
+`[exit-code]` prefix; the next successful command clears it.
+The SSH indicator detects `SSH_CONNECTION`, not `SSH_TTY` alone.
 The shared defaults live in `shell/starship.toml`; `shell/ps1.sh` only initializes
 Starship for portable use. Home Manager installs and initializes Starship itself.
 
@@ -143,13 +144,13 @@ programs.personalPrompt = {
 };
 ```
 
-The module defaults to disabled. Once enabled, all segments default to enabled:
+The module defaults to disabled. Once enabled, all segments except the OS label default to enabled:
 
 | Option under `programs.personalPrompt` | Controls |
 | --- | --- |
-| `host.enable` | Entire hostname/OS/SSH prefix |
-| `host.showOS` | OS label inside that prefix |
-| `host.showSSH` | SSH indicator inside that prefix |
+| `host.enable` | Entire username/hostname/OS/SSH prefix |
+| `host.showOS` | OS label inside the brackets (off by default) |
+| `host.showSSH` | SSH indicator before the brackets |
 | `directory.enable` | Current directory |
 | `git.enable` | Git branch; also adds Git to home packages |
 | `nixShell.enable` | `[nix]` when `IN_NIX_SHELL` is set |
@@ -382,6 +383,7 @@ On macOS, Home Manager installs Kitty and owns `~/.config/kitty/kitty.conf`.
 After activation, launch its Kitty application from your Home Manager
 applications directory (normally `~/Applications/Home Manager Apps`) or run
 `kitty`. Reload an already-running Kitty with `Cmd+Ctrl+,`.
+`paste_actions no-op` disables Kitty's paste filtering and confirmation warnings.
 
 | Shortcut | In tmux | Outside tmux in Kitty |
 | --- | --- | --- |
