@@ -1516,6 +1516,8 @@ function M.clear_sent(root, path)
 		render_comments(false, s)
 	end
 	require("rediff.annotations").refresh()
+	-- Delivery can release a historical view after its file event was already applied.
+	require("rediff.live").changed(root)
 	api.nvim_exec_autocmds("User", { pattern = "ReviewAnnotationsSent", data = { root = root } })
 end
 

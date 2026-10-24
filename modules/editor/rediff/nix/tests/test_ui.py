@@ -6984,6 +6984,25 @@ func greeting() string {
             "An event without a content change must not create unseen markers",
         )
 
+        self.lua(editor, "r.jump_comment(s.comments[1])")
+        self.assertEqual(snapshot, self.lua(editor, "return s.current.id"))
+        self.keys(editor, ":w<CR>")
+        self.lua(editor, "r.clear_sent(s.root, s.last_submission)")
+        self.assertEqual(0, self.lua(editor, "return #s.comments"))
+        self.assertIsNone(self.lua(editor, "return s.annotation_id"))
+        self.wait_for(editor, "s.current.new == 'return \"second edit\"\\n'")
+        self.assertEqual(
+            ['return "second edit"'],
+            self.lua(
+                editor, "return vim.api.nvim_buf_get_lines(s.new_buf, 0, -1, false)"
+            ),
+        )
+        self.keys(editor, "s")
+        self.assertEqual(
+            b'return "second edit"\n',
+            subprocess.check_output(["git", "-C", self.root, "show", ":auth.lua"]),
+        )
+
     def test_live_refresh_preserves_focus_and_annotations(self):
         editor = self.launch(self.root)
         self.assertEqual(
