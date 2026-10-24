@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Install the Amp plugin and its interrupt keys. The editor is installed with Nix.
+# Install the Amp plugins and interrupt keys. The editor is installed with Nix.
 set -euo pipefail
 
 case "${1:-}" in
     --help|-h)
         echo "Usage: $0"
-        echo "Installs readiff for this user; backs up the old rediff plugin; never reloads Amp."
+        echo "Installs readiff and desloppify for this user. Backs up the old rediff plugin. Does not reload Amp."
         echo "Sets amp.keymap thread.interrupt to ctrl+l and esc esc, preserving other settings. Requires Python 3."
         exit 0 ;;
 esac
@@ -13,11 +13,10 @@ if [ "$#" -ne 0 ]; then echo "Unexpected argument: $1" >&2; exit 2; fi
 
 source_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 destination_dir="${HOME:?HOME must be set}/.config/amp/plugins"
-destination="$destination_dir/readiff.ts"
 legacy="$destination_dir/rediff.ts"
 settings="$HOME/.config/amp/settings.json"
 
-for path in "$destination" "$legacy" "$settings"; do
+for path in "$destination_dir/readiff.ts" "$destination_dir/desloppify.ts" "$legacy" "$settings"; do
     if [ -L "$path" ] || { [ -e "$path" ] && [ ! -f "$path" ]; }; then
         echo "Refusing to replace a symlink or non-file: $path (use Home Manager if it owns this file)." >&2
         exit 1
@@ -25,11 +24,13 @@ for path in "$destination" "$legacy" "$settings"; do
 done
 
 mkdir -p "$destination_dir"
-temporary=$(mktemp "$destination_dir/.readiff-install.XXXXXX")
-trap 'rm -f "$temporary"' EXIT
-cp "$source_dir/readiff.ts" "$temporary"
-chmod 644 "$temporary"
-# Validate and merge settings before replacing either plugin. Never discard an
+temporary=$(mktemp -d "$destination_dir/.amp-install.XXXXXX")
+trap 'rm -rf "$temporary"' EXIT
+for name in readiff desloppify; do
+    cp "$source_dir/$name.ts" "$temporary/$name.ts"
+    chmod 644 "$temporary/$name.ts"
+done
+# Validate and merge settings before replacing plugins. Never discard an
 # unreadable settings file or other user keybindings to install this shortcut.
 python3 - "$settings" <<'PY'
 import json
@@ -70,9 +71,12 @@ if [ -f "$legacy" ]; then
     mv "$legacy" "$backup/rediff.ts"
     printf 'Backed up old plugin to %s\n' "$backup/rediff.ts"
 fi
-mv -f "$temporary" "$destination"
-printf 'Installed %s\n' "$destination"
+for name in readiff desloppify; do
+    mv -f "$temporary/$name.ts" "$destination_dir/$name.ts"
+    printf 'Installed %s\n' "$destination_dir/$name.ts"
+done
 printf 'Configured Ctrl+L and Esc Esc to interrupt Amp; other settings and keybindings preserved.\n'
 printf 'In the Amp pane, Ctrl+L sends Escape: once to dismiss/back, twice to interrupt.\n'
 printf 'Restart Amp or reload its plugins, then run :harness connect amp in rediff.\n'
+printf 'Desloppify supplies coding guidance on every turn and adds code: desloppify to the Amp command palette.\n'
 printf 'No other plugins were changed. No reload was performed.\n'

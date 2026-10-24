@@ -203,11 +203,16 @@ PATH precedence, and integration with an existing home configuration.
    retries a failed batch. Staged hunks revert in both index and worktree;
    files with unstaged edits must be unstaged first.
 
-For a live Amp session, install the readiff plugin with `:harness install amp`,
-or opt into `programs.rediff.ampPlugin.enable` in Home Manager. Reload Amp's
+For a live Amp session, `:harness install amp` installs the readiff and desloppify
+plugins. Alternatively, enable `programs.rediff.ampPlugin.enable` in Home Manager. Reload Amp's
 plugins, then run `:harness connect amp`. `:harness list` shows available and
 connected sessions, their worktrees, and activity. Multiple connections are
 supported; annotations stay associated with their originating worktree.
+
+The independent desloppify plugin supplies readable-code and plain-English guidance on every
+turn, including the first, without requiring an editor connection. Run
+`code: desloppify` in Amp's command palette to simplify the current work without
+changing its behavior. The command does not authorize commits or pushes.
 
 Amp feedback clears annotations only after a new matching user message is visible
 in the target thread. Queued feedback is checked automatically for up to five

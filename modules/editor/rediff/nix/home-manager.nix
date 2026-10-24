@@ -46,7 +46,7 @@ in
     ampPlugin.enable = lib.mkOption {
       type = lib.types.bool;
       default = cfg.harness == "amp";
-      description = "Install the readiff Amp plugin from this flake. Does not install or authenticate Amp.";
+      description = "Install the readiff and desloppify Amp plugins from this flake. Does not install or authenticate Amp.";
     };
     ompPlugin.enable = lib.mkOption {
       type = lib.types.bool;
@@ -88,6 +88,9 @@ in
     ) "${config.home.profileDirectory}/bin";
     home.file.".config/amp/plugins/readiff.ts" = lib.mkIf cfg.ampPlugin.enable {
       source = ../plugins/amp/readiff.ts;
+    };
+    home.file.".config/amp/plugins/desloppify.ts" = lib.mkIf cfg.ampPlugin.enable {
+      source = ../plugins/amp/desloppify.ts;
     };
     home.file.".omp/agent/extensions/rediff.ts" = lib.mkIf cfg.ompPlugin.enable {
       source = ../plugins/omp/rediff.ts;

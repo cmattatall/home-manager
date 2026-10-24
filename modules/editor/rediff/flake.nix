@@ -119,6 +119,7 @@
                 test "$(cat ${standalone}/home-files/.config/rediff/standalone-owner)" = rediff-standalone-v1
                 test ! -e ${standalone}/home-files/.config/amp/plugins/rediff.ts
                 test ! -e ${standalone}/home-files/.config/amp/plugins/readiff.ts
+                test ! -e ${standalone}/home-files/.config/amp/plugins/desloppify.ts
                 test ! -e ${standalone}/home-files/.omp/agent/extensions/rediff.ts
                 touch "$out"
               '';
@@ -135,6 +136,7 @@
                 export REDIFF_TEST_BRIDGE=${self}/nix/amp_live.py
                 mkdir -p "$HOME"
                 node --test ${./plugins/amp}/tests/rediff.test.ts
+                node --test ${./plugins/amp}/tests/desloppify.test.ts
                 bash ${./plugins/amp}/tests/install.test.sh
                 touch "$out"
               '';

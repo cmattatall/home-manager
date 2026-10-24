@@ -65,10 +65,14 @@ assert builtins.elem "${aliased.home.profileDirectory}/bin" aliased.home.session
 assert !(aliased.home.file ? ".config/rediff/standalone-owner");
 assert !(aliased.home.file ? ".config/amp/plugins/rediff.ts");
 assert !(aliased.home.file ? ".config/amp/plugins/readiff.ts");
+assert !(aliased.home.file ? ".config/amp/plugins/desloppify.ts");
 assert !(ampEnabled.home.file ? ".config/amp/plugins/rediff.ts");
 assert
   builtins.readFile ampEnabled.home.file.".config/amp/plugins/readiff.ts".source
   == builtins.readFile ../../plugins/amp/readiff.ts;
+assert
+  builtins.readFile ampEnabled.home.file.".config/amp/plugins/desloppify.ts".source
+  == builtins.readFile ../../plugins/amp/desloppify.ts;
 assert !(aliased.home.file ? ".omp/agent/extensions/rediff.ts");
 assert
   builtins.fromJSON aliased.xdg.configFile."rediff/settings.json".text == {

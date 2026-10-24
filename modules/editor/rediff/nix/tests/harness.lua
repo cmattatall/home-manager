@@ -15,6 +15,7 @@ return function(root, equal, fails, keys)
 	local install_home = vim.fn.tempname()
 	vim.env.HOME = install_home
 	local plugin = install_home .. "/.config/amp/plugins/readiff.ts"
+	local desloppify = install_home .. "/.config/amp/plugins/desloppify.ts"
 	local notices, choice = {}, 2
 	vim.notify = function(message)
 		table.insert(notices, message)
@@ -22,8 +23,9 @@ return function(root, equal, fails, keys)
 	vim.fn.confirm = function(message, _, default)
 		equal(
 			true,
-			message:find("readiff.ts", 1, true) ~= nil or message:find("oh-my-pi", 1, true) ~= nil,
-			"Confirmation names the installed plugin"
+			(message:find("readiff.ts", 1, true) ~= nil and message:find("desloppify.ts", 1, true) ~= nil)
+				or message:find("oh-my-pi", 1, true) ~= nil,
+			"Confirmation names the installed plugins"
 		)
 		equal(2, default, "Plugin installation defaults to cancel")
 		return choice
@@ -31,6 +33,7 @@ return function(root, equal, fails, keys)
 	local install_ok, install_err = xpcall(function()
 		keys(":harness install amp<CR>")
 		equal(0, vim.fn.filereadable(plugin), "Cancelling installation writes nothing")
+		equal(0, vim.fn.filereadable(desloppify), "Cancelling installation does not install guidance")
 		choice = 1
 		vim.cmd("Harness install amp")
 		fails(harness.install, "already running")
@@ -40,6 +43,11 @@ return function(root, equal, fails, keys)
 		equal(true, notices[1]:find("Installed", 1, true) ~= nil, "Installer reports success")
 		local bundled = vim.env.REDIFF_RUNTIME .. "/amp/readiff.ts"
 		equal(vim.fn.readfile(bundled), vim.fn.readfile(plugin), "Editor installs its exact bundled plugin")
+		equal(
+			vim.fn.readfile(vim.env.REDIFF_RUNTIME .. "/amp/desloppify.ts"),
+			vim.fn.readfile(desloppify),
+			"Editor installs the separate guidance plugin"
+		)
 		equal(
 			{ "ctrl+l", "esc esc" },
 			vim.json.decode(table.concat(vim.fn.readfile(install_home .. "/.config/amp/settings.json"), "\n"))["amp.keymap"]["thread.interrupt"],

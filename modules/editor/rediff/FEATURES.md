@@ -157,8 +157,9 @@ Saved notes remain in the batch. **d** in a source pane deletes a
 note covering the cursor, with a picker if several overlap; it never deletes
 source or retracts sent feedback.
 
-`:Harness install amp` installs the bundled rediff bridge plugin after
-confirmation, leaving other plugin files untouched.
+`:Harness install amp` installs the readiff bridge and the independent desloppify
+plugin after confirmation, leaving other plugin files untouched. Desloppify adds
+coding guidance on every turn and a `code: desloppify` cleanup command in Amp.
 With a selected live Amp target, it then asks that thread to call
 `reload_plugins`; queued acknowledgment is not proof the reload completed.
 Without a live target, reload manually once and use `:harness connect amp`.

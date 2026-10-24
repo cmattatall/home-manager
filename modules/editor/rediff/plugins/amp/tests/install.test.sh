@@ -9,6 +9,7 @@ installer="$source_dir/install.sh"
 
 bash "$installer"
 cmp "$source_dir/readiff.ts" "$plugins/readiff.ts"
+cmp "$source_dir/desloppify.ts" "$plugins/desloppify.ts"
 settings="$HOME/.config/amp/settings.json"
 python3 - "$settings" <<'PY'
 import json, sys
@@ -21,8 +22,10 @@ path.write_text(json.dumps({"amp.gauge": "cost", "amp.keymap": {
 PY
 printf 'another plugin\n' > "$plugins/other.ts"
 printf 'old plugin with local edits\n' > "$plugins/rediff.ts"
+printf 'old guidance\n' > "$plugins/desloppify.ts"
 bash "$installer"
 cmp "$source_dir/readiff.ts" "$plugins/readiff.ts"
+cmp "$source_dir/desloppify.ts" "$plugins/desloppify.ts"
 test ! -e "$plugins/rediff.ts"
 backups=("$HOME"/.config/amp/plugin-backups/readiff-migration.*/rediff.ts)
 test "${#backups[@]}" -eq 1
@@ -56,8 +59,8 @@ cmp "$settings" "$temporary/expected-settings"
 backups=("$HOME"/.config/amp/plugin-backups/readiff-migration.*/rediff.ts)
 test "${#backups[@]}" -eq 1
 test "$(cat "$plugins/other.ts")" = 'another plugin'
-rm "$plugins/readiff.ts"
-for name in readiff rediff; do
+rm "$plugins/readiff.ts" "$plugins/desloppify.ts"
+for name in readiff rediff desloppify; do
     ln -s "$source_dir/readiff.ts" "$plugins/$name.ts"
     if bash "$installer"; then echo 'Unexpected Home Manager symlink replacement'; exit 1; fi
     test -L "$plugins/$name.ts"
@@ -72,15 +75,18 @@ for name in readiff rediff; do
     rmdir "$plugins/$name.ts"
 done
 printf 'existing plugin\n' > "$plugins/readiff.ts"
+printf 'existing guidance\n' > "$plugins/desloppify.ts"
 for invalid in '{broken' '[]' '{"amp.keymap": []}'; do
     printf '%s' "$invalid" > "$settings"
     if bash "$installer"; then echo 'Unexpected invalid settings replacement'; exit 1; fi
     test "$(cat "$settings")" = "$invalid"
     test "$(cat "$plugins/readiff.ts")" = 'existing plugin'
+    test "$(cat "$plugins/desloppify.ts")" = 'existing guidance'
 done
 rm "$settings"
 ln -s "$temporary/expected-settings" "$settings"
 if bash "$installer"; then echo 'Unexpected settings symlink replacement'; exit 1; fi
 test -L "$settings"
 test "$(cat "$plugins/readiff.ts")" = 'existing plugin'
-echo 'PASS: readiff installer'
+test "$(cat "$plugins/desloppify.ts")" = 'existing guidance'
+echo 'PASS: Amp plugins installer'
