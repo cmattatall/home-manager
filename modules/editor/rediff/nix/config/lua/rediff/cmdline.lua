@@ -14,7 +14,7 @@ end
 function M.suffix(line)
 	local lead, matches
 	if line:match("^%a+$") then
-		for _, preferred in ipairs({ "help", "harness", "worktree", "annotations" }) do
+		for _, preferred in ipairs({ "help", "harness", "worktree", "annotations", "lsp" }) do
 			if vim.startswith(preferred, line) then
 				return preferred:sub(#line + 1)
 			end
@@ -26,6 +26,7 @@ function M.suffix(line)
 		or line:match("^Focus%s+%a*$")
 		or line:match("^Worktree%s+%a*$")
 		or line:match("^Annotations%s+%a*$")
+		or line:match("^Lsp%s+%a*$")
 	then
 		lead, matches = line:match("(%a*)$"), vim.fn.getcompletion(line, "cmdline")
 	else

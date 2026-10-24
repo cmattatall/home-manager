@@ -544,6 +544,14 @@ function M.show(index, snapshot, keep_fold)
 	s.exhausted_group = nil
 	s.snapshots[snapshot.id] = snapshot
 	local old_lines, new_lines = git.lines(snapshot.old), git.lines(snapshot.new)
+	-- These are full-file replacements, not incremental edits. Drop old syntax
+	-- trees before changing the text rather than copying/editing each old node.
+	for _, buf in ipairs({ s.old_buf, s.new_buf }) do
+		local highlighter = vim.treesitter.highlighter.active[buf]
+		if highlighter then
+			highlighter.tree:invalidate(true)
+		end
+	end
 	set_lines(s.old_buf, old_lines)
 	set_lines(s.new_buf, new_lines)
 	-- Codediff's empty-file path requires one empty line, just like Neovim.
@@ -551,8 +559,11 @@ function M.show(index, snapshot, keep_fold)
 	old_lines = api.nvim_buf_get_lines(s.old_buf, 0, -1, false)
 	new_lines = api.nvim_buf_get_lines(s.new_buf, 0, -1, false)
 	local ft = vim.filetype.match({ filename = snapshot.path }) or ""
-	vim.bo[s.old_buf].filetype = ft
-	vim.bo[s.new_buf].filetype = ft
+	for _, buf in ipairs({ s.old_buf, s.new_buf }) do
+		if vim.bo[buf].filetype ~= ft then
+			vim.bo[buf].filetype = ft
+		end
+	end
 	-- Filetype plugins can create closed folds that survive snapshot reuse.
 	-- Keep source panes fully visible; the tree owns its separate group folds.
 	for _, win in ipairs({ s.new_win, s.old_win }) do
@@ -1926,14 +1937,16 @@ function M.open(root, comparison)
 		end, "Expand Git group and restore selection")
 	end
 	for _, buf in ipairs({ s.old_buf, s.new_buf }) do
-		for _, key in ipairs({ "<M-CR>", "gd" }) do
+		for _, key in ipairs({ "grn", "gra", "grx" }) do
+			map(buf, { "n", "x" }, key, function()
+				vim.notify("Review is read-only; use Space l to inspect symbols")
+			end, "Source-changing LSP action disabled in Review")
+		end
+		for _, key in ipairs({ "<C-w>]", "<C-w>}", "<C-w><C-]>" }) do
 			map(buf, "n", key, function()
 				require("rediff.navigation").definition()
-			end, "Find symbol definitions in current worktree")
+			end, "Inspect without leaving Review")
 		end
-		map(buf, "n", "gD", function()
-			require("rediff.navigation").definition(true)
-		end, "Peek symbol definitions without leaving Review")
 	end
 	for _, buf in ipairs({ s.tree_buf, s.old_buf, s.new_buf }) do
 		require("rediff.annotations").bind(buf, buf ~= s.tree_buf)

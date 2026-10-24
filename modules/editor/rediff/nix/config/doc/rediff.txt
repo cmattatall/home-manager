@@ -30,8 +30,8 @@ REVIEW QUICK REFERENCE
   Right-click path    Menu with Copy Relative Path option (either tree)
   Cmd+C               Copy relative file path (tree or diff, Normal mode)
   Ctrl+Shift+C        Copy full file path (tree or diff, Normal mode)
-  gd / Alt+Enter      Go to definition in a separate tab; gT returns
-  gD                  Peek definition; Esc returns, Enter opens in a tab
+  gd / Alt+Enter      Peek definition without leaving Review
+  Space l             Peek symbol and type; press again to expand; Esc closes
   ] / [               Next/previous hunk within the current Git group
   Ctrl+Shift+] / [    Next/previous unseen hunk within the current Git group
   :fs / :fu           Focus STAGED / UNSTAGED
@@ -556,7 +556,7 @@ use split for exact old-side selections. Old-side search/note jumps do this for 
 
   Space E               Toggle filesystem tree; focus-only in Review
   Cmd-w h/j/k/l         Focus adjacent pane (macOS); Cmd-w w cycles
-  gt / gT              Next/previous tab
+  gt / :tabprevious    Next/previous tab (gT is disabled)
   :setlocal [no]number  Show/hide line numbers
   :setlocal [no]wrap    Wrap/unwrap text
 
@@ -590,28 +590,52 @@ Tabs and indentation default to four spaces (expandtab, tabstop=4, shiftwidth=4)
 Filetype and project settings may override these defaults.
 
 Space s / :Symbols opens Telescope's current-file symbol picker; Space S /
-:WorkspaceSymbols searches workspace symbols as you type. Use them from an
-ordinary source buffer with an attached language server that supports symbols,
-not a Review snapshot. Enter jumps to the selected symbol; Esc closes the picker.
-:Telescope lsp_document_symbols and :Telescope lsp_dynamic_workspace_symbols
-are also available. File/text search continues to use the existing pickers.
+:WorkspaceSymbols searches workspace symbols as you type. Both work in
+editing and Review. j/k selects a result, i filters, Ctrl-d/u scrolls the source
+preview, and Esc closes. Results are read-only; Enter and split/tab actions never
+open source files. File/text search continues to use the existing pickers.
 
 Opening a directory (for example, rediff src) uses the filesystem explorer.
 Its Git markers are green A for added, green U for untracked, and yellow M for
 modified. Directories summarize changes inside them, even when expanded. Deleted
 files are absent from this explorer; they remain available in Review.
 
-In a Review source pane, Option+Enter (Alt+Enter / gd) finds definitions of the
-symbol under the cursor using Neovim's LSP client. Results open in a separate
-editing tab; multiple matches also open the quickfix list. gT returns to Review
-without losing notes. Lookup is asynchronous and never edits source, stages,
-or sends feedback.
+Option+Enter (Alt+Enter / gd), Ctrl+], and grt are aliases for the combined peek
+in editing and Review. grr browses references, gri browses implementations, and
+gO browses file symbols. Inspection never opens an editing tab, replaces the
+red/green panes, edits source, stages, or sends feedback.
 
-gD peeks at definitions in a floating picker with a source preview, including
-when there is only one match. j/k selects a match; Enter opens it in a separate
-tab. Esc closes the peek and restores your Review pane and cursor.
+Space l / :DefinitionPreview peeks at the symbol under your cursor without moving
+focus, in ordinary editing and Review. It combines definition and type-definition
+results: a variable can show its declaration and its struct/interface/type source
+together. Duplicate locations appear once. Functions and named types use this
+same action; no type/function mode or second shortcut is needed. When no source
+location is available, language-server hover information is shown instead.
+Available information depends on the language server.
 
-Both actions resolve against the current worktree, not historical code. They
+Esc, moving the cursor, or entering Insert mode closes the preview. Press Space l
+again while a source preview is visible to expand it into the full searchable
+browser (:Definitions also opens it). j/k selects a location for preview;
+Esc returns to the source. K and gT are disabled; gk retains native movement.
+
+:lsp help opens a scrollable popup of the shared inspection bindings and current
+automatic-display status. q or Esc closes it. Rename (grn), code actions (gra),
+and code lens (grx) remain available while editing, but are explicitly blocked in
+Review. gq keeps its existing annotation behavior, not source formatting.
+Review supports read-only LSP inspection only.
+
+Automatic previews are off by default. Space t toggles them in editing and Review
+for this editor session. These commands are also available through Space p / :Commands:
+  :DefinitionPreviewAutoEnable  Show previews when the cursor pauses on a symbol
+  :DefinitionPreviewAutoDisable Close the preview and stop automatic display
+  :DefinitionPreviewAutoToggle  Switch automatic display on/off
+Automatic display uses CursorHold (updatetime, 250ms by default), keeps keyboard
+focus in your source, and uses the same combined symbol/type lookup as Space l.
+It stays quiet when the server has no information. Esc
+dismisses an automatic preview until you move to another position. Disabling
+automatic display still allows Space l. These commands do not change saved settings.
+
+Definition lookups resolve against the current worktree, not historical code. They
 work in OLD and NEW panes and merged view. Unchanged lines are mapped across
 insertions/deletions; a line that changed or a missing source file is rejected
 instead of looking up the wrong symbol. Refresh Review or open the current file

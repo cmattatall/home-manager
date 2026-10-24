@@ -265,19 +265,13 @@ require("telescope").setup({
 	defaults = { mappings = { i = { ["<Esc>"] = require("telescope.actions").close } } },
 })
 local navigation = require("rediff.navigation")
+navigation.setup_definitions()
 vim.api.nvim_create_autocmd("MenuPopup", { callback = navigation.tree_menu })
 for _, binding in ipairs({
 	{ "<leader>e", "Explorer", navigation.explorer, "Focus explorer" },
 	{ "<leader>d", "FocusDiff", navigation.diff, "Focus diff/editor" },
 	{ "<leader>f", "Files", navigation.files, "Fuzzy find files" },
 	{ "<leader>/", "Search", navigation.text, "Fuzzy find text" },
-	{ "<leader>s", "Symbols", require("telescope.builtin").lsp_document_symbols, "Find file symbols" },
-	{
-		"<leader>S",
-		"WorkspaceSymbols",
-		require("telescope.builtin").lsp_dynamic_workspace_symbols,
-		"Find workspace symbols",
-	},
 	{
 		"<leader>p",
 		"Commands",

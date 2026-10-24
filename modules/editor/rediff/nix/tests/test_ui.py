@@ -2396,7 +2396,7 @@ class EditorUI(unittest.TestCase):
             with self.subTest(opening=opening):
                 self.keys(editor, opening)
                 self.wait_for(editor, "vim.bo.filetype == 'TelescopePrompt'")
-                self.keys(editor, query)
+                self.keys(editor, "i" + query)
                 self.wait_for(
                     editor,
                     "(function() for _,w in ipairs(vim.api.nvim_list_wins()) do "
@@ -2408,8 +2408,10 @@ class EditorUI(unittest.TestCase):
                     timeout=30,
                 )
                 self.keys(editor, "<CR>")
-                self.assertEqual(str(destination), editor.current.buffer.name)
-                self.assertEqual(3, editor.current.window.cursor[0])
+                self.assertEqual("TelescopePrompt", editor.current.buffer.options["filetype"])
+                self.assertEqual(str(destination), self.lua(editor, "return require('telescope.actions.state').get_selected_entry().filename"))
+                self.keys(editor, "<Esc>")
+                self.assertEqual(str(source), editor.current.buffer.name)
         layout, cursor = editor.eval("winlayout()"), editor.current.window.cursor
         self.keys(editor, " s")
         self.wait_for(editor, "vim.bo.filetype == 'TelescopePrompt'")
@@ -2478,7 +2480,17 @@ class EditorUI(unittest.TestCase):
                 editor.current.window.cursor = [line, column]
                 panes = editor.eval("winlayout()")
                 source_window = editor.current.window.handle
-                self.keys(editor, "gD")
+                self.keys(editor, " l")
+                self.wait_for(editor, "vim.b.lsp_floating_preview ~= nil")
+                self.assertEqual(source_window, editor.current.window.handle)
+                self.assertEqual([line, column], list(editor.current.window.cursor))
+                self.assertIn(
+                    f"function M.{'authorize' if side == 'old' else 'lookup_target'}",
+                    self.lua(editor, "return table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(vim.b.lsp_floating_preview),0,-1,false),'\\n')"),
+                )
+                self.keys(editor, "<Esc>")
+                self.assertEqual(panes, editor.eval("winlayout()"))
+                editor.command("Definitions")
                 self.wait_for(editor, "vim.bo.filetype == 'TelescopePrompt'")
                 self.assertEqual(review_tab, editor.current.tabpage.handle)
                 self.assertEqual(
@@ -2498,12 +2510,9 @@ class EditorUI(unittest.TestCase):
                 self.assertEqual([line, column], list(editor.current.window.cursor))
                 self.assertEqual(panes, editor.eval("winlayout()"))
                 self.keys(editor, key)
-                self.wait_for(
-                    editor, f"vim.api.nvim_get_current_tabpage() ~= {review_tab}"
-                )
-                self.assertEqual(str(destination), editor.current.buffer.name)
-                self.assertEqual(destination_line, editor.current.window.cursor[0])
-                self.keys(editor, "gT")
+                self.wait_for(editor, "vim.b.lsp_floating_preview ~= nil")
+                self.assertEqual(source_window, editor.current.window.handle)
+                self.keys(editor, "<Esc>")
                 self.assertEqual(review_tab, editor.current.tabpage.handle)
                 self.assertEqual(panes, editor.eval("winlayout()"))
                 self.assertEqual(
@@ -2526,6 +2535,228 @@ class EditorUI(unittest.TestCase):
         self.assertEqual(
             index, subprocess.check_output(["git", "-C", self.root, "write-tree"])
         )
+
+    def test_definition_preview_is_manual_by_default_and_auto_can_be_toggled(self):
+        Path(self.root, "caller.lua").write_text(
+            'local auth = require("auth")\n'
+            'local label = "é😀"; auth.authorize({})\n'
+            'auth.refresh({})\n'
+            '\n'
+        )
+        editor = self.launch(self.root, file="caller.lua")
+        self.wait_for(editor, "#vim.lsp.get_clients({bufnr=0,method='textDocument/definition'}) > 0")
+        source_window = editor.current.window.handle
+        column = len('local label = "é😀"; auth.'.encode())
+        editor.current.window.cursor = [2, column]
+        self.keys(editor, "l")
+        cursor = list(editor.current.window.cursor)
+        editor.command("doautocmd CursorHold")
+        pump(editor)
+        self.assertIsNone(self.lua(editor, "return vim.b.lsp_floating_preview"))
+        self.keys(editor, " l")
+        self.wait_for(editor, "vim.b.lsp_floating_preview ~= nil")
+
+        def assert_preview(symbol):
+            self.assertEqual(source_window, editor.current.window.handle)
+            self.assertIn(
+                f"function M.{symbol}",
+                self.lua(editor, "return table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(vim.b.lsp_floating_preview),0,-1,false),'\\n')"),
+            )
+
+        assert_preview("authorize")
+        self.assertEqual(cursor, list(editor.current.window.cursor))
+        self.keys(editor, " l")
+        self.wait_for(editor, "vim.bo.filetype == 'TelescopePrompt'")
+        self.assertEqual(
+            str(Path(self.root, "auth.lua")),
+            self.lua(editor, "return require('telescope.actions.state').get_selected_entry().filename"),
+        )
+        self.keys(editor, "<Esc>")
+        # Exercise the actual command palette, not just the command's callback.
+        self.keys(editor, " p")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "DefinitionPreviewAutoEnable")
+        self.keys(editor, "<CR>")
+        self.wait_for(editor, "vim.fn.getcmdline() == 'DefinitionPreviewAutoEnable'")
+        self.keys(editor, "<CR>")
+        self.wait_for(editor, "vim.g.startup_notice == 'Automatic definition preview enabled'")
+        self.assertEqual(source_window, editor.current.window.handle)
+        editor.command("doautocmd CursorHold")
+        self.wait_for(editor, "vim.b.lsp_floating_preview ~= nil")
+        assert_preview("authorize")
+        self.keys(editor, "<Esc>")
+        editor.command("doautocmd CursorHold")
+        pump(editor)
+        self.assertIsNone(self.lua(editor, "return vim.b.lsp_floating_preview"))
+        self.keys(editor, "j0lllll")
+        editor.command("doautocmd CursorHold")
+        self.wait_for(editor, "vim.b.lsp_floating_preview ~= nil")
+        assert_preview("refresh")
+        self.keys(editor, " t")
+        self.assertEqual("Automatic definition preview disabled", editor.vars["startup_notice"])
+        self.assertIsNone(self.lua(editor, "return vim.b.lsp_floating_preview"))
+        self.keys(editor, "k")
+        editor.command("doautocmd CursorHold")
+        pump(editor)
+        self.assertIsNone(self.lua(editor, "return vim.b.lsp_floating_preview"))
+        self.keys(editor, " t")
+        self.assertEqual("Automatic definition preview enabled", editor.vars["startup_notice"])
+        self.keys(editor, "jj0")
+        editor.command("doautocmd CursorHold")
+        pump(editor)
+        self.assertIsNone(self.lua(editor, "return vim.b.lsp_floating_preview"))
+        self.assertEqual("Automatic definition preview enabled", editor.vars["startup_notice"])
+        # Deliver real server results late: neither moving nor disabling auto may
+        # resurrect a preview for an abandoned request.
+        self.lua(editor, """
+            _G.request_all = vim.lsp.buf_request_all
+            vim.lsp.buf_request_all = function(buf, method, params, callback)
+                if method ~= 'textDocument/definition' then
+                    return request_all(buf, method, params, callback)
+                end
+                return request_all(buf, method, params, function(results)
+                    _G.deliver_preview = function() callback(results) end
+                end)
+            end
+        """)
+        for abandon in ("j", ":DefinitionPreviewAutoDisable<CR>"):
+            self.lua(editor, "_G.deliver_preview = nil")
+            editor.command("DefinitionPreviewAutoEnable")
+            editor.current.window.cursor = [2, column]
+            editor.command("doautocmd CursorHold")
+            self.wait_for(editor, "deliver_preview ~= nil")
+            self.keys(editor, abandon)
+            self.lua(editor, "deliver_preview()")
+            pump(editor)
+            self.assertIsNone(self.lua(editor, "return vim.b.lsp_floating_preview"))
+        self.lua(editor, "vim.lsp.buf_request_all = request_all")
+        editor.command("DefinitionPreviewAutoEnable")
+        # Automatic lookup also works in Review's detached source buffers.
+        self.keys(editor, " r")
+        self.lua(editor, "require('rediff.live').stop(s); for i,e in ipairs(s.entries) do if e.path=='caller.lua' then r.show(i); break end end; vim.api.nvim_set_current_win(s.new_win)")
+        source_window = editor.current.window.handle
+        editor.current.window.cursor = [2, column]
+        self.keys(editor, "l")
+        editor.command("doautocmd CursorHold")
+        self.wait_for(editor, "vim.b.lsp_floating_preview ~= nil")
+        assert_preview("authorize")
+        editor.command("DefinitionPreviewAutoDisable")
+        pump(editor)
+        self.assertIsNone(self.lua(editor, "return vim.b.lsp_floating_preview"))
+        self.assertEqual("Automatic definition preview disabled", editor.vars["startup_notice"])
+
+    def test_automatic_preview_starts_language_server_from_cold_review(self):
+        for layout in ("split", "merged"):
+            with self.subTest(layout=layout):
+                root = self.fixture.exec_lua("return dofile(...).create()", FIXTURE)
+                Path(root, "caller.lua").write_text(
+                    'local auth = require("auth")\nauth.authorize({})\nauth.refresh({})\n'
+                )
+                # No editable source buffer or server has been opened in this process.
+                editor = self.launch(root)
+                self.lua(editor, "for i,e in ipairs(s.entries) do if e.path=='caller.lua' then r.show(i); break end end; vim.api.nvim_set_current_win(s.new_win)")
+                editor.command("View " + layout)
+                window, tab = editor.current.window.handle, editor.current.tabpage.handle
+                self.keys(editor, "2G05l t")
+                for movement, symbol in (("", "authorize"), ("j", "refresh")):
+                    if movement:
+                        self.keys(editor, movement)
+                    # Wait for real idle input, not :doautocmd CursorHold.
+                    self.wait_for(editor, "vim.b.lsp_floating_preview ~= nil", timeout=20)
+                    self.assertIn(
+                        "function M." + symbol,
+                        self.lua(editor, "return table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(vim.b.lsp_floating_preview),0,-1,false),'\\n')"),
+                    )
+                    self.assertEqual(window, editor.current.window.handle)
+                    self.assertEqual(tab, editor.current.tabpage.handle)
+                self.keys(editor, " t")
+                self.assertIsNone(self.lua(editor, "return vim.b.lsp_floating_preview"))
+
+    def test_symbol_peek_combines_variable_and_type_with_one_key(self):
+        Path(self.root, "types.ts").write_text(
+            "export interface Account {\n  name: string;\n  balance: number;\n}\n"
+        )
+        Path(self.root, "account.ts").write_text(
+            'import { Account } from "./types";\n'
+            'export const account: Account = { name: "Ada", balance: 42 };\n'
+            'console.log(account);\n'
+        )
+        editor = self.launch(self.root, file="account.ts")
+        self.wait_for(editor, "#vim.lsp.get_clients({bufnr=0,method='textDocument/typeDefinition'}) > 0")
+        for mode in ("editing", "split", "merged"):
+            with self.subTest(mode=mode):
+                if mode == "split":
+                    self.keys(editor, " r")
+                    self.lua(editor, "require('rediff.live').stop(s); for i,e in ipairs(s.entries) do if e.path=='account.ts' then r.show(i); break end end; vim.api.nvim_set_current_win(s.new_win)")
+                elif mode == "merged":
+                    editor.command("View merged")
+                    editor.ui_try_resize(80, 32)
+                window = editor.current.window.handle
+                editor.current.window.cursor = [3, 13]
+                self.keys(editor, "K")
+                self.assertIsNone(self.lua(editor, "return vim.b.lsp_floating_preview"))
+                self.keys(editor, ":lsp h<Tab><CR>")
+                self.wait_for(editor, "vim.bo.filetype == 'help'")
+                help_text = "\n".join(editor.current.buffer[:])
+                self.assertIn("Space l", help_text)
+                self.assertIn("Automatic display: OFF", help_text)
+                visible_help = "\n".join(editor.current.buffer[:editor.funcs.line("w$")])
+                self.assertIn("Space t toggles", visible_help)
+                for action in ("Toggle", "Enable", "Disable"):
+                    self.assertIn(":DefinitionPreviewAuto" + action, visible_help)
+                self.assertIn("Review blocks source-changing", help_text)
+                self.assertNotEqual("", editor.api.win_get_config(editor.current.window.handle)["relative"])
+                self.keys(editor, "q")
+                self.assertEqual(window, editor.current.window.handle)
+                if mode == "editing":
+                    self.keys(editor, " l")
+                else:
+                    self.keys(editor, " t")
+                    editor.command("doautocmd CursorHold")
+                self.wait_for(editor, "vim.b.lsp_floating_preview ~= nil")
+                text = self.lua(editor, "return table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(vim.b.lsp_floating_preview),0,-1,false),'\\n')")
+                self.assertIn("export const account", text)
+                self.assertIn("export interface Account", text)
+                self.assertIn("balance: number", text)
+                self.assertEqual(window, editor.current.window.handle)
+                self.assertEqual([3, 13], list(editor.current.window.cursor))
+                tab = editor.current.tabpage.handle
+                self.keys(editor, " l")
+                self.wait_for(editor, "vim.bo.filetype == 'TelescopePrompt'")
+                destinations = self.lua(editor, "local p=require('telescope.actions.state').get_current_picker(vim.api.nvim_get_current_buf()); local paths={}; for entry in p.manager:iter() do paths[#paths+1]=entry.filename end; return paths")
+                self.assertEqual(
+                    {str(Path(self.root, "account.ts")), str(Path(self.root, "types.ts"))},
+                    set(destinations),
+                )
+                self.assertEqual(2, len(destinations))
+                self.keys(editor, "j")
+                self.wait_for(editor, "(function() local p=require('telescope.actions.state').get_current_picker(vim.api.nvim_get_current_buf()); return table.concat(vim.api.nvim_buf_get_lines(p.previewer.state.bufnr,0,-1,false),'\\n'):find('export interface Account',1,true) ~= nil end)()")
+                for select in ("<CR>", "<C-t>", "<C-v>", "<C-x>", "<C-q>", "<M-q>"):
+                    self.keys(editor, select)
+                    self.assertEqual("TelescopePrompt", editor.current.buffer.options["filetype"])
+                    self.assertEqual(tab, editor.current.tabpage.handle)
+                self.keys(editor, "<Esc>")
+                self.assertEqual(window, editor.current.window.handle)
+                self.assertEqual([3, 13], list(editor.current.window.cursor))
+                self.keys(editor, "gT")
+                self.assertEqual(tab, editor.current.tabpage.handle)
+                if mode != "editing":
+                    self.keys(editor, " t")
+                    self.assertEqual("Automatic definition preview disabled", editor.vars["startup_notice"])
+                self.keys(editor, "grr")
+                self.wait_for(editor, "vim.bo.filetype == 'TelescopePrompt'")
+                self.assertEqual([2, 3], sorted(self.lua(editor, "local p=require('telescope.actions.state').get_current_picker(vim.api.nvim_get_current_buf()); local rows={}; for e in p.manager:iter() do rows[#rows+1]=e.lnum end; return rows")))
+                self.keys(editor, "<Esc>")
+                self.assertEqual(window, editor.current.window.handle)
+                if mode != "editing":
+                    contents = Path(self.root, "account.ts").read_bytes()
+                    index = subprocess.check_output(["git", "-C", self.root, "write-tree"])
+                    for key in ("grn", "gra", "grx"):
+                        self.keys(editor, key)
+                        self.assertIn("Review is read-only", editor.vars["startup_notice"])
+                        self.assertEqual(window, editor.current.window.handle)
+                    self.assertEqual(contents, Path(self.root, "account.ts").read_bytes())
+                    self.assertEqual(index, subprocess.check_output(["git", "-C", self.root, "write-tree"]))
 
     def test_go_highlighting_in_source_and_review_snapshots(self):
         source = """package fixture
@@ -2661,7 +2892,7 @@ func greeting() string {
                             0, {"name": "Normal", "link": False}
                         )["fg"]
                         self.assertNotEqual(normal, cell[1]["foreground"])
-                self.keys(editor, "gT")
+                editor.command("tabprevious")
 
     def test_flake_fetch_is_automatic_and_shows_nonblocking_activity(self):
         source = Path(self.root, "example.nix")
@@ -2791,7 +3022,15 @@ func greeting() string {
                     """,
                     )
                     self.wait_for(editor, "vim.g.rust_ready == true", timeout=60)
-                self.keys(editor, "gD")
+                self.keys(editor, " l")
+                self.wait_for(editor, "vim.b.lsp_floating_preview ~= nil", timeout=30)
+                self.assertEqual([row, col], list(editor.current.window.cursor))
+                self.assertIn(
+                    Path(self.root, name).read_text().splitlines()[target - 1],
+                    self.lua(editor, "return vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(vim.b.lsp_floating_preview),0,-1,false)"),
+                )
+                self.keys(editor, "<Esc>")
+                editor.command("Definitions")
                 self.wait_for(editor, "vim.bo.filetype == 'TelescopePrompt'", timeout=30)
                 self.assertEqual(review_tab, editor.current.tabpage.handle)
                 self.assertEqual(
@@ -2800,18 +3039,10 @@ func greeting() string {
                 )
                 self.keys(editor, "<Esc>")
                 self.keys(editor, "gd")
-                self.wait_for(
-                    editor,
-                    f"vim.api.nvim_get_current_tabpage() ~= {review_tab}",
-                    timeout=30,
-                )
-                self.assertEqual(str(Path(self.root, name)), editor.current.buffer.name)
-                self.assertEqual(target, editor.current.window.cursor[0])
-                self.assertEqual(
-                    server,
-                    self.lua(editor, "return vim.lsp.get_clients({bufnr=0})[1].name"),
-                )
-                self.keys(editor, "gT")
+                self.wait_for(editor, "vim.b.lsp_floating_preview ~= nil", timeout=30)
+                self.assertEqual(review_tab, editor.current.tabpage.handle)
+                self.assertEqual([row, col], list(editor.current.window.cursor))
+                self.keys(editor, "<Esc>")
 
     def test_definition_lookup_is_async_and_does_not_jump_after_cursor_moves(self):
         editor = self.launch(self.root)
@@ -2821,13 +3052,17 @@ func greeting() string {
             require('rediff.live').stop(s)
             vim.api.nvim_set_current_win(s.new_win)
             vim.api.nvim_win_set_cursor(0,{3,12})
-            vim.lsp.enable({'lua_ls', 'nil_ls', 'pyright', 'ts_ls'}, false)
-            local get_clients = vim.lsp.get_clients
-            vim.lsp.get_clients = function(opts)
-                if opts and opts.method == 'textDocument/definition' then return {{}} end
-                return get_clients(opts)
+            vim.fn.bufload(vim.fn.bufadd(s.root..'/auth.lua'))
+            _G.request_all = vim.lsp.buf_request_all
+            vim.lsp.buf_request_all = function(buf, method, params, callback)
+                return request_all(buf, method, params, function(results)
+                    if method == 'textDocument/definition' then
+                        _G.definition_result = function() callback(results) end
+                    else
+                        callback(results)
+                    end
+                end)
             end
-            vim.lsp.buf.definition = function(opts) _G.definition_result = opts.on_list end
         """,
         )
         tab = editor.current.tabpage.handle
@@ -2837,51 +3072,24 @@ func greeting() string {
         self.assertEqual(
             4, editor.current.window.cursor[0], "Lookup must not block navigation"
         )
-        self.lua(
-            editor,
-            "definition_result({items={{filename=s.root..'/auth.lua',lnum=3,col=1}}})",
-        )
+        self.lua(editor, "definition_result()")
         pump(editor)
+        self.assertIsNone(self.lua(editor, "return vim.b.lsp_floating_preview"))
         self.assertEqual(tab, editor.current.tabpage.handle)
         self.assertEqual(
             4, editor.current.window.cursor[0], "Stale lookup must not steal focus"
         )
-        self.lua(editor, "_G.definition_result=nil")
-        self.keys(editor, "gD")
-        self.wait_for(editor, "definition_result ~= nil")
-        self.keys(editor, "j")
-        self.lua(editor, "definition_result({items={{filename=s.root..'/auth.lua',lnum=3,col=1}}})")
-        pump(editor)
-        self.assertEqual(tab, editor.current.tabpage.handle)
-        self.assertNotEqual("TelescopePrompt", editor.current.buffer.options["filetype"])
-        self.lua(editor, "_G.definition_result=nil")
-        self.keys(editor, "gD")
-        self.wait_for(editor, "definition_result ~= nil")
-        self.lua(
-            editor,
-            "definition_result({items={{filename=s.root..'/auth.lua',lnum=3,col=1,text='authorize'},"
-            "{filename=s.root..'/auth.lua',lnum=16,col=1,text='refresh'}}})",
-        )
-        self.wait_for(editor, "vim.bo.filetype == 'TelescopePrompt'")
-        self.keys(editor, "j<CR>")
-        self.wait_for(editor, f"vim.api.nvim_get_current_tabpage() ~= {tab}")
-        self.assertEqual(str(Path(self.root, "auth.lua")), editor.current.buffer.name)
-        self.assertEqual(16, editor.current.window.cursor[0])
-        self.keys(editor, "gT")
         self.lua(
             editor,
             "vim.api.nvim_win_set_cursor(s.new_win,{3,12}); _G.definition_result=nil",
         )
         self.keys(editor, "gd")
         self.wait_for(editor, "definition_result ~= nil")
-        self.lua(
-            editor,
-            "definition_result({items={{filename=s.root..'/auth.lua',lnum=3,col=1},{filename=s.root..'/auth.lua',lnum=16,col=1}}})",
-        )
-        pump(editor)
-        self.assertNotEqual(tab, editor.current.tabpage.handle)
-        self.assertEqual("quickfix", editor.current.buffer.options["buftype"])
-        self.assertEqual([3, 16], [item["lnum"] for item in editor.funcs.getqflist()])
+        self.lua(editor, "definition_result(); vim.lsp.buf_request_all = request_all")
+        self.wait_for(editor, "vim.b.lsp_floating_preview ~= nil")
+        self.assertEqual(tab, editor.current.tabpage.handle)
+        self.assertEqual([3, 12], list(editor.current.window.cursor))
+        self.assertIn("function M.authorize", self.lua(editor, "return table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(vim.b.lsp_floating_preview),0,-1,false),'\\n')"))
 
     def test_annotation_editor_is_anchored_below_source(self):
         path = Path(self.root, "auth.lua")

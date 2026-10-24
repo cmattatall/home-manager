@@ -362,19 +362,41 @@ subcommands also have hints; other arguments keep native Tab completion.
 
 Tabs and indentation default to **four spaces** (`expandtab`, `tabstop=4`,
 `shiftwidth=4`); filetype/project settings can override these defaults.
-While editing a source file, **Space s** / **`:Symbols`** opens Telescope's
-current-file symbol picker. **Space S** / **`:WorkspaceSymbols`** searches
-workspace symbols as you type. Both use the attached language server and require
-its symbol support; Review snapshots do not have attached servers. Enter jumps
-to a symbol; Esc closes the picker. Existing file/text pickers stay unchanged.
+In editing and Review, **Space s** / **`:Symbols`** browses file symbols, and
+**Space S** / **`:WorkspaceSymbols`** searches workspace symbols as you type.
+**grr** browses references and **gri** implementations. These are read-only
+source previews: **j/k** selects, **i** filters results, **Ctrl-d/u** scrolls the
+preview, and **Esc** closes. Enter and split/tab actions never leave the source
+or Review panes. Existing file/text pickers stay unchanged.
 
-In Review source panes, **gd** / **Alt+Enter** goes to a definition in a separate
-tab; **gT** returns to the review. **gD** peeks in a floating definition picker
-with a source preview: **j/k** selects a match, **Enter** opens it in a separate
-tab, and **Esc** returns to the unchanged diff. Both use LSP against the current
+**`:lsp help`** opens a popup of shared inspection bindings and the current
+automatic-display status. **K** and **gT** are disabled; **gk** keeps its native
+screen-line movement. Rename, code actions, and code lens are explicitly blocked
+in Review. **gq** retains its existing Review annotation behavior, not source formatting.
+
+Lookups use LSP against the current
 worktree, mapping unchanged lines from OLD/NEW snapshots rather than attaching
 servers to the snapshots. Lines changed since the snapshot and deleted source
 files cannot be resolved safely; refresh or open the current file instead.
+
+In both regular editing and Review, **Space l** / **`:DefinitionPreview`** shows a
+read-only symbol preview without moving keyboard focus. It combines definition
+and type-definition source, so a variable can show both its declaration and its
+struct/interface/type. Duplicate locations appear once; when source is
+unavailable, it falls back to language-server hover information. Functions and
+types use the same action. **Esc**, cursor movement, or Insert mode dismisses it.
+Press **Space l** again to expand a source preview into the read-only browser;
+**`:Definitions`** also opens it. **gd**, **Alt+Enter**, **Ctrl+]**, and **grt**
+are aliases for the combined peek, not jumps. There is no separate **gD** binding.
+
+Automatic display is **off by default**. **Space t** toggles it in editing and
+Review. Alternatively, in **Space p** / **`:Commands`**, choose
+**`DefinitionPreviewAutoEnable`**, **`DefinitionPreviewAutoDisable`**, or
+**`DefinitionPreviewAutoToggle`**. When enabled, pausing on a symbol displays its
+combined definition/type preview without taking focus; missing information stays
+quiet. This setting
+lasts for the current editor session only. Manual **Space l** remains available when
+automatic display is disabled.
 
 | Key/command | Action |
 | --- | --- |
