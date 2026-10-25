@@ -14,6 +14,9 @@ end
 function M.suffix(line)
 	local lead, matches
 	if line:match("^%a+$") then
+		if vim.startswith("view", line) and require("rediff.review").active() then
+			return ("view"):sub(#line + 1)
+		end
 		for _, preferred in ipairs({ "help", "harness", "worktree", "annotations", "lsp" }) do
 			if vim.startswith(preferred, line) then
 				return preferred:sub(#line + 1)

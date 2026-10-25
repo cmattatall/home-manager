@@ -119,6 +119,23 @@ class EditorUI(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline, condition)
             pump(editor)
 
+    def test_view_completion_is_preferred_in_review(self):
+        editor = self.launch(self.root, file="auth.lua")
+        self.keys(editor, ":v<Tab>")
+        self.assertEqual("verbose", editor.funcs.getcmdline())
+        self.keys(editor, "<C-c>")
+        editor.command("Review")
+        for prefix in ("v", "vi", "vie"):
+            self.keys(editor, f":{prefix}<Tab>")
+            self.assertEqual("View", editor.funcs.getcmdline())
+            self.keys(editor, "<C-c>")
+
+        self.keys(editor, ":v<Tab><CR>")
+        self.assertEqual("merged", self.lua(editor, "return s.layout"))
+        self.keys(editor, ":verb<Tab>")
+        self.assertEqual("verbose", editor.funcs.getcmdline())
+        self.keys(editor, "<C-c>")
+
     def test_branch_diff_pins_two_commits_without_touching_worktree(self):
         def git(*args):
             return (
