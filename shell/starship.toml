@@ -1,14 +1,24 @@
 add_newline = false
-format = '$status${env_var.SSH_CONNECTION}([\[${custom.username}$hostname$os\]](220) )$directory$git_branch$nix_shell$aws$character'
+format = '$status${env_var.SSH_CONNECTION}([\[${custom.username}${custom.root_username}$hostname$os\]](220) )$directory$git_branch$nix_shell$aws$character'
 
 [env_var.SSH_CONNECTION]
 format = '[ssh:](205)'
 
 [custom.username]
-command = 'user=${USER:-$(id -un)}; printf "%s" "${user:0:5}"'
+command = '''
+user=${USER:-$(id -un)}
+if [ "$user" != root ]; then
+    printf "%s" "${user:0:5}"
+fi
+'''
 shell = ['bash', '--noprofile', '--norc']
 when = true
-format = '$output@'
+format = '($output@)'
+
+[custom.root_username]
+when = '[ "${USER:-$(id -un)}" = root ]'
+shell = ['bash', '--noprofile', '--norc']
+format = '[root](red)@'
 
 [hostname]
 ssh_only = false
@@ -29,11 +39,11 @@ format = '[\($branch\)]($style) '
 style = 'green'
 
 [nix_shell]
-format = '[\[nix\]]($style) '
+format = '[$symbol]($style)'
 style = 'cyan'
 
 [aws]
-format = '([\($profile\)]($style) )'
+format = '([\($profile\)]($style) )([\[$duration\]]($style) )'
 style = 'yellow'
 force_display = true
 

@@ -11,6 +11,7 @@ import tempfile
 import termios
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -20,6 +21,40 @@ END = b"__PROMPT_END__"
 
 @unittest.skipUnless(shutil.which("starship"), "starship not installed")
 class PromptTest(unittest.TestCase):
+    def test_username_colors(self):
+        gold = "\x1b[38;5;220m"
+        red = "\x1b[31m"
+        host = os.uname().nodename.split(".")[0]
+        usernames = (
+            ("carl", "carl"),
+            ("cmattatall", "cmatt"),
+            ("root", f"{red}root{gold}"),
+            ("rootish", "rooti"),
+        )
+        with tempfile.TemporaryDirectory() as home:
+            for username, rendered in usernames:
+                with self.subTest(username=username):
+                    prompt = subprocess.run(
+                        ["starship", "prompt"],
+                        cwd=home,
+                        env={
+                            "HOME": home,
+                            "USER": username,
+                            "PATH": os.environ["PATH"],
+                            "TERM": "xterm-256color",
+                            "STARSHIP_SHELL": "sh",
+                            "STARSHIP_CONFIG": str(SHELL_DIR / "starship.toml"),
+                        },
+                        text=True,
+                        capture_output=True,
+                        check=True,
+                    )
+                    self.assertEqual(prompt.stderr, "")
+                    self.assertTrue(
+                        prompt.stdout.startswith(f"{gold}[{rendered}@{host}]\x1b[0m "),
+                        repr(prompt.stdout),
+                    )
+
     def test_status_and_environment_transitions(self):
         for name in ("bash", "zsh"):
             shell = shutil.which(name)
@@ -99,7 +134,7 @@ class PromptTest(unittest.TestCase):
                     self.assertIn(f"[carl@{host}]", failed)
                     self.assertIn("~", failed)
                     self.assertNotIn("ssh:", failed)
-                    self.assertNotIn("[nix]", failed)
+                    self.assertNotIn("❄️", failed)
                     succeeded = command("true")
                     self.assertNotIn("[7]", succeeded)
                     self.assertNotIn("[0]", succeeded)
@@ -107,19 +142,33 @@ class PromptTest(unittest.TestCase):
                     command("export IN_NIX_SHELL=impure AWS_PROFILE=prod")
                     failed_in_nix = command("(exit 23)")
                     self.assertIn("[23]", failed_in_nix)
-                    self.assertIn("[nix]", failed_in_nix)
-                    self.assertIn("🚨 prod 🚨", failed_in_nix)
+                    self.assertIn("❄️  (🚨 prod 🚨)", failed_in_nix)
+                    pure = command("export IN_NIX_SHELL=pure")
+                    self.assertIn("❄️  (🚨 prod 🚨)", pure)
                     left = command("unset IN_NIX_SHELL; export AWS_PROFILE=dev")
-                    self.assertNotIn("[nix]", left)
+                    self.assertNotIn("❄️", left)
                     self.assertNotIn("[23]", left)
                     self.assertIn("(dev)", left)
+
+                    expiration = datetime.now(timezone.utc) + timedelta(minutes=30)
+                    expiring = command(
+                        f"export AWS_SESSION_EXPIRATION={expiration.isoformat()}"
+                    )
+                    self.assertRegex(expiring, r"\(dev\) \[(30m0s|29m5\ds)\]")
+                    expired = command(
+                        "export AWS_SESSION_EXPIRATION=2000-01-01T00:00:00Z"
+                    )
+                    self.assertIn("(dev) [X]", expired)
+                    unknown = command("unset AWS_SESSION_EXPIRATION")
+                    self.assertIn("(dev) $ ", unknown)
+
                     self.assertNotIn("(dev)", command("unset AWS_PROFILE"))
                     self.assertNotIn("()", command("export AWS_PROFILE=''"))
 
                     command("export SSH_CONNECTION='192.0.2.1 1234 192.0.2.2 22' USER=cmattatall IN_NIX_SHELL=impure")
                     remote = command("(exit 19)")
                     self.assertEqual(remote.count("ssh:"), 1)
-                    self.assertIn(f"ssh:[cmatt@{host}] ~ [nix] $ ", remote)
+                    self.assertIn(f"ssh:[cmatt@{host}] ~ ❄️  $ ", remote)
                     self.assertNotIn("cmattatall", remote)
                     self.assertEqual(remote.count("[19]"), 1)
                     local = command(

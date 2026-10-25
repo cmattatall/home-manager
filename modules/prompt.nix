@@ -33,6 +33,7 @@ in
         lib.recursiveUpdate (builtins.fromTOML (builtins.readFile ../shell/starship.toml)) {
           hostname.disabled = !cfg.host.enable;
           custom.username.disabled = !cfg.host.enable;
+          custom.root_username.disabled = !cfg.host.enable;
           env_var.SSH_CONNECTION.disabled = !(cfg.host.enable && cfg.host.showSSH);
           os.disabled = !(cfg.host.enable && cfg.host.showOS);
           directory.disabled = !cfg.directory.enable;

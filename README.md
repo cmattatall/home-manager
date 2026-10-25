@@ -110,11 +110,15 @@ leaving restores the previous environment. No Bash subshell is needed.
 
 Starship renders the Bash/Zsh prompt. It shows `[user@hostname]` in gold, with
 the username limited to its first five characters and no OS label by default.
+The username `root` appears in red.
 An `ssh:` indicator appears in pink before the brackets for remote sessions.
-The directory is magenta, the Git branch green, `[nix]` cyan inside Nix
-environments, and the AWS profile yellow (`prod` retains the `🚨 prod 🚨` warning).
-Failed commands add a red
-`[exit-code]` prefix; the next successful command clears it.
+The directory is magenta, the Git branch green, and the Nix shell indicator a
+cyan snowflake.
+The AWS profile is yellow (`prod` retains the `🚨 prod 🚨` warning).
+When Starship finds an AWS expiration, the profile is followed by the remaining
+time, such as `(dev) [29m59s]`, or `[X]` after expiration.
+Failed commands add a red `[exit-code]` prefix.
+The next successful command clears it.
 The SSH indicator detects `SSH_CONNECTION`, not `SSH_TTY` alone.
 The shared defaults live in `shell/starship.toml`; `shell/ps1.sh` only initializes
 Starship for portable use. Home Manager installs and initializes Starship itself.
@@ -153,7 +157,7 @@ The module defaults to disabled. Once enabled, all segments except the OS label 
 | `host.showSSH` | SSH indicator before the brackets |
 | `directory.enable` | Current directory |
 | `git.enable` | Git branch; also adds Git to home packages |
-| `nixShell.enable` | `[nix]` when `IN_NIX_SHELL` is set |
+| `nixShell.enable` | Nix shell indicator when `IN_NIX_SHELL` is set |
 | `aws.enable` | Starship AWS profile, including the production warning |
 | `exitStatus.enable` | Nonzero command exit code |
 
