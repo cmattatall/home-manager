@@ -279,6 +279,10 @@ function M.revert(root, snapshot, side, first, last)
 			worktree(root, snapshot.path) == snapshot.new,
 			"File has unstaged edits; unstage the hunk before reverting it"
 		)
+		-- Git's --index check also requires current cached file metadata.
+		if not patch:find("\ndeleted file mode ", 1, true) then
+			M.run(root, { "add", "--refresh", "--", snapshot.path })
+		end
 		table.insert(args, "--index")
 	end
 	M.run(root, args, patch)

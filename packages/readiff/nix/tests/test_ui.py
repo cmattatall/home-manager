@@ -52,6 +52,15 @@ class EditorUI(unittest.TestCase):
                 if editor.api.get_mode()["blocking"]:
                     editor.input("<C-c><CR>")
                 editor.input("<Esc>")
+                self.assertTrue(
+                    editor.exec_lua("""
+                        vim.lsp.stop_client(vim.lsp.get_clients())
+                        return vim.wait(5000, function()
+                            return #vim.lsp.get_clients() == 0
+                        end)
+                    """),
+                    "Language servers did not exit before fixture cleanup",
+                )
                 editor.command("qa!")
             except EOFError:
                 pass
@@ -3447,6 +3456,7 @@ func greeting() string {
         self.assertIsNone(self.lua(editor, "return r.active()"))
         editor.current.window.cursor = [1, 3]
         self.keys(editor, "v5laCheck this exact prefix<Esc>:w<CR>")
+        self.wait_for(editor, "require('rediff.annotations').context().composer == nil")
         self.assertEqual(source.number, editor.current.buffer.number)
         self.assertEqual(original, path.read_text())
         self.assertTrue(source.options["modified"])
@@ -3481,11 +3491,13 @@ func greeting() string {
         self.assertFalse(source.options["modifiable"])
         self.assertEqual(composer, editor.exec_lua("return require('rediff.annotations').context().composer"))
         self.keys(editor, "i<Esc><Esc>")
+        self.wait_for(editor, "require('rediff.annotations').context().composer == nil")
         self.assertEqual(source.number, editor.current.buffer.number)
         self.assertFalse(source.options["modifiable"])
         self.keys(editor, "i<Esc>")
         self.assertEqual(["Unsent draft"], editor.current.buffer[:])
         self.keys(editor, ":w<CR>")
+        self.wait_for(editor, "require('rediff.annotations').context().composer == nil")
         self.assertEqual(source.number, editor.current.buffer.number)
         self.keys(editor, "<Esc>")
         self.assertTrue(source.options["modifiable"])
@@ -4644,6 +4656,7 @@ func greeting() string {
                 )
                 self.assertNotIn("[open] offline", "\n".join(editor.current.buffer[:]))
                 self.keys(editor, "q")
+                self.assertEqual(terminal, editor.current.buffer.number)
             # Selecting a different harness deliberately stops following this TUI
             # for feedback, but its open marker must still follow its thread.
             self.lua(
@@ -6077,8 +6090,14 @@ func greeting() string {
             r"""
             require('rediff.live').stop(s)
             local system = vim.system
+            local target = {name='amp-live',provider='amp',root=s.root,session='T-discard',
+                connection='/fake/discard',capabilities={'activity'}}
             _G.sent = {}
             vim.system = function(argv, opts, callback)
+                if argv[1] == 'rediff-live' and argv[2] == 'discover' then
+                    callback({code=0,stdout=vim.json.encode({target})})
+                    return
+                end
                 if argv[1] ~= 'rediff-amp-live' then return system(argv, opts, callback) end
                 if argv[2] == 'watch' then
                     _G.stream = opts.stdout
@@ -6098,8 +6117,7 @@ func greeting() string {
                 call.done({code=status=='failed' and 1 or 0,stderr='',stdout=vim.json.encode({
                     submission_id=call.payload.submission_id,status=status})})
             end
-            require('rediff.harness').select(s.root, {name='amp-live',session='T-discard',
-                connection='/fake/discard',capabilities={'activity'}})
+            require('rediff.harness').select(s.root, target)
             activity('idle')
             r.add_comment({file=s.current.path,side='new',snapshot_id=s.current.id,
                 selection=require('rediff.selection').line(s.new_buf,5)}, 'Unsent human note')
@@ -6652,12 +6670,18 @@ func greeting() string {
                 )
 
                 self.lua(editor, "vim.api.nvim_set_current_win(s.new_win)")
+                editor.vars["startup_notice"] = ""
                 self.keys(editor, "s")
+                self.wait_for(
+                    editor,
+                    "vim.g.startup_notice:find('Reviewed content changed', 1, true) ~= nil",
+                )
                 self.assertEqual(initial_index, git("write-tree"))
-                self.assertIn("Reviewed content changed", editor.vars["startup_notice"])
 
                 self.lua(editor, f"vim.api.nvim_set_current_win(s.{pane}_win)")
+                editor.vars["startup_notice"] = ""
                 self.keys(editor, "S")
+                self.wait_for(editor, "vim.g.startup_notice:find('Index updated', 1, true) == 1")
                 self.assertEqual(latest.encode(), git("show", ":auth.lua"))
                 self.assertEqual(b"auth.lua\n", git("diff", "--cached", "--name-only"))
                 self.assertEqual(latest, path.read_text())
@@ -6668,7 +6692,9 @@ func greeting() string {
                 worktree = latest + "-- worktree-only edit\n"
                 path.write_text(worktree)
                 self.lua(editor, f"vim.api.nvim_set_current_win(s.{pane}_win)")
+                editor.vars["startup_notice"] = ""
                 self.keys(editor, "S")
+                self.wait_for(editor, "vim.g.startup_notice:find('Index updated', 1, true) == 1")
                 self.assertEqual(initial_index, git("write-tree"))
                 self.assertEqual(worktree, path.read_text())
                 self.assertEqual(comments, self.lua(editor, "return s.comments"))
@@ -7991,6 +8017,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
                     f"""
                     require('rediff.harness').select(s.root, {{name='{name}',session='{session}',connection='/fake/connection.json'}})
                     vim.g.resume_choice = 2
+                    vim.g.resume_prompt = nil
                     vim.fn.confirm = function(prompt, choices, default)
                         vim.g.resume_prompt = prompt
                         assert(default == 2)
@@ -8006,7 +8033,9 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
                 )
                 self.assertNotEqual("rediff-harness-panel", editor.current.buffer.options["filetype"])
                 self.assertEqual(session, self.lua(editor, "return s.harness.session"))
+                self.lua(editor, "vim.g.resume_prompt = nil")
                 self.keys(editor, ":harness resume<CR>")
+                self.wait_for(editor, "vim.g.resume_prompt ~= nil")
                 self.assertFalse(
                     log.exists(), "Cancelling resume must not spawn a process"
                 )
@@ -8046,9 +8075,9 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         """,
         )
         self.keys(editor, ":harness resume<CR>")
-        self.assertIn(
-            "Checkout or harness changed",
-            self.lua(editor, "return vim.g.startup_notice"),
+        self.wait_for(
+            editor,
+            "vim.g.startup_notice:find('Checkout or harness changed', 1, true) ~= nil",
         )
         self.assertFalse(log.exists())
 

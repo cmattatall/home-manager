@@ -45,7 +45,11 @@ function M.setup()
 	})
 	vim.lsp.config("nil_ls", { settings = { ["nil"] = { nix = { flake = { autoArchive = true } } } } })
 	vim.lsp.config("lua_ls", { settings = { Lua = { workspace = { checkThirdParty = false } } } })
-	vim.lsp.config("gopls", { settings = { gopls = { semanticTokens = true } } })
+	vim.lsp.config("gopls", {
+		-- gopls negotiates token support during initialization.
+		init_options = { semanticTokens = true },
+		settings = { gopls = { semanticTokens = true } },
+	})
 	vim.lsp.enable({ "lua_ls", "nil_ls", "pyright", "ts_ls", "gopls", "rust_analyzer" })
 end
 

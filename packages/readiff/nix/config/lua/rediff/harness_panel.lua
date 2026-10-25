@@ -21,6 +21,8 @@ local function close()
 	if not s or s.closing then
 		return
 	end
+	local current_win = api.nvim_get_current_win()
+	local restore_focus = current_win == s.win or current_win == s.filter_win
 	s.closing = true
 	if s.unsubscribe then
 		pcall(s.unsubscribe)
@@ -47,6 +49,9 @@ local function close()
 		end
 	end
 	M.state = nil
+	if restore_focus and valid_win(s.source_win) then
+		api.nvim_set_current_win(s.source_win)
+	end
 end
 
 M.close = close
@@ -272,6 +277,7 @@ function M.open(opts)
 	local registry = require("rediff.connections")
 	local s = {
 		registry = registry,
+		source_win = api.nvim_get_current_win(),
 		root = opts.root,
 		provider = opts.provider,
 		connected_only = opts.connected_only == true,

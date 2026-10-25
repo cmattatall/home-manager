@@ -203,9 +203,9 @@ return function(root, equal, fails, keys)
 	respond(matches)
 	-- Dismiss without invoking the panel's selection callback.
 	equal("T-second", s.harness.session, "Dismissing selection preserves the existing binding")
-	discover = nil
+	local previous_discovery = discover
 	vim.cmd("Harness use claude")
-	equal(nil, discover, "Claude has no live discovery adapter")
+	equal(previous_discovery, discover, "Claude has no live discovery adapter")
 	picker.opts.on_select(picker.items[1])
 	equal("none", s.harness.name, "Old picker cannot rebind after switching providers")
 	vim.cmd("Harness use amp")
@@ -228,9 +228,9 @@ return function(root, equal, fails, keys)
 	)
 	equal("amp", session.provider, "No matches still selects Amp for new worktrees")
 	equal("none", s.harness.name, "No matches does not invent a feedback connection")
-	discover = nil
+	previous_discovery = discover
 	harness.use("amp", root)
-	equal(nil, discover, "Inheriting a launch type does not discover sessions for a new worktree")
+	equal(previous_discovery, discover, "Inheriting a launch type does not discover sessions for a new worktree")
 	harness.connect()
 	respond(matches)
 	picker.opts.on_select(picker.items[2])

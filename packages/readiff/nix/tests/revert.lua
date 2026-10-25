@@ -49,9 +49,17 @@ return function(equal, fails)
 		equal({ "new agent edit" }, read(), "Staged revert cannot overwrite unstaged work")
 		equal(changed, git.lines(run({ "show", ":auth.lua" })), "Rejected staged revert preserves index")
 		vim.fn.writefile(changed, root .. "/auth.lua")
+		local restored_stat = assert(vim.uv.fs_stat(root .. "/auth.lua"))
+		assert(vim.uv.fs_utime(root .. "/auth.lua", restored_stat.atime.sec, restored_stat.mtime.sec + 2))
 		git.revert(root, staged, "new", 17)
 		equal(partial, read(), "Staged revert updates worktree")
 		equal(partial, git.lines(run({ "show", ":auth.lua" })), "Staged revert updates only selected index hunk")
+
+		run({ "rm", "removed.lua" })
+		git.revert(root, snapshot("removed.lua", "staged"), "old", 1)
+		local restored = { "local obsolete = true", "return obsolete" }
+		equal(restored, vim.fn.readfile(root .. "/removed.lua"), "Staged deletion revert restores the file")
+		equal(restored, git.lines(run({ "show", ":removed.lua" })), "Staged deletion revert restores the index entry")
 
 		-- Unequal insertion/deletion sizes expose old/new coordinate confusion.
 		local lines = {}

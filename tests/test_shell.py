@@ -82,6 +82,7 @@ class StartupTestBase(unittest.TestCase):
         # the systemctl stub stands in for the real Linux binary.
         self.stub_dir = tmp / "stubs"
         self.stub_dir.mkdir()
+        _write_stub(self.stub_dir, "uname", "echo Linux")
         _write_stub(self.stub_dir, "fzf", 'printf "FZF_SHELL=%s\\n" "$1"')
         _write_stub(self.stub_dir, "systemctl", 'echo "REAL_SYSTEMCTL $*"')
         _write_stub(
