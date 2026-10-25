@@ -59,7 +59,7 @@ class AmpPluginsTest(unittest.TestCase):
 
         expected_plugins = {}
         for name in ("readiff", "desloppify"):
-            source = REPO / f"modules/editor/rediff/plugins/amp/{name}.ts"
+            source = REPO / f"packages/readiff/plugins/amp/{name}.ts"
             expected_plugins[name] = {
                 "enable": True,
                 "force": True,

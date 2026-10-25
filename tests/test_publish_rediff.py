@@ -32,9 +32,10 @@ class MirrorTests(unittest.TestCase):
         self.git(self.root, "init", "--bare", "--initial-branch=main", str(self.remote))
         (self.source / "scripts").mkdir()
         shutil.copyfile(SCRIPT, self.source / "scripts/publish-rediff.py")
-        self.editor = self.source / "modules/editor/rediff"
+        self.editor = self.source / "packages/readiff"
         self.editor.mkdir(parents=True)
-        (self.editor.parent / "rediff.nix").write_text("private integration\n")
+        (self.source / "modules").mkdir()
+        (self.source / "modules/readiff.nix").write_text("private integration\n")
         (self.source / "private.txt").write_text("private parent content\n")
         (self.editor / "editor.lua").write_text("first version\n")
         self.commit("private original history")
@@ -136,7 +137,7 @@ class MirrorTests(unittest.TestCase):
                 target = self.editor / path
                 target.write_text("uncommitted\n")
                 if staged:
-                    self.git(self.source, "add", "modules/editor/rediff")
+                    self.git(self.source, "add", "packages/readiff")
                 self.assertIn(
                     "Commit or set aside", self.run_script(publish=True, success=False)
                 )
@@ -166,7 +167,7 @@ class MirrorTests(unittest.TestCase):
             "--cacheinfo",
             "160000",
             self.git(self.source, "rev-parse", "HEAD"),
-            "modules/editor/rediff/nested",
+            "packages/readiff/nested",
         )
         self.git(self.source, "commit", "-m", "submodule fixture")
         (self.editor / "nested").mkdir()

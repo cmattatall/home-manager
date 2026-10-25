@@ -395,8 +395,10 @@ class SshBannerTest(unittest.TestCase):
         evaluated = subprocess.run(
             [
                 "nix-instantiate", "--eval", "--strict", "--json", "--expr",
-                "(import ./development-node.nix { lib = {}; pkgs = {}; "
-                "nixpkgs-unstable = {}; }).programs.bash.initExtra",
+                "let module = import ./modules/profiles/development-node.nix "
+                "{ inputs = {}; config = {}; }; in "
+                "(module.flake.modules.homeManager.development-node "
+                "{ lib = {}; pkgs = {}; }).programs.bash.initExtra",
             ],
             cwd=REPO_DIR.parent, capture_output=True, text=True,
             check=True, timeout=TIMEOUT_S,

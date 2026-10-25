@@ -22,12 +22,9 @@ ARM64/x86-64 Linux.
 
 ## Run or install the package
 
-Install [Nix](https://nixos.org/download/) first. Enable flakes in your Nix
-configuration (`~/.config/nix/nix.conf` on a standalone installation):
-
-```conf
-experimental-features = nix-command flakes
-```
+Requires Nix with `nix-command` and `flakes` enabled. See the
+[repository's Nix setup guide](https://github.com/cmattatall/home-manager#nix-only)
+for installation and configuration.
 
 From a checkout:
 

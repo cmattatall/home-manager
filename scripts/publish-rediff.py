@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preview or publish modules/editor/rediff/ to a separate, one-way mirror."""
+"""Preview or publish packages/readiff/ to a separate, one-way mirror."""
 
 import argparse
 import shutil
@@ -10,7 +10,7 @@ from pathlib import Path
 MARKER = ".rediff-mirror"
 MARKER_TEXT = "rediff snapshot mirror v1\n"
 SOURCE = Path(__file__).resolve().parent.parent
-SUBTREE = "modules/editor/rediff"
+SUBTREE = "packages/readiff"
 
 
 def git(directory, *args):

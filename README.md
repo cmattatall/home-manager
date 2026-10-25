@@ -1,9 +1,81 @@
 # Personal environment
 
-This repository contains Carl's shell, Home Manager,
-tmux, macOS Kitty configuration, and rediff editor. `shell/` contains the shell
-configuration and `modules/editor/rediff/` contains the complete editor project; the old
-`shell-config` and `readiff` repositories are not dependencies.
+This repository contains Carl's Home Manager environment and personal tools.
+It supports Linux and macOS, with portable shell helpers and the readiff editor.
+
+## Repository layout and development
+
+| Path | Purpose |
+| --- | --- |
+| `flake.nix`, `flake.lock` | Inputs and dependency pins for the whole repository |
+| `modules/` | Dendritic configuration features and package integration |
+| `modules/profiles/` | MacBook and development-node profiles |
+| `packages/<name>/` | Self-contained programs, with their source, tests, documentation, and build files |
+| `shell/` | Portable Bash/Zsh helpers and Starship settings |
+| `scripts/` | Installation and publishing commands |
+| `tests/` | Environment and repository workflow tests |
+
+Configuration follows the [dendritic pattern](https://github.com/mightyiam/dendritic):
+each Nix file under `modules/` is a flake-parts module for one feature. All are
+loaded automatically through import-tree. A feature can contribute packages,
+checks, development shells, and Home Manager settings in the same file.
+Program source and package recipes belong under `packages/`.
+
+Reusable Home Manager modules are available as `modules.homeManager.<name>`
+and `homeModules.<name>`. The names are `default`, `macbook`, `development-node`,
+`prompt`, `rediff`, and `zellij`. `default` combines the personal environment.
+The profiles include it and add their platform settings. Use these exported
+modules when composing another configuration.
+
+Enter the repository development shell with `nix develop`. It provides Python,
+Bash, Zsh, Git, and nixfmt for the environment tests and Nix formatting:
+
+```sh
+nix develop
+python3 -m unittest discover -s tests -v
+nix fmt -- flake.nix modules
+```
+
+### Add a program
+
+Create `packages/my-tool/` with its source, native build files, tests, and a
+`package.nix` recipe that accepts dependencies through `pkgs.callPackage`.
+Keep its README focused on building and using the program. A standalone flake
+is useful for an independently published project, as in `packages/readiff/`.
+Smaller tools can use the root flake directly.
+
+Expose the recipe in `modules/my-tool.nix`:
+
+```nix
+{
+  perSystem = { pkgs, ... }: {
+    packages.my-tool = pkgs.callPackage ../packages/my-tool/package.nix { };
+  };
+}
+```
+
+Add new files to Git so Nix includes them, then build with `nix build .#my-tool`.
+For an executable package, set `meta.mainProgram` in its recipe and run it with
+`nix run .#my-tool`. Add `perSystem.devShells.my-tool` for its development tools
+and `perSystem.checks.my-tool` for its test derivation. Those are used by
+`nix develop .#my-tool` and `nix flake check`.
+
+To install that tool in the personal environment, the same module can also define:
+
+```nix
+{ withSystem, ... }:
+{
+  flake.modules.homeManager.default = { pkgs, ... }: {
+    home.packages = [
+      (withSystem pkgs.stdenv.hostPlatform.system ({ config, ... }: config.packages.my-tool))
+    ];
+  };
+}
+```
+
+Package availability must cover the profiles that install it. The root package
+outputs target `aarch64-darwin`, `aarch64-linux`, and `x86_64-linux`.
+The Intel Mac Home Manager profile builds readiff with its own stable package set.
 
 ## Install Nix and Home Manager
 
@@ -36,7 +108,9 @@ for `cmattatall` on a development node and `carl` on a Mac without editing Nix.
   Other conflicting unmanaged dotfiles require review and backup before retrying,
   especially existing `.zshrc` and `kitty.conf`.
 
-To install/check **only Nix**:
+### Nix only
+
+From this checkout, install or check Nix with:
 
 ```sh
 ./scripts/install-nix.sh
@@ -45,6 +119,26 @@ To install/check **only Nix**:
 It prints the usable Nix executable path. Neither script rewrites global Nix
 settings, changes your login shell, installs nix-darwin, or enables automatic
 updates. Flake support is enabled for the invoked commands only.
+
+The script installs Nix on macOS and reuses it on NixOS. For other Linux
+distributions, follow the [Nix installation guide](https://nixos.org/download/).
+
+For direct `nix build`, `nix run`, and `nix develop` commands, enable flakes in
+`~/.config/nix/nix.conf`:
+
+```conf
+experimental-features = nix-command flakes
+```
+
+On NixOS, you can manage this through your system configuration instead:
+
+```nix
+nix.settings.experimental-features = [ "nix-command" "flakes" ];
+```
+
+Apply that setting through your usual NixOS deployment workflow.
+
+### Apply a profile
 
 The native profiles are `development-node`, `macbook`, and `macbook-intel`.
 An explicit profile can be passed to `install-home-manager.sh`. Prefer this
@@ -125,8 +219,7 @@ Starship for portable use. Home Manager installs and initializes Starship itself
 
 ### Opt into just the prompt
 
-Reusable modules live in `modules/`. `modules/prompt.nix`, exported as
-`homeModules.prompt`, is a standalone **Home Manager module** for macOS or Linux,
+`homeModules.prompt` is a standalone **Home Manager module** for macOS or Linux,
 including Home Manager used inside NixOS. It does not import the editor, tmux,
 personal package collection, or shell helpers. Add this repository as a flake
 input:
@@ -182,8 +275,7 @@ existing prompt alone. Noninteractive shells do not initialize Starship.
 
 ### Opt into just readiff
 
-`modules/editor/rediff.nix` is exported as `homeModules.rediff`. It reuses the
-standalone editor module and builds against the consumer's package set:
+`homeModules.rediff` builds the editor against the consumer's package set:
 
 ```nix
 imports = [ inputs.personal.homeModules.rediff ];
@@ -205,15 +297,11 @@ installing competing packages that provide the aliases you enable.
 `harness`, `feedbackCommand`, and `reviewRefreshInterval`. Set it to false to
 preserve a user-managed settings file. `ampPlugin.enable` and `ompPlugin.enable`
 independently manage their plugin files; by default they follow the selected
-harness. See [the editor module documentation](modules/editor/rediff/README.md#use-your-own-home-manager-configuration).
+harness. See [the editor module documentation](packages/readiff/README.md#use-your-own-home-manager-configuration).
 
 The personal profiles enable readiff and both aliases by default. Set
 `programs.rediff.enable = false` to omit the editor. See [Amp plugins](#amp-plugins)
 for their separate installation settings.
-`modules/editor/rediff/` is a self-contained project with its
-own flake, module, tests, and installer, independently publishable at a repository
-root. It is a complete isolated Neovim profile,
-not a plugin for another Neovim configuration.
 
 ### Shell helpers
 
@@ -364,9 +452,9 @@ existing system-managed Home Manager service. No login-time auto-update is enabl
 
 ### Multi-machine Zellij dashboard
 
-`home.nix` imports `modules/zellij.nix`, which manages Zellij's `config.kdl`,
-`layouts/machines.kdl`, and the `cluster-dash` launcher. To use just this setup
-in another Home Manager configuration (including on NixOS), import that module.
+The personal environment includes Zellij's `config.kdl`, `layouts/machines.kdl`,
+and the `cluster-dash` launcher. To use just this setup in another Home Manager
+configuration (including on NixOS), import `inputs.personal.homeModules.zellij`.
 
 Edit the `targets` block at the top of `modules/zellij.nix` before launching:
 replace the example addresses with `user@hostname`, or use SSH aliases such as
@@ -468,18 +556,16 @@ and must be restarted to pick up a changed socket.
 ## Neovim / readiff
 
 The complete editor source, tests, harness plugins, documentation, and MIT
-license live in [`modules/editor/rediff/`](modules/editor/rediff/README.md). They were imported from
+license live in [`packages/readiff/`](packages/readiff/README.md). They were imported from
 [`cmattatall/readiff` at `6de0dc3`](https://github.com/cmattatall/readiff/commit/6de0dc3dd3a5f4efe2ab5647eac6b2c56d386b17).
 Make future editor changes here; no checkout or fetch of that repository is needed.
 
-The `readiff` flake input points to `path:./modules/editor/rediff` and follows this repository's
-Nixpkgs and Home Manager pins. Local editor edits are included on rebuild without
-updating an external source pin. The editor keeps its own standalone flake for
-package-only use and its optional module/bootstrap tests; those use its own pins
-when invoked directly.
+Root editor builds use this repository's Nixpkgs and Home Manager pins. Local
+editor edits are included on rebuild. The standalone flake uses its own pins
+when invoked directly from `packages/readiff/`.
 
 This repository installs `rediff` and makes `nvim` and `vim` invoke it. The
-editor is configured through `modules/editor/rediff.nix`, with editor settings
+editor is configured through `modules/readiff.nix`, with editor settings
 and OMP plugins user-managed. The packaged editor uses its isolated
 `rediff` profile and does not overwrite `~/.config/nvim`. Plugins are built by
 Nix, not downloaded at editor startup. Intel macOS still builds the package through
@@ -487,15 +573,15 @@ Nix, not downloaded at editor startup. Intel macOS still builds the package thro
 
 From this repository root, `nix run .#rediff` launches just the editor and
 `nix build .#rediff` builds it without activation. To install the complete personal
-environment, use `./scripts/install-home-manager.sh`, **not** `modules/editor/rediff/install.sh`;
+environment, use `./scripts/install-home-manager.sh`, **not** `packages/readiff/install.sh`;
 the latter is the retained optional minimal bootstrap for otherwise unmanaged homes.
 
 ### Publish an editor-only mirror
 
-Keep developing here; `scripts/publish-rediff.py` exports the committed `modules/editor/rediff/`
+Keep developing here. `scripts/publish-rediff.py` exports the committed `packages/readiff/`
 snapshot to the root of a separate Git repository. It creates fresh public commits
 without copying this repository's history, commit messages, or files outside
-`modules/editor/rediff/` (including the sibling personal integration `rediff.nix`).
+`packages/readiff/` (including the personal integration in `modules/`).
 It requires Python 3, Git, tar, and authentication to the destination.
 
 The public destination is [cmattatall/readiff](https://github.com/cmattatall/readiff).
@@ -524,7 +610,7 @@ publisher; absent the environment overrides above, the temporary checkout uses
 your global Git identity, not repo-local settings.
 
 This is a **one-way mirror**: edits made directly in the mirror are replaced by the
-next snapshot. Bring contributions back into `modules/editor/rediff/` here before publishing.
+next snapshot. Bring contributions back into `packages/readiff/` here before publishing.
 The script does not run on a timer, install a Git hook, or create GitHub repositories.
 
 **Audit exported changes for sensitive content before each public push.**
@@ -577,10 +663,6 @@ and a force-push alone does not purge GitHub's pull-request refs or cached commi
 
 ## Update, rollback, and verify
 
-Edit `shell/` for portable shell behavior, `modules/` for reusable Home Manager
-modules, `home.nix` for personal defaults and common integration,
-`development-node.nix` / `macbook.nix` for platform-specific settings, and
-`modules/editor/rediff/nix/config/` for editor behavior.
 Never edit generated symlinks in the home directory.
 
 ```sh
@@ -611,7 +693,7 @@ TMUX_TEST_CONFIG="$HOME/.config/tmux/tmux.conf" \
 # Editor integration, UI, harness and Amp tests with this home's dependency pins:
 nix flake check
 # Complete standalone editor checks, including OMP and optional bootstrap:
-nix flake check ./modules/editor/rediff
+nix flake check ./packages/readiff
 ```
 
 Installer tests mock installation and activation. Shell tests run Bash and
