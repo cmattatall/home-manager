@@ -184,10 +184,20 @@ gitgud provides one interface in ordinary files and Review source panes:
   Space g i / :GitGud toggle       Toggle inline blame for the focused line
   Space g p / :GitGud pr           Show this line's associated PR links
 
-:gitgud is a typed alias for :GitGud. Tab completes subcommands. :GitGud without
-arguments toggles inline blame, just like :GitGud toggle. :GitGud blame-toggle
-remains an alias. In blame views, p shows the selected line's PRs; in full-file
-blame, Enter returns to that source line. q/Esc closes the view.
+Right-click a source line and choose "gitgud: open pr" for its PR links or
+"gitgud: blame" for its author, date and commit. In Review, these actions use
+the clicked OLD/NEW snapshot.
+
+:Gitgud help (also :GitGud help) opens a scrollable reference with all actions,
+configured Normal-mode shortcuts, and shortcuts inside Gitgud windows. It works
+from any buffer, including outside a Git repository. q/Esc closes it.
+
+:Gitgud is an alias for :GitGud. :gitgud and :gg are typed aliases, so :gg help
+opens the same reference. Tab completes subcommands, including help.
+:GitGud without arguments toggles inline blame, just like :GitGud toggle.
+:GitGud blame-toggle remains an alias. In blame views, p shows the selected
+line's PRs. In full-file blame, Enter returns to that source line.
+q/Esc closes the view.
 Full-file blame is read-only and keeps your editor/Review layout intact.
 
 The popup displays HTTPS links with terminal hyperlinks (OSC 8). Use your local

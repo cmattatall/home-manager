@@ -341,16 +341,58 @@ function M.setup(opts)
 			M.blame_line(true)
 		end,
 	}
-	api.nvim_create_user_command("GitGud", function(args)
+	actions.help = function()
+		local lines = {
+			"Commands · :GitGud and :Gitgud · Tab completes actions",
+			"  (no action) / toggle    Toggle inline blame (on by default)",
+			"  blame-toggle           Alias for toggle",
+			"  blame-line             Show this line's author, date and commit",
+			"  blame                  Browse blame for every source line",
+			"  pr                     Show this line's associated GitHub PR links",
+			"  help                   Show this reference",
+			"  :gitgud / :gg          Lowercase aliases when typed",
+			"",
+			"Configured shortcuts · Normal mode",
+		}
+		local shortcuts = {}
+		for _, mapping in ipairs(api.nvim_get_keymap("n")) do
+			local action = (mapping.rhs or ""):match("^<Cmd>Git[Gg]ud (.-)<CR>$")
+			if actions[action] then
+				shortcuts[#shortcuts + 1] = "  " .. mapping.lhs:gsub(" ", "<Space>") .. "  →  " .. action
+			end
+		end
+		table.sort(shortcuts)
+		vim.list_extend(lines, #shortcuts > 0 and shortcuts or { "  No shortcuts configured" })
+		vim.list_extend(lines, {
+			"",
+			"Rediff right-click menu · source lines",
+			"  gitgud: open pr  Show the clicked line's PR links",
+			"  gitgud: blame    Show the clicked line's author, date and commit",
+			"",
+			"Shortcuts inside Gitgud windows",
+			"  p               Show PR links in line/full-file blame",
+			"  Enter           Return to the selected source line in full-file blame",
+			"  y               Yank the current line's URL to the unnamed register",
+			"  Modifier-click  Open a link locally (usually Cmd-click on macOS)",
+			"  q / Esc         Close the focused popup",
+			"  j / k, Ctrl-f / Ctrl-b, /   Scroll, page and search",
+			"",
+			"Blame uses unsaved file contents or the focused Review snapshot.",
+			"PR lookups require gh auth login on the machine running Neovim.",
+		})
+		popup("GitGud · help · Ctrl-f/Ctrl-b page · q/Esc close", "/ search").show(lines)
+	end
+	local function command(args)
 		local action = actions[args.args ~= "" and args.args or "toggle"]
 		if not action then
-			return vim.notify("Unknown GitGud action; use Tab to complete", vim.log.levels.ERROR)
+			return vim.notify("Unknown GitGud action; use :GitGud help or Tab to complete", vim.log.levels.ERROR)
 		end
 		local ok, err = pcall(action)
 		if not ok then
 			vim.notify(tostring(err), vim.log.levels.ERROR)
 		end
-	end, {
+	end
+	local command_options = {
 		nargs = "?",
 		desc = "GitGud blame and GitHub PR links",
 		complete = function(prefix)
@@ -358,10 +400,13 @@ function M.setup(opts)
 				return vim.startswith(name, prefix)
 			end, vim.fn.sort(vim.tbl_keys(actions)))
 		end,
-	})
+	}
+	api.nvim_create_user_command("GitGud", command, command_options)
+	api.nvim_create_user_command("Gitgud", command, command_options)
 	vim.cmd(
 		[[cnoreabbrev <expr> gitgud getcmdtype() == ':' && getcmdline() == 'gitgud' && getcmdpos() == 7 ? 'GitGud' : 'gitgud']]
 	)
+	vim.cmd([[cnoreabbrev <expr> gg getcmdtype() == ':' && getcmdline() == 'gg' && getcmdpos() == 3 ? 'GitGud' : 'gg']])
 	local group = api.nvim_create_augroup("gitgud-inline", { clear = true })
 	api.nvim_create_autocmd(
 		{ "CursorMoved", "CursorMovedI", "BufLeave", "TextChanged", "TextChangedI", "InsertEnter" },

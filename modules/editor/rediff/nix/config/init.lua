@@ -266,7 +266,7 @@ require("telescope").setup({
 })
 local navigation = require("rediff.navigation")
 navigation.setup_definitions()
-vim.api.nvim_create_autocmd("MenuPopup", { callback = navigation.tree_menu })
+vim.api.nvim_create_autocmd("MenuPopup", { callback = navigation.context_menu })
 for _, binding in ipairs({
 	{ "<leader>e", "Explorer", navigation.explorer, "Focus explorer" },
 	{ "<leader>d", "FocusDiff", navigation.diff, "Focus diff/editor" },

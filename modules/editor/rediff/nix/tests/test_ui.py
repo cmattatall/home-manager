@@ -1974,6 +1974,54 @@ class EditorUI(unittest.TestCase):
             ),
         )
 
+    def test_gitgud_help_lists_actions_and_shortcuts_without_a_repository(self):
+        editor = self.launch(self.directory.name)
+        source = editor.current.buffer.number
+        window = editor.current.window.handle
+        actions = ["blame", "blame-line", "blame-toggle", "help", "pr", "toggle"]
+
+        for command, close in (
+            ("Gitgud", "q"),
+            ("GitGud", "<Esc>"),
+            ("gitgud", "q"),
+            ("gg", "<Esc>"),
+        ):
+            self.keys(editor, f":{command} h<Tab>")
+            self.assertTrue(editor.funcs.getcmdline().endswith(" help"))
+            self.keys(editor, "<CR>")
+            self.assertNotEqual(window, editor.current.window.handle)
+            self.assertFalse(editor.current.buffer.options["modifiable"])
+            text = "\n".join(editor.current.buffer[:])
+            for action in actions:
+                self.assertIn(action, text)
+            for key, action in (
+                ("<Space>gb", "blame-line"),
+                ("<Space>gB", "blame"),
+                ("<Space>gi", "blame-toggle"),
+                ("<Space>gp", "pr"),
+            ):
+                self.assertIn(f"{key}  →  {action}", text)
+            for control in (
+                "p ", "Enter ", "y ", "Modifier-click", "q / Esc", "Ctrl-f / Ctrl-b",
+            ):
+                self.assertIn(control, text)
+            self.keys(editor, "<C-f>")
+            self.assertGreater(editor.current.window.cursor[0], 1)
+            self.keys(editor, close)
+            self.assertEqual(window, editor.current.window.handle)
+            self.assertEqual(source, editor.current.buffer.number)
+
+        self.assertEqual(actions, editor.funcs.getcompletion("Gitgud ", "cmdline"))
+        editor.exec_lua("vim.keymap.del('n', '<leader>gp')")
+        editor.command("Gitgud help")
+        self.assertNotIn("<Space>gp", "\n".join(editor.current.buffer[:]))
+        self.keys(editor, "q")
+
+        for text in (":echo 'gg ", "/gg "):
+            self.keys(editor, text)
+            self.assertEqual(text[1:], editor.funcs.getcmdline())
+            self.keys(editor, "<C-c>")
+
     def test_blame_uses_buffer_and_review_snapshot_contents(self):
         path = Path(self.root, "history space %.txt")
 
@@ -2055,7 +2103,7 @@ class EditorUI(unittest.TestCase):
         blame(1, "Not committed yet", ":gitgud pr<CR>")
         self.assertEqual(0, editor.funcs.exists(":GitBlame"))
         self.assertEqual(
-            ["blame", "blame-line", "blame-toggle", "pr", "toggle"],
+            ["blame", "blame-line", "blame-toggle", "help", "pr", "toggle"],
             editor.funcs.getcompletion("GitGud ", "cmdline"),
         )
         self.assertEqual("", editor.funcs.maparg("<Space>gP", "n"))
@@ -2252,12 +2300,36 @@ class EditorUI(unittest.TestCase):
             str(bin_dir),
         )
 
-        def popup(command, text):
-            editor.command(command)
+        def right_click(window, line):
+            position = editor.funcs.screenpos(window, line, 1)
+            self.assertGreater(position["row"], 0)
+            editor.options["mousetime"] = 0
+            for action in ("press", "release"):
+                editor.api.input_mouse(
+                    "right", action, "", 0, position["row"] - 1, position["col"] - 1
+                )
+            pump(editor)
+
+        def popup(command, text, menu_line=None):
+            if menu_line is None:
+                editor.command(command)
+            else:
+                window = editor.current.window.handle
+                editor.current.window.cursor = (1, 0)
+                self.lua(editor, "if s then vim.api.nvim_set_current_win(s.tree_win) end")
+                right_click(window, menu_line)
+                self.keys(editor, "<Esc>")
+                menu = editor.funcs.menu_info("PopUp", "n")["submenus"]
+                self.assertIn("gitgud: open pr", menu)
+                self.assertIn("gitgud: blame", menu)
+                right_click(window, menu_line)
+                self.keys(editor, "<Down>" * (menu.index(command) + 1) + "<CR>")
             self.wait_for(
                 editor,
                 f"table.concat(vim.api.nvim_buf_get_lines(0,0,-1,false),'\\n'):find({json.dumps(text)},1,true) ~= nil",
             )
+            if menu_line is not None:
+                self.assertIn(f"auth.lua:{menu_line}", "\n".join(editor.current.buffer[:]))
 
         # OLD line 5 is committed; the same line in NEW is not.
         editor.command("Review")
@@ -2265,8 +2337,9 @@ class EditorUI(unittest.TestCase):
             editor,
             "for i,e in ipairs(s.entries) do if e.path == 'auth.lua' then r.show(i); break end end; vim.api.nvim_set_current_win(s.old_win)",
         )
-        editor.current.window.cursor = (5, 0)
-        popup("GitGud pr", "/pull/81")
+        popup("gitgud: blame", "Review Test", menu_line=5)
+        self.keys(editor, "q")
+        popup("gitgud: open pr", "/pull/81", menu_line=5)
         links = editor.exec_lua(
             "local urls = {}; for _,m in ipairs(vim.api.nvim_buf_get_extmarks(0,-1,0,-1,{details=true})) do if m[4].url then table.insert(urls,m[4].url) end end; return urls"
         )
@@ -2277,6 +2350,11 @@ class EditorUI(unittest.TestCase):
             ],
             links,
         )
+        right_click(editor.current.window.handle, 1)
+        self.keys(editor, "<Esc>")
+        menu = editor.funcs.menu_info("PopUp", "n")["submenus"]
+        self.assertNotIn("gitgud: open pr", menu)
+        self.assertNotIn("gitgud: blame", menu)
         row = editor.current.buffer[:].index(links[0]) + 1
         editor.current.window.cursor = (row, 0)
         self.keys(editor, "y")
@@ -2293,12 +2371,19 @@ class EditorUI(unittest.TestCase):
         self.assertIn("auth.lua:5", "\n".join(editor.current.buffer[:]))
         self.keys(editor, "qq")
         self.lua(editor, "vim.api.nvim_set_current_win(s.new_win)")
-        editor.current.window.cursor = (5, 0)
-        popup("GitGud pr", "Not committed yet")
+        popup("gitgud: open pr", "Not committed yet", menu_line=5)
         self.keys(editor, "q")
+        popup("gitgud: blame", "Not committed yet", menu_line=5)
+        self.keys(editor, "q")
+        right_click(self.lua(editor, "return s.tree_win"), 1)
+        self.keys(editor, "<Esc>")
+        menu = editor.funcs.menu_info("PopUp", "n")["submenus"]
+        self.assertNotIn("gitgud: open pr", menu)
+        self.assertNotIn("gitgud: blame", menu)
         editor.command("ReviewLeave")
-        editor.current.window.cursor = (1, 0)
-        popup("GitGud pr", "/pull/81")
+        popup("gitgud: blame", "Not committed yet", menu_line=5)
+        self.keys(editor, "q")
+        popup("gitgud: open pr", "/pull/81", menu_line=3)
         self.keys(editor, "q")
         response.write_text("")
         popup("GitGud pr", "No pull request")
