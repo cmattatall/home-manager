@@ -1987,7 +1987,7 @@ class EditorUI(unittest.TestCase):
         editor = self.launch(self.directory.name)
         source = editor.current.buffer.number
         window = editor.current.window.handle
-        actions = ["blame", "blame-line", "blame-toggle", "help", "pr", "toggle"]
+        actions = ["blame", "blame-line", "blame-toggle", "copy-link", "help", "pr", "toggle"]
 
         for command, close in (
             ("Gitgud", "q"),
@@ -2112,7 +2112,7 @@ class EditorUI(unittest.TestCase):
         blame(1, "Not committed yet", ":gitgud pr<CR>")
         self.assertEqual(0, editor.funcs.exists(":GitBlame"))
         self.assertEqual(
-            ["blame", "blame-line", "blame-toggle", "help", "pr", "toggle"],
+            ["blame", "blame-line", "blame-toggle", "copy-link", "help", "pr", "toggle"],
             editor.funcs.getcompletion("GitGud ", "cmdline"),
         )
         self.assertEqual("", editor.funcs.maparg("<Space>gP", "n"))
@@ -2276,6 +2276,133 @@ class EditorUI(unittest.TestCase):
         self.wait_for(editor, visible + ":find('Review Test',1,true) ~= nil")
         editor.command("GitGud blame-toggle")
         self.assertEqual("", self.lua(editor, "return " + visible))
+
+    def test_github_links_map_unsaved_lines_to_committed_source(self):
+        relative = "nested dir/plan #é.md"
+        path = Path(self.root, relative)
+        path.parent.mkdir()
+        path.write_bytes(b"first\r\nsecond\r\nthird\r\nfourth\r\nfifth\r\nsixth\r\n")
+        subprocess.run(["git", "-C", self.root, "add", relative], check=True)
+        subprocess.run(
+            ["git", "-C", self.root, "commit", "-qm", "Add link fixture"], check=True
+        )
+        sha = subprocess.check_output(
+            ["git", "-C", self.root, "rev-parse", "HEAD"], text=True
+        ).strip()
+        editor = self.launch(self.root, file=relative)
+        editor.exec_lua("""
+            vim.g.clipboard = {
+                name = 'test clipboard', cache_enabled = 0,
+                copy = { ['+'] = function(lines) vim.g.copied = lines[1] end },
+                paste = { ['+'] = function() return {{vim.g.copied}, 'v'} end },
+            }
+        """)
+        url = f"https://github.com/example/project/blob/{sha}/nested%20dir/plan%20%23%C3%A9.md"
+        for remote in (
+            "https://github.com/example/project.git",
+            "git@github.com:example/project.git",
+            "ssh://git@github.com/example/project.git",
+        ):
+            subprocess.run(
+                ["git", "-C", self.root, "config", "remote.origin.url", remote],
+                check=True,
+            )
+            editor.current.window.cursor = (4, 0)
+            editor.command("GitGud copy-link")
+            self.assertEqual(url + "#L4", editor.vars["copied"])
+
+        editor.current.buffer[:] = [
+            "inserted", "first", "second", "third", "fifth", "sixth", "appended"
+        ]
+        for line, committed in ((2, 1), (4, 3), (5, 5), (6, 6)):
+            editor.current.window.cursor = (line, 0)
+            editor.command("GitGud copy-link")
+            self.assertEqual(url + f"#L{committed}", editor.vars["copied"])
+        for line in (1, 7):
+            editor.vars["copied"] = "unchanged"
+            editor.current.window.cursor = (line, 0)
+            editor.command("GitGud copy-link")
+            self.assertEqual("unchanged", editor.vars["copied"])
+            self.assertIn("uncommitted changes", editor.vars["startup_notice"])
+
+        editor.current.buffer[2] = "modified second"
+        editor.current.window.cursor = (3, 0)
+        editor.command("GitGud copy-link")
+        self.assertEqual("unchanged", editor.vars["copied"])
+        self.assertIn("uncommitted changes", editor.vars["startup_notice"])
+        editor.command("edit! plan.md")
+        editor.command("GitGud copy-link")
+        self.assertEqual("unchanged", editor.vars["copied"])
+        self.assertIn("no committed version", editor.vars["startup_notice"])
+        subprocess.run(
+            [
+                "git", "-C", self.root, "config", "remote.origin.url",
+                "git@gitlab.com:example/project.git",
+            ],
+            check=True,
+        )
+        editor.command("GitGud copy-link")
+        self.assertEqual("unchanged", editor.vars["copied"])
+        self.assertIn("github.com", editor.vars["startup_notice"])
+        subprocess.run(["git", "-C", self.root, "remote", "remove", "origin"], check=True)
+        editor.command("GitGud copy-link")
+        self.assertEqual("unchanged", editor.vars["copied"])
+        self.assertIn("Configure a GitHub origin", editor.vars["startup_notice"])
+
+    def test_right_click_copies_github_links_from_review_snapshots(self):
+        subprocess.run(
+            [
+                "git", "-C", self.root, "remote", "add", "origin",
+                "git@github.com:example/project.git",
+            ],
+            check=True,
+        )
+        base = subprocess.check_output(
+            ["git", "-C", self.root, "rev-parse", "HEAD"], text=True
+        ).strip()
+        editor = self.launch(self.root)
+        editor.exec_lua("""
+            vim.g.clipboard = {
+                name = 'test clipboard', cache_enabled = 0,
+                copy = { ['+'] = function(lines) vim.g.copied = lines[1] end },
+                paste = { ['+'] = function() return {{vim.g.copied}, 'v'} end },
+            }
+        """)
+
+        def copy_line(side, expected, error=None):
+            window = self.lua(editor, f"return s.{side}_win")
+            self.lua(editor, "vim.api.nvim_set_current_win(s.tree_win)")
+            position = editor.funcs.screenpos(window, 5, 1)
+            self.assertGreater(position["row"], 0)
+            editor.options["mousetime"] = 0
+            editor.vars["copied"] = "unchanged"
+            for action in ("press", "release"):
+                editor.api.input_mouse(
+                    "right", action, "", 0, position["row"] - 1, position["col"] - 1
+                )
+            pump(editor)
+            self.keys(editor, "<Down><CR>")
+            self.assertEqual(expected, editor.vars["copied"])
+            if error:
+                self.assertIn(error, editor.vars["startup_notice"])
+
+        url = "https://github.com/example/project/blob/"
+        copy_line("old", url + base + "/auth.lua#L5")
+        copy_line("new", "unchanged", "uncommitted changes")
+
+        subprocess.run(["git", "-C", self.root, "add", "auth.lua"], check=True)
+        subprocess.run(
+            ["git", "-C", self.root, "commit", "-qm", "Commit changed line"], check=True
+        )
+        target = subprocess.check_output(
+            ["git", "-C", self.root, "rev-parse", "HEAD"], text=True
+        ).strip()
+        subprocess.run(
+            ["git", "-C", self.root, "commit", "--allow-empty", "-qm", "Advance HEAD"], check=True
+        )
+        editor.command(f"Git diff {base} {target}")
+        copy_line("old", url + base + "/auth.lua#L5")
+        copy_line("new", url + target + "/auth.lua#L5")
 
     def test_pr_links_are_clickable_without_opening_remote_browser(self):
         editor = self.launch(self.root, file="auth.lua", columns=72)

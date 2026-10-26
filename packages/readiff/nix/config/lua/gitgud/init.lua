@@ -176,6 +176,41 @@ local function label(c)
 	return c.path .. ":" .. c.line .. (c.side and " · " .. c.side .. " snapshot" or "")
 end
 
+function M.copy_link()
+	local c = context()
+	local remote = git(c.root, { "remote", "get-url", "origin" })
+	assert(remote.code == 0, "Configure a GitHub origin remote to copy a link")
+	local address = vim.trim(remote.stdout):gsub("/$", ""):gsub("%.git$", "")
+	local repository = address:match("^https://github%.com/([%w_.%-]+/[%w_.%-]+)$")
+		or address:match("^git@github%.com:([%w_.%-]+/[%w_.%-]+)$")
+		or address:match("^ssh://git@github%.com/([%w_.%-]+/[%w_.%-]+)$")
+	assert(repository, "The origin remote must be a github.com HTTPS or SSH URL")
+	assert(c.head ~= "", "Commit this file before copying a permalink")
+	local committed = git(c.root, { "show", c.head .. ":" .. c.path })
+	assert(committed.code == 0, "This file has no committed version to link to")
+	local text = c.text:gsub("\r\n", "\n")
+	local line = c.line
+	for _, hunk in ipairs(vim.diff(committed.stdout, text, { result_type = "indices" })) do
+		local _, old_count, new_start, new_count = unpack(hunk)
+		if new_count == 0 then
+			if c.line <= new_start then
+				break
+			end
+		elseif c.line < new_start then
+			break
+		else
+			assert(c.line >= new_start + new_count, "This line has uncommitted changes and no permalink")
+		end
+		line = line + old_count - new_count
+	end
+	local path = c.path:gsub("[^%w%-%._~/]", function(character)
+		return string.format("%%%02X", character:byte())
+	end)
+	local url = string.format("https://github.com/%s/blob/%s/%s#L%d", repository, c.head, path, line)
+	vim.fn.setreg("+", url, "v")
+	vim.notify("Permalink copied")
+end
+
 local function pull_requests(c, row, p)
 	p = p or popup("GitGud · " .. label(c))
 	if row.uncommitted then
@@ -337,6 +372,7 @@ function M.setup(opts)
 		end,
 		["blame-toggle"] = M.toggle_inline,
 		toggle = M.toggle_inline,
+		["copy-link"] = M.copy_link,
 		pr = function()
 			M.blame_line(true)
 		end,
@@ -349,6 +385,7 @@ function M.setup(opts)
 			"  blame-line             Show this line's author, date and commit",
 			"  blame                  Browse blame for every source line",
 			"  pr                     Show this line's associated GitHub PR links",
+			"  copy-link              Copy a permalink to this line",
 			"  help                   Show this reference",
 			"  :gitgud / :gg          Lowercase aliases when typed",
 			"",
@@ -366,6 +403,7 @@ function M.setup(opts)
 		vim.list_extend(lines, {
 			"",
 			"Rediff right-click menu · source lines",
+			"  Copy Permalink  Copy the clicked line's commit-pinned URL",
 			"  gitgud: open pr  Show the clicked line's PR links",
 			"  gitgud: blame    Show the clicked line's author, date and commit",
 			"",

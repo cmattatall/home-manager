@@ -29,6 +29,7 @@ end
 function M.context_menu()
 	context_path = nil
 	pcall(vim.cmd, [[nunmenu PopUp.Copy\ Relative\ Path]])
+	pcall(vim.cmd, [[nunmenu PopUp.Copy\ Permalink]])
 	pcall(vim.cmd, [[nunmenu PopUp.gitgud:\ open\ pr]])
 	pcall(vim.cmd, [[nunmenu PopUp.gitgud:\ blame]])
 	local mouse = vim.fn.getmousepos()
@@ -47,6 +48,7 @@ function M.context_menu()
 	local is_snapshot = s and s.current and (buf == s.old_buf or buf == s.new_buf)
 	local is_file = vim.bo[buf].buftype == "" and api.nvim_buf_get_name(buf) ~= ""
 	if is_file or is_snapshot then
+		vim.cmd([[nnoremenu <silent> 1.10 PopUp.Copy\ Permalink <Cmd>GitGud copy-link<CR>]])
 		vim.cmd([[nnoremenu <silent> 1.20 PopUp.gitgud:\ open\ pr <Cmd>GitGud pr<CR>]])
 		vim.cmd([[nnoremenu <silent> 1.30 PopUp.gitgud:\ blame <Cmd>GitGud blame-line<CR>]])
 	end

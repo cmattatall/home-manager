@@ -188,6 +188,14 @@ Right-click a source line and choose "gitgud: open pr" for its PR links or
 "gitgud: blame" for its author, date and commit. In Review, these actions use
 the clicked OLD/NEW snapshot.
 
+Choose "Copy Permalink" to copy a commit-pinned URL for the clicked line to
+the system clipboard. :GitGud copy-link does the same for the cursor line.
+Links use the github.com origin remote (HTTPS or SSH) and HEAD, or the selected
+OLD/NEW commit in a branch comparison. Local edits before the line are accounted
+for. Added or modified lines without a committed counterpart report an error
+and preserve the clipboard. Push the referenced commit before sharing its link.
+For red virtual deletions in merged view, use the OLD pane in split view.
+
 :Gitgud help (also :GitGud help) opens a scrollable reference with all actions,
 configured Normal-mode shortcuts, and shortcuts inside Gitgud windows. It works
 from any buffer, including outside a Git repository. q/Esc closes it.
