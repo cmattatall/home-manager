@@ -30,6 +30,8 @@ require("rose-pine").setup({
 	palette = { main = { pine = "#8fc3ce" } },
 	highlight_groups = {
 		Comment = { fg = "#b9b6cd" },
+		CursorLine = { bg = "#302e3f" },
+		CursorLineNr = { fg = "gold", bold = true },
 		GitSignsAdd = { fg = "#a6e3a1" },
 		GitSignsChange = { fg = "#f9e2af" },
 		GitSignsDelete = { fg = "#f38ba8" },
@@ -250,6 +252,17 @@ vim.api.nvim_create_autocmd("VimEnter", {
 local review = require("rediff.review")
 require("rediff.lsp").setup()
 review.setup()
+vim.api.nvim_create_autocmd({ "WinEnter", "BufEnter", "WinLeave", "BufLeave" }, {
+	callback = function(event)
+		local buf = vim.api.nvim_get_current_buf()
+		local s = review.active()
+		local is_source = vim.bo[buf].buftype == "" or (s and (buf == s.old_buf or buf == s.new_buf))
+		if is_source then
+			vim.wo.cursorlineopt = "both"
+			vim.wo.cursorline = event.event == "WinEnter" or event.event == "BufEnter"
+		end
+	end,
+})
 require("rediff.annotations").setup()
 require("rediff.harness").setup()
 require("rediff.worktree").setup()

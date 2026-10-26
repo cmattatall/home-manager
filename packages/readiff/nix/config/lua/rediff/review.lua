@@ -2050,11 +2050,42 @@ function M.setup()
 		api.nvim_set_hl(0, "ReviewAnnotationChanged", { fg = palette.iris, bold = true })
 		api.nvim_set_hl(0, "ReviewFocusedPane", { fg = palette.base, bg = palette.foam, bold = true })
 		api.nvim_set_hl(0, "ReviewInactivePane", { fg = palette.subtle, bg = palette.surface })
+		api.nvim_set_hl(0, "ReviewCursorLineInsert", { bg = "#3b5b44" })
+		api.nvim_set_hl(0, "ReviewCursorLineDelete", { bg = "#6a4046" })
 		-- CursorLine must preserve the status marker's foreground color.
 		api.nvim_set_hl(0, "ReviewTreeSelection", { bg = "#33445c", bold = true })
 		api.nvim_set_hl(0, "ReviewTreeCursor", { fg = "#33445c", bg = "#33445c", blend = 100 })
 	end
 	review_highlights()
+	local cursorline_ns = api.nvim_create_namespace("rediff.cursorline")
+	api.nvim_set_decoration_provider(cursorline_ns, {
+		on_win = function(_, win, buf)
+			local s = M.active()
+			if not s or not s.diff or win ~= api.nvim_get_current_win() then
+				return false
+			end
+			if buf ~= s.old_buf and buf ~= s.new_buf then
+				return false
+			end
+			local side = buf == s.old_buf and "original" or "modified"
+			local line = api.nvim_win_get_cursor(win)[1]
+			for _, change in ipairs(s.diff.changes) do
+				local range = change[side]
+				if line >= range.start_line and line < range.end_line then
+					api.nvim_buf_set_extmark(buf, cursorline_ns, line - 1, 0, {
+						end_row = line,
+						hl_group = buf == s.old_buf and "ReviewCursorLineDelete" or "ReviewCursorLineInsert",
+						hl_eol = true,
+						-- Above diff line fills (150), below changed tokens (200).
+						priority = 175,
+						ephemeral = true,
+					})
+					break
+				end
+			end
+			return false
+		end,
+	})
 	-- Check notes even while a composer pins the original source snapshot. This
 	-- only updates badges/titles; it never refreshes the source or edits note text.
 	do

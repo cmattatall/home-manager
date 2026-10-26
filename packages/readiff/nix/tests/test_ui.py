@@ -5699,6 +5699,64 @@ func greeting() string {
             )
         )
 
+    def test_current_line_indicator_follows_source_focus_in_both_modes(self):
+        editor = self.launch(self.root, file="auth.lua")
+
+        def line_style(window, line, column=1):
+            return editor.exec_lua("""
+                local win, line, column = ...
+                local p = vim.fn.screenpos(win, line, column)
+                return vim.api.nvim__inspect_cell(1, p.row - 1, p.col - 1)[2]
+            """, window, line, column)
+
+        def check_current_line(window, background, active_background, token_background=None):
+            editor.api.set_current_win(window)
+            self.keys(editor, "5G")
+            style = line_style(window, 5)
+            self.assertFalse(style.get("underline", False))
+            self.assertEqual(active_background, style["background"])
+            number_style = editor.exec_lua("""
+                local p = vim.fn.screenpos(..., 5, 1)
+                return vim.api.nvim__inspect_cell(1, p.row - 1, p.col - 3)[2]
+            """, window)
+            self.assertEqual(0xF6C177, number_style["foreground"])
+            if token_background:
+                self.assertEqual(token_background, line_style(window, 5, 12)["background"])
+            self.assertEqual(0x191724, line_style(window, 6).get("background", 0x191724))
+            self.keys(editor, "j")
+            self.assertEqual(background, line_style(window, 5).get("background", 0x191724))
+            self.assertEqual(0x302E3F, line_style(window, 6)["background"])
+
+        source = editor.current.window.handle
+        check_current_line(source, 0x191724, 0x302E3F)
+        editor.command("vsplit")
+        other = editor.current.window.handle
+        pump(editor)
+        self.assertEqual(0x191724, line_style(source, 6).get("background", 0x191724))
+        check_current_line(other, 0x191724, 0x302E3F)
+        editor.command("close")
+        editor.command("Review")
+        for layout in ("split", "merged", "split"):
+            editor.command(f"View {layout}")
+            windows = self.lua(editor, "return {s.new_win, s.old_win}")
+            for window in windows:
+                if window == windows[0]:
+                    colors = (0x23412B, 0x3B5B44, 0x2E5037)
+                else:
+                    colors = (0x50272C, 0x6A4046, 0x70343C)
+                check_current_line(window, *colors)
+                editor.command("colorscheme rose-pine")
+                check_current_line(window, *colors)
+                self.keys(editor, "5G")
+                tree = self.lua(editor, "return s.tree_win")
+                editor.api.set_current_win(tree)
+                pump(editor)
+                self.assertEqual(colors[0], line_style(window, 5)["background"])
+                self.assertEqual(0x191724, line_style(window, 6).get("background", 0x191724))
+        editor.command("ReviewLeave")
+        editor.command("colorscheme rose-pine")
+        check_current_line(source, 0x191724, 0x302E3F)
+
     def test_tree_status_marker_colors(self):
         Path(self.root, "original.lua").write_text("return 'rename fixture'\n")
         for args in (

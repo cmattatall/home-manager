@@ -351,6 +351,7 @@ local function update_inline()
 		api.nvim_buf_set_extmark(c.buf, inline, c.line - 1, 0, {
 			virt_text = { { "  " .. vim.fn.strtrans(description(rows[c.line])), "Comment" } },
 			virt_text_pos = "eol",
+			hl_mode = "combine",
 		})
 		inline_buf = c.buf
 	end)

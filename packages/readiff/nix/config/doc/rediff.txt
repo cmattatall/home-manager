@@ -20,6 +20,10 @@ HOW TO REVIEW                                                *rediff-workflow*
 6. Stage deliberately with s (hunk) or S (file); sending notes never stages code.
    Space R refreshes now. Space q leaves Review for ordinary editing.
 
+The focused source pane marks the current line with a faint background highlight
+and a gold line number, in ordinary editing and both Review layouts. Changed
+lines use a brighter red or green tint while keeping changed-token highlights.
+
 REVIEW QUICK REFERENCE
 
   Tab                 Switch tree/diff focus
