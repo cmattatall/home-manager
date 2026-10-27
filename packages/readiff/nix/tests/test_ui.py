@@ -337,6 +337,13 @@ class EditorUI(unittest.TestCase):
                 editor, "return vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false)"
             )
 
+        def filter_header():
+            return self.lua(
+                editor,
+                "return vim.api.nvim_eval_statusline(vim.wo[s.tree_win].winbar, "
+                "{winid=s.tree_win, use_winbar=true}).str",
+            )
+
         def filter_to(query):
             self.keys(editor, "/<C-u>" + query + "<CR>")
             self.assertTrue(
@@ -344,35 +351,37 @@ class EditorUI(unittest.TestCase):
             )
 
         original = tree()
-        self.assertIn(" /: filter files", original)
+        self.assertIn("Filter paths…", filter_header())
         self.keys(editor, "/plan<Esc>")
         self.assertEqual(original, tree())
-        filter_to("PLAN")
+        self.keys(editor, "/P")
+        self.keys(editor, "LN")
         self.assertEqual(
             [" U plan.md", " U src/Plan1.md", " U src/Plan[1].md"],
             [line for line in tree() if line.startswith(" U ")],
         )
-        self.assertIn(" / PLAN", tree())
-        self.assertIn(" / Ctrl-U Enter: clear", tree())
-        self.assertNotIn(" /: filter files", tree())
+        self.assertEqual("i", editor.api.get_mode()["mode"])
+        self.assertIn(" 3 of 5 changes", tree())
+        self.keys(editor, "<CR>")
+        self.assertIn("PLN", filter_header())
+        self.assertIn(" / edit · Esc clear", tree())
         self.assertNotIn(" M auth.lua", tree())
         self.assertNotIn(" D removed.lua", tree())
         self.keys(editor, " j e")
         self.assertEqual("src/Plan1.md", self.lua(editor, "return s.current.path"))
 
-        # Regex paths are case-insensitive and can escape metacharacters.
-        filter_to(r"re:src/plan\[1\]")
+        filter_to("src/pln[1]")
         self.assertIn(" U src/Plan[1].md", tree())
         self.assertNotIn(" U src/Plan1.md", tree())
         self.assertNotIn(" U plan.md", tree())
         self.keys(editor, " R e")
-        self.assertIn(r" / re:src/plan\[1\]", tree())
+        self.assertIn("src/pln[1]", filter_header())
         self.assertEqual("src/Plan[1].md", self.lua(editor, "return s.current.path"))
 
         # A normal source-pane search must still search content, not filter paths.
         self.keys(editor, "<Tab>/first<CR>")
         self.assertEqual("first", editor.funcs.getreg("/"))
-        self.assertIn(r" / re:src/plan\[1\]", tree())
+        self.assertIn("src/pln[1]", filter_header())
         self.keys(editor, "<Tab>S")
         self.assertEqual(
             "src/Plan[1].md\n",
@@ -392,8 +401,8 @@ class EditorUI(unittest.TestCase):
 
         filter_to("no-such-file")
         self.assertEqual(0, self.lua(editor, "return #s.entries"))
-        self.assertIn(" / no-such-file", tree())
-        self.assertIn(" / Ctrl-U Enter: clear", tree())
+        self.assertIn("no-such-file", filter_header())
+        self.assertIn(" 0 of 6 changes", tree())
         self.assertIn(
             "No matching files", self.lua(editor, "return vim.wo[s.new_win].winbar")
         )
@@ -404,16 +413,14 @@ class EditorUI(unittest.TestCase):
             ),
         )
         self.keys(editor, "/<C-u>auth<Esc>")
-        self.assertIn(" / no-such-file", tree())
-        filter_to("")
         self.assertIn(" M auth.lua", tree())
         self.assertIn(" D removed.lua", tree())
         self.assertIn(" U plan.md", tree())
         self.assertIn(" A src/Plan[1].md", tree())
-        self.assertIn(" /: filter files", tree())
-        self.assertFalse(any(line.startswith(" / ") for line in tree()))
+        self.assertIn("Filter paths…", filter_header())
+        self.assertEqual("", self.lua(editor, "return s.file_filter"))
 
-    def test_tree_filter_matches_names_paths_globs_and_regex(self):
+    def test_tree_filter_matches_full_paths_and_restores_selection_and_folds(self):
         paths = [
             "nix/default.nix",
             "nix/default.nix.bak",
@@ -427,6 +434,10 @@ class EditorUI(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("new file\n")
         editor = self.launch(self.root)
+        self.keys(editor, " j eh")
+        original_path = self.lua(editor, "return s.current.path")
+        original_row = editor.current.window.cursor[0]
+        self.assertNotEqual(-1, editor.funcs.foldclosed(original_row))
 
         def visible_paths():
             lines = self.lua(
@@ -435,35 +446,54 @@ class EditorUI(unittest.TestCase):
             return sorted(line[3:] for line in lines if line.startswith(" U "))
 
         cases = [
-            ("NIX", [paths[0], paths[1], paths[2], paths[5]]),
-            ("*.nix", [paths[0]]),
+            ("NIX", paths),
             ("nix/", paths[:5]),
-            ("nix/*.py", [paths[3]]),
-            ("nix/**/*.py", [paths[3], paths[4]]),
-            (r"re:^(DEFAULT|nix-helper)\.(nix|lua)$", [paths[0], paths[5]]),
-            (r"re:^nix/.*\.py$", [paths[3], paths[4]]),
+            ("nx/df.n", paths[:2]),
+            ("NX/TUI", [paths[4]]),
+            ("*.nix", []),
         ]
         for query, expected in cases:
             with self.subTest(query=query):
                 self.keys(editor, "/<C-u>" + query + "<CR>")
                 self.assertEqual(sorted(expected), visible_paths())
+                self.assertEqual(
+                    -1, editor.funcs.foldclosed(editor.current.window.cursor[0])
+                )
+                self.keys(editor, "<Esc>")
+                self.assertEqual(
+                    original_path, self.lua(editor, "return s.current.path")
+                )
+                self.assertEqual(original_row, editor.current.window.cursor[0])
+                self.assertNotEqual(-1, editor.funcs.foldclosed(original_row))
 
-        for invalid in ("[", "re:("):
-            with self.subTest(invalid=invalid):
-                self.keys(editor, "/<C-u>" + invalid + "<CR>")
-                self.assertRegex(
-                    self.lua(editor, "return vim.g.startup_notice"),
-                    "Invalid glob|couldn't parse regex",
-                )
-                self.keys(editor, " R e")
-                self.assertEqual(sorted([paths[3], paths[4]]), visible_paths())
-                self.assertIn(
-                    r" / re:^nix/.*\.py$",
-                    self.lua(
-                        editor,
-                        "return vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false)",
-                    ),
-                )
+    def test_review_pickers_search_beyond_the_tree_filter(self):
+        editor = self.launch(self.root)
+        self.keys(editor, "/pln<CR>")
+        self.keys(editor, " f")
+        self.keys(editor, "auth")
+        self.keys(editor, "<Esc>")
+        self.assertEqual("pln", self.lua(editor, "return s.file_filter"))
+        self.assertEqual("plan.md", self.lua(editor, "return s.current.path"))
+
+        self.keys(editor, " f")
+        self.wait_for(editor, 'vim.bo.filetype == "fzf"')
+        self.keys(editor, "auth")
+        self.keys(editor, "<CR>")
+        self.wait_for(editor, "s.current.path == 'auth.lua'")
+        self.assertEqual("", self.lua(editor, "return s.file_filter"))
+        self.assertEqual(3, self.lua(editor, "return #s.entries"))
+
+        self.keys(editor, " e/pln<CR>")
+        self.keys(editor, " /")
+        self.wait_for(editor, 'vim.bo.filetype == "fzf"')
+        self.keys(editor, "local obsolete")
+        self.keys(editor, "<CR>")
+        self.wait_for(editor, "s.current.path == 'removed.lua'")
+        self.assertEqual("", self.lua(editor, "return s.file_filter"))
+        self.assertTrue(
+            self.lua(editor, "return vim.api.nvim_get_current_win() == s.old_win")
+        )
+        self.assertEqual("local obsolete = true", editor.current.line)
 
     def test_ctrl_shift_brackets_skip_seen_and_baseline_hunks(self):
         path = Path(self.root, "zeta.txt")

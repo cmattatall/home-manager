@@ -6,6 +6,7 @@ local harness = require("rediff.harness")
 local selection = require("rediff.selection")
 local awareness = require("rediff.awareness")
 local tree_ns = api.nvim_create_namespace("rediff.tree")
+local filter_ns = api.nvim_create_namespace("rediff.file-filter")
 local active_ns = api.nvim_create_namespace("rediff.active-file")
 local hunk_ns = api.nvim_create_namespace("rediff.hunk")
 local annotation_ns = api.nvim_create_namespace("rediff.annotations")
@@ -667,12 +668,21 @@ function M.view(layout)
 	render_comments(false, s)
 end
 
-local function read_changes(s, preferred)
-	local reference = s.comparison and (s.comparison.base:sub(1, 12) .. " → " .. s.comparison.head:sub(1, 12))
+local function filter_positions(path, query)
+	local matches = vim.fn.matchfuzzypos({ path }, vim.fn.tolower(query), { matchseq = 1 })
+	return matches[2][1]
+end
+
+local function read_changes(s, preferred, cached_entries)
+	local reference = cached_entries and s.reference
+		or (s.comparison and (s.comparison.base:sub(1, 12) .. " → " .. s.comparison.head:sub(1, 12)))
 		or git.reference(s.root)
-	local entries = git.entries(s.root, s.comparison)
-	if s.file_match then
-		retain(entries, s.file_match)
+	local all_entries = cached_entries or git.entries(s.root, s.comparison)
+	local entries = vim.list_slice(all_entries)
+	if s.file_filter and s.file_filter ~= "" then
+		retain(entries, function(entry)
+			return filter_positions(entry.path, s.file_filter) ~= nil
+		end)
 	end
 	local index = math.min(s.index or 1, #entries)
 	if s.exhausted_group then
@@ -694,9 +704,14 @@ local function read_changes(s, preferred)
 	end
 	local ok, snapshot = true, nil
 	if entries[index] then
-		ok, snapshot = pcall(git.snapshot, s.root, entries[index])
+		if cached_entries and s.current and entry_key(entries[index]) == entry_key(s.current) then
+			snapshot = s.current
+		else
+			ok, snapshot = pcall(git.snapshot, s.root, entries[index])
+		end
 	end
 	return {
+		all_entries = all_entries,
 		entries = entries,
 		reference = reference,
 		index = index,
@@ -716,13 +731,19 @@ function M.refresh(preferred, changes)
 	changes = changes or read_changes(s, preferred)
 	s.annotation_id = nil
 	s.entries, s.reference = changes.entries, changes.reference
+	s.all_entries = changes.all_entries
 	local lines = {
 		s.comparison and " BRANCH DIFF · Commits" or " REVIEW · Git changes",
-		" /: filter files",
 	}
 	if s.file_filter and s.file_filter ~= "" then
-		lines[2] = " / " .. vim.fn.strtrans(s.file_filter)
-		lines[3] = " / Ctrl-U Enter: clear"
+		vim.wo[s.tree_win].winbar = " / %<"
+			.. vim.fn.strtrans(s.file_filter):gsub("%%", "%%%%")
+			.. string.format(" %%=%d/%d ", #s.entries, #s.all_entries)
+		lines[2] = string.format(" %d of %d changes", #s.entries, #s.all_entries)
+		lines[3] = " / edit · Esc clear"
+	else
+		vim.wo[s.tree_win].winbar = " / Filter paths…"
+		lines[2] = string.format(" %d changes", #s.all_entries)
 	end
 	local rows = {}
 	s.group_rows = {}
@@ -749,9 +770,11 @@ function M.refresh(preferred, changes)
 	s.rows = rows
 	set_lines(s.tree_buf, lines)
 	api.nvim_buf_clear_namespace(s.tree_buf, tree_ns, 0, -1)
+	api.nvim_buf_clear_namespace(s.tree_buf, filter_ns, 0, -1)
 	api.nvim_buf_clear_namespace(s.tree_buf, active_ns, 0, -1)
 	for row, index in pairs(rows) do
-		local highlight = status_highlights[s.entries[index].status]
+		local entry = s.entries[index]
+		local highlight = status_highlights[entry.status]
 		if highlight then
 			api.nvim_buf_set_extmark(s.tree_buf, tree_ns, row - 1, 1, {
 				id = row,
@@ -759,6 +782,18 @@ function M.refresh(preferred, changes)
 				hl_group = highlight,
 				priority = 200,
 			})
+		end
+		if s.file_filter and s.file_filter ~= "" then
+			for _, position in ipairs(filter_positions(entry.path, s.file_filter)) do
+				local prefix = vim.fn.strcharpart(entry.path, 0, position)
+				local character = vim.fn.strcharpart(entry.path, position, 1)
+				local column = 3 + #vim.fn.strtrans(prefix)
+				api.nvim_buf_set_extmark(s.tree_buf, filter_ns, row - 1, column, {
+					end_col = column + #vim.fn.strtrans(character),
+					hl_group = "ReviewFilterMatch",
+					priority = 5000,
+				})
+			end
 		end
 	end
 	api.nvim_win_call(s.tree_win, function()
@@ -828,42 +863,118 @@ function M.refresh(preferred, changes)
 	save(s)
 end
 
+local function close_file_filter(s)
+	if s.filter_win then
+		local win = s.filter_win
+		s.filter_win = nil
+		if api.nvim_win_is_valid(win) then
+			api.nvim_win_close(win, true)
+		end
+	end
+end
+
+local function update_file_filter(s, query)
+	if query == (s.file_filter or "") then
+		return
+	end
+	if not s.filter_restore and query ~= "" then
+		local row = api.nvim_win_get_cursor(s.tree_win)[1]
+		local heading
+		for group, group_row in pairs(s.group_rows) do
+			if row == group_row then
+				heading = group
+			end
+		end
+		s.filter_restore = {
+			current = s.current,
+			collapsed = vim.deepcopy(s.collapsed),
+			selection = vim.deepcopy(s.tree_selection),
+			heading = heading,
+		}
+	end
+	s.file_filter = query
+	s.exhausted_group = nil
+	local restore = query == "" and s.filter_restore
+	s.collapsed = restore and restore.collapsed or {}
+	local preferred = restore and restore.current or s.current
+	local focus = api.nvim_get_current_win()
+	M.refresh(preferred, read_changes(s, preferred, s.all_entries))
+	api.nvim_set_current_win(focus)
+	if restore then
+		s.tree_selection = restore.selection
+		select_tree_file(true)
+		if restore.heading then
+			api.nvim_win_set_cursor(s.tree_win, { s.group_rows[restore.heading], 0 })
+		end
+		s.filter_restore = nil
+	end
+end
+
+function M.clear_file_filter()
+	local s = assert(M.active(), "Enter Review first")
+	close_file_filter(s)
+	update_file_filter(s, "")
+end
+
 function M.filter_files()
 	local s = assert(M.active(), "Enter Review first")
-	vim.ui.input(
-		{ prompt = "Filter files (glob or re:regex; empty clears): ", default = s.file_filter or "" },
-		guard(function(query)
-			if query == nil or M.active() ~= s then
-				return
-			end
-			-- Compile before changing state so invalid patterns keep the current filter.
-			local pattern, regex, glob = query, nil, nil
-			if vim.startswith(pattern, "re:") then
-				pattern = pattern:sub(4)
-				regex = vim.regex("\\c\\v" .. pattern)
-			elseif pattern:find("[*?%[{]") then
-				glob = vim.glob.to_lpeg(vim.fn.tolower(pattern))
-			end
-			local match_path = pattern:find("/", 1, true) ~= nil
-			local literal = vim.fn.tolower(pattern)
-			local function matches(entry)
-				local target = match_path and entry.path or vim.fn.fnamemodify(entry.path, ":t")
-				if regex then
-					return regex:match_str(target) ~= nil
+	if s.filter_win then
+		api.nvim_set_current_win(s.filter_win)
+		vim.cmd.startinsert({ bang = true })
+		return
+	end
+	local buf = api.nvim_create_buf(false, true)
+	vim.bo[buf].bufhidden = "wipe"
+	vim.bo[buf].filetype = "rediff-file-filter"
+	api.nvim_buf_set_lines(buf, 0, -1, false, { s.file_filter or "" })
+	s.filter_win = api.nvim_open_win(buf, true, {
+		relative = "win",
+		win = s.tree_win,
+		row = -1,
+		col = 3,
+		width = math.max(1, api.nvim_win_get_width(s.tree_win) - 4),
+		height = 1,
+		style = "minimal",
+		border = "none",
+	})
+	vim.wo[s.filter_win].winhighlight = "Normal:Visual"
+	vim.wo[s.filter_win].wrap = false
+	local function apply()
+		update_file_filter(s, api.nvim_buf_get_lines(buf, 0, 1, false)[1])
+	end
+	api.nvim_create_autocmd({ "TextChangedI", "TextChanged" }, { buffer = buf, callback = guard(apply) })
+	map(buf, { "i", "n" }, "<CR>", function()
+		apply()
+		vim.cmd.stopinsert()
+		close_file_filter(s)
+		api.nvim_set_current_win(s.tree_win)
+	end, "Browse filtered files")
+	map(buf, { "i", "n" }, "<Esc>", function()
+		vim.cmd.stopinsert()
+		M.clear_file_filter()
+		api.nvim_set_current_win(s.tree_win)
+	end, "Clear file filter")
+	map(buf, "i", "<C-u>", function()
+		api.nvim_buf_set_lines(buf, 0, -1, false, { "" })
+		apply()
+	end, "Clear filter input")
+	api.nvim_create_autocmd("BufLeave", {
+		buffer = buf,
+		callback = function()
+			vim.schedule(function()
+				if s.filter_win and api.nvim_get_current_win() ~= s.filter_win then
+					close_file_filter(s)
 				end
-				target = vim.fn.tolower(target)
-				if glob then
-					return glob:match(target) ~= nil
-				end
-				return target:find(literal, 1, true) ~= nil
-			end
-			s.file_match = query ~= "" and matches or nil
-			s.file_filter = query
-			s.exhausted_group = nil
-			M.refresh(s.current)
-			api.nvim_set_current_win(s.tree_win)
-		end)
-	)
+			end)
+		end,
+	})
+	api.nvim_create_autocmd("BufWipeout", {
+		buffer = buf,
+		callback = function()
+			s.filter_win = nil
+		end,
+	})
+	vim.cmd.startinsert({ bang = true })
 end
 
 function M.tree_fold(collapsed)
@@ -1826,6 +1937,7 @@ end
 
 function M.leave()
 	local s = state()
+	close_file_filter(s)
 	tree_focus(false)
 	awareness.stop()
 	require("rediff.live").stop(s)
@@ -1916,7 +2028,6 @@ function M.open(root, comparison)
 	for _, win in ipairs({ s.tree_win, s.old_win, s.new_win }) do
 		vim.wo[win].winhighlight = "WinBar:ReviewFocusedPane,WinBarNC:ReviewInactivePane"
 	end
-	vim.wo[s.tree_win].winbar = " FILE TREE "
 	vim.wo[s.tree_win].number = false
 	vim.wo[s.tree_win].signcolumn = "no"
 	vim.wo[s.tree_win].winfixwidth = true
@@ -1934,6 +2045,7 @@ function M.open(root, comparison)
 	vim.cmd("wincmd =")
 	map(s.tree_buf, "n", "q", M.leave, "Leave Review")
 	map(s.tree_buf, "n", "/", M.filter_files, "Filter changed file paths")
+	map(s.tree_buf, "n", "<Esc>", M.clear_file_filter, "Clear file filter")
 	for _, key in ipairs({ "h", "<Left>" }) do
 		map(s.tree_buf, "n", key, function()
 			M.tree_fold(true)
@@ -2038,6 +2150,7 @@ function M.setup()
 	api.nvim_set_hl(0, "ReviewHunk", { fg = palette.gold, bold = true })
 	local function review_highlights()
 		api.nvim_set_hl(0, "RediffMode", { fg = palette.base, bg = palette.foam, bold = true })
+		api.nvim_set_hl(0, "ReviewFilterMatch", { fg = palette.gold, bold = true })
 		api.nvim_set_hl(0, "ReviewAdded", { fg = "#4ade80", bold = true })
 		api.nvim_set_hl(0, "ReviewModified", { fg = "#facc15", bold = true })
 		api.nvim_set_hl(0, "ReviewUntracked", { fg = "#4ade80", bold = true })
@@ -2423,6 +2536,12 @@ function M.setup()
 			if s then
 				if api.nvim_win_is_valid(s.tree_win) then
 					api.nvim_win_set_width(s.tree_win, math.min(28, math.floor(vim.o.columns / 5)))
+				end
+				if s.filter_win then
+					api.nvim_win_set_config(
+						s.filter_win,
+						{ width = math.max(1, api.nvim_win_get_width(s.tree_win) - 4) }
+					)
 				end
 				if s.old_win and api.nvim_win_is_valid(s.old_win) and api.nvim_win_is_valid(s.new_win) then
 					local width = api.nvim_win_get_width(s.old_win) + api.nvim_win_get_width(s.new_win)

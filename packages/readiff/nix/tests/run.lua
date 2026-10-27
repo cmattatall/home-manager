@@ -180,7 +180,7 @@ local function test()
 	equal(true, vim.list_contains(sidebar(), " U plan.md"), "Untracked files have a U badge")
 	equal({
 		" REVIEW · Git changes",
-		" /: filter files",
+		" 3 changes",
 		" ▾ STAGED (0)",
 		"   (none)",
 		"",
@@ -189,7 +189,7 @@ local function test()
 		" D removed.lua",
 		" U plan.md",
 		"",
-	}, sidebar(), "Sidebar shows Git entries and the file filter shortcut")
+	}, sidebar(), "Sidebar shows Git groups and change counts")
 	local headers = vim.api.nvim_buf_get_extmarks(
 		s.tree_buf,
 		vim.api.nvim_get_namespaces()["rediff.tree"],

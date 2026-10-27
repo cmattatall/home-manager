@@ -53,7 +53,7 @@ revdiff parity.
   Both preserve pane focus; an empty group leaves the selection unchanged.
   **Space j/k** select the next/previous changed file across groups.
 - **Space f** / `:Files` fuzzy-finds nonignored project files while editing;
-  in Review it finds visible changed entries, keeping staged and unstaged
+  in Review it finds all changed entries, keeping staged and unstaged
   instances distinct. **Space /** / `:Search` searches saved project contents
   while editing and old plus new lines (including deletions) in Review.
   **Enter** chooses and **Esc** cancels. Native `/`, `n`, and `N` remain

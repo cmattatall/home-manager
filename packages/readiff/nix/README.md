@@ -307,29 +307,22 @@ Untracked files belong to the UNSTAGED cycle. They work from
 either source pane or the sidebar, retain focus, and accept counts (e.g.
 **3]**). A gutter arrow/bar marks the selected hunk in both source panes.
 
-With focus in the file tree, **/** filters files in place. **Enter** applies;
-**Esc** cancels. Press **/**, **Ctrl-u**, **Enter** to clear it.
-Filters match **filenames**, unless they contain `/`, which selects the
-repository-relative **path**. Matching is case-insensitive by default:
+With focus in the file tree, **/** opens the inline **Filter paths…** field.
+The tree narrows as you type, with case-insensitive fuzzy matching against each
+repository-relative path. For example, `nx/tui` matches `nix/tests/test_ui.py`.
+Matching characters are highlighted, and matching groups expand in tree order.
 
-| Filter | Matches |
-| --- | --- |
-| `nix` | Filenames containing `nix`, not files merely inside a `nix/` directory |
-| `*.nix` | Filenames ending in `.nix` |
-| `nix/` | Paths containing `nix/` |
-| `nix/*.py` | Python files directly in `nix/` |
-| `nix/**/*.py` | Python files anywhere under `nix/` |
-| `re:\.nix$` | Regex matching filenames ending in `.nix` |
-| `re:^nix/.*\.py$` | Regex matching repository-relative paths |
+**Enter** returns to browsing the filtered tree. The query and a count such as
+**3 of 24 changes** stay visible. **/** edits the query. **Esc** in the field or
+tree clears it and restores the selection and collapsed groups from before
+filtering. **Ctrl-u** clears the input while keeping the field focused.
+File/hunk navigation follows the filtered entries. Refresh and staging preserve
+the filter until Review closes.
 
-Globs support `*`, `**`, `?`, `[]`, and `{a,b}` and match the whole name/path.
-Other unprefixed text is a literal substring. `re:` uses Vim's very-magic
-(`\v`) regex syntax; escape metacharacters with a backslash. Invalid patterns
-leave the previous filter unchanged.
-The active filter appears below the tree title. Counts, file/hunk navigation,
-and Review pickers use matching entries; refresh and staging preserve the
-filter until Review closes.
-In source panes, **/** still searches text. **Space f** remains a separate picker.
+**Space f** searches all changed files in the review, and **Space /** searches
+their old and new contents. Choosing a result outside the tree filter clears
+the filter to reveal that file. Cancelling a picker preserves the filter.
+In source panes, **/** searches the current buffer's text.
 
 Use **:fs** / **:focus staged** or **:fu** / **:focus unstaged** to select the
 first visible file/hunk in that group without changing pane focus. If the group

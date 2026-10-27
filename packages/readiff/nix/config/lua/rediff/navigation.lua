@@ -517,7 +517,7 @@ end
 
 local function pick_review(text)
 	local s = assert(review.active())
-	local entries, items, targets = s.entries, {}, {}
+	local entries, items, targets = s.all_entries, {}, {}
 	local skipped = 0
 	local function add(label, target)
 		table.insert(targets, target)
@@ -558,12 +558,23 @@ local function pick_review(text)
 					return
 				end
 				local ok, err = pcall(function()
-					assert(review.active() == s and s.entries == entries, "Review changed; reopen the picker")
+					assert(review.active() == s and s.all_entries == entries, "Review changed; reopen the picker")
 					local target = assert(targets[tonumber(selected[1]:match("^(%d+)"))])
 					if target.snapshot then
 						git.validate(s.root, target.snapshot)
 					end
-					review.show(target.index)
+					local visible_index
+					for i, entry in ipairs(s.entries) do
+						if entry == entries[target.index] then
+							visible_index = i
+							break
+						end
+					end
+					if not visible_index then
+						review.clear_file_filter()
+						visible_index = target.index
+					end
+					review.show(visible_index)
 					if target.side then
 						assert(s.current.id == target.snapshot.id, "Search result changed; search again")
 						if target.side == "old" and not s.old_win then
