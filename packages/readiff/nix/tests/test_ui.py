@@ -122,6 +122,28 @@ class EditorUI(unittest.TestCase):
         editor.input(keys)
         pump(editor)
 
+    def copy_permalink(self, editor, window, line):
+        position = editor.funcs.screenpos(window, line, 1)
+        self.assertGreater(position["row"], 0)
+        editor.options["mousetime"] = 0
+        editor.vars["copied"] = "unchanged"
+
+        def right_click():
+            for action in ("press", "release"):
+                editor.api.input_mouse(
+                    "right", action, "", 0, position["row"] - 1, position["col"] - 1
+                )
+            pump(editor)
+
+        right_click()
+        self.keys(editor, "<Esc>")
+        self.assertEqual("unchanged", editor.vars["copied"])
+        menu = editor.funcs.menu_info("PopUp", "n")["submenus"]
+        self.assertIn("Copy Permalink", menu)
+        right_click()
+        self.keys(editor, "<Down>" * (menu.index("Copy Permalink") + 1) + "<CR>")
+        return editor.vars["copied"]
+
     def wait_for(self, editor, condition, timeout=8):
         deadline = time.monotonic() + timeout
         while not self.lua(editor, "return " + condition):
@@ -2402,25 +2424,33 @@ class EditorUI(unittest.TestCase):
         def copy_line(side, expected, error=None):
             window = self.lua(editor, f"return s.{side}_win")
             self.lua(editor, "vim.api.nvim_set_current_win(s.tree_win)")
-            position = editor.funcs.screenpos(window, 5, 1)
-            self.assertGreater(position["row"], 0)
-            editor.options["mousetime"] = 0
-            editor.vars["copied"] = "unchanged"
-            for action in ("press", "release"):
-                editor.api.input_mouse(
-                    "right", action, "", 0, position["row"] - 1, position["col"] - 1
-                )
-            pump(editor)
-            self.keys(editor, "<Down><CR>")
-            self.assertEqual(expected, editor.vars["copied"])
+            self.assertEqual(expected, self.copy_permalink(editor, window, 5))
             if error:
                 self.assertIn(error, editor.vars["startup_notice"])
+
+        def copy_tree(path, expected):
+            self.keys(editor, " d")
+            row = editor.exec_lua(
+                """
+                local s = require('rediff.review').state
+                for row, index in pairs(s.rows) do
+                    if s.entries[index].path == ... then return row end
+                end
+                """,
+                path,
+            )
+            window = self.lua(editor, "return s.tree_win")
+            self.assertEqual(expected, self.copy_permalink(editor, window, row))
 
         url = "https://github.com/example/project/blob/"
         copy_line("old", url + base + "/auth.lua#L5")
         copy_line("new", "unchanged", "uncommitted changes")
+        copy_tree("removed.lua", url + base + "/removed.lua")
+        copy_tree("auth.lua", url + base + "/auth.lua")
+        copy_tree("plan.md", "unchanged")
+        self.assertIn("no committed version", editor.vars["startup_notice"])
 
-        subprocess.run(["git", "-C", self.root, "add", "auth.lua"], check=True)
+        subprocess.run(["git", "-C", self.root, "add", "-A"], check=True)
         subprocess.run(
             ["git", "-C", self.root, "commit", "-qm", "Commit changed line"], check=True
         )
@@ -2428,11 +2458,86 @@ class EditorUI(unittest.TestCase):
             ["git", "-C", self.root, "rev-parse", "HEAD"], text=True
         ).strip()
         subprocess.run(
-            ["git", "-C", self.root, "commit", "--allow-empty", "-qm", "Advance HEAD"], check=True
+            ["git", "-C", self.root, "commit", "--allow-empty", "-qm", "Advance HEAD"],
+            check=True,
         )
         editor.command(f"Git diff {base} {target}")
         copy_line("old", url + base + "/auth.lua#L5")
         copy_line("new", url + target + "/auth.lua#L5")
+        copy_tree("auth.lua", url + target + "/auth.lua")
+        copy_tree("removed.lua", url + base + "/removed.lua")
+        copy_tree("plan.md", url + target + "/plan.md")
+
+    def test_explorer_copies_file_and_directory_permalinks(self):
+        directory = Path(self.root, "nested #é")
+        directory.mkdir()
+        path = directory / "plan %.md"
+        path.touch()
+        subprocess.run(["git", "-C", self.root, "add", str(directory)], check=True)
+        subprocess.run(
+            ["git", "-C", self.root, "commit", "-qm", "Add tree link fixture"],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                self.root,
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:example/project.git",
+            ],
+            check=True,
+        )
+        head = subprocess.check_output(
+            ["git", "-C", self.root, "rev-parse", "HEAD"], text=True
+        ).strip()
+        scratch = Path(self.root, "scratch")
+        scratch.mkdir()
+        (scratch / "draft.md").write_text("uncommitted\n")
+        editor = self.launch(self.root, file="auth.lua")
+        editor.exec_lua("""
+            vim.g.clipboard = {
+                name = 'test clipboard', cache_enabled = 0,
+                copy = { ['+'] = function(lines) vim.g.copied = lines[1] end },
+                paste = { ['+'] = function() return {{vim.g.copied}, 'v'} end },
+            }
+        """)
+
+        def copy_node(root, node, expected):
+            editor.exec_lua(
+                "require('neo-tree.command').execute({"
+                "action='focus', source='filesystem', position='left', dir=...})",
+                str(root),
+            )
+            self.wait_for(editor, "vim.bo.filetype == 'neo-tree'")
+            window = editor.current.window.handle
+            pump(editor)
+            row = editor.exec_lua(
+                """
+                local tree = require('neo-tree.sources.manager').get_state_for_window(0)
+                for row = 1, vim.api.nvim_buf_line_count(0) do
+                    local node = tree.tree:get_node(row)
+                    if node and node.path == ... then return row end
+                end
+                """,
+                str(node),
+            )
+            self.assertIsNotNone(row, str(node))
+            editor.command("wincmd l")
+            pump(editor)
+            self.assertNotEqual(window, editor.current.window.handle)
+            self.assertEqual(expected, self.copy_permalink(editor, window, row))
+
+        url = "https://github.com/example/project/"
+        copy_node(self.root, directory, url + f"tree/{head}/nested%20%23%C3%A9")
+        copy_node(
+            directory, path, url + f"blob/{head}/nested%20%23%C3%A9/plan%20%25.md"
+        )
+        copy_node(self.root, Path(self.root), url + f"tree/{head}")
+        copy_node(self.root, scratch, "unchanged")
+        self.assertIn("no committed version", editor.vars["startup_notice"])
 
     def test_pr_links_are_clickable_without_opening_remote_browser(self):
         editor = self.launch(self.root, file="auth.lua", columns=72)
@@ -5255,6 +5360,7 @@ func greeting() string {
             menu = editor.funcs.menu_info("PopUp", "n")["submenus"]
             self.assertIn("Inspect", menu)
             self.assertEqual(expected is not None, "Copy Relative Path" in menu)
+            self.assertEqual(expected is not None, "Copy Permalink" in menu)
             if expected is None:
                 return
             editor.api.input_mouse(

@@ -6,14 +6,18 @@ local definition_generation = 0
 local automatic_preview = false
 local last_automatic_position
 local preview_win
-local context_path
+local context_target
 
-local function tree_path(win, row)
+local function tree_target(win, row)
 	local s = review.active()
 	if s and win == s.tree_win then
 		local entry = s.entries[s.rows[row]]
 		if entry then
-			return entry.path, vim.fs.joinpath(s.root, entry.path)
+			return {
+				root = s.root,
+				path = entry.path,
+				head = entry.status == "D" and entry.base or entry.head,
+			}
 		end
 	elseif vim.bo[api.nvim_win_get_buf(win)].filetype == "neo-tree" then
 		local tree = require("neo-tree.sources.manager").get_state_for_window(win)
@@ -21,13 +25,13 @@ local function tree_path(win, row)
 		if node and (node.type == "file" or node.type == "directory" or node.type == "link") then
 			local root, code = git.run(tree.path, { "rev-parse", "--show-toplevel" }, nil, true)
 			root = code == 0 and vim.trim(root) or tree.path
-			return vim.fs.relpath(root, node.path), node.path
+			return { root = root, path = vim.fs.relpath(root, node.path) }
 		end
 	end
 end
 
 function M.context_menu()
-	context_path = nil
+	context_target = nil
 	pcall(vim.cmd, [[nunmenu PopUp.Copy\ Relative\ Path]])
 	pcall(vim.cmd, [[nunmenu PopUp.Copy\ Permalink]])
 	pcall(vim.cmd, [[nunmenu PopUp.gitgud:\ open\ pr]])
@@ -36,10 +40,13 @@ function M.context_menu()
 	if mouse.winid == 0 or mouse.line == 0 then
 		return
 	end
-	context_path = tree_path(mouse.winid, mouse.line)
-	if context_path then
+	context_target = tree_target(mouse.winid, mouse.line)
+	if context_target then
 		vim.cmd(
 			[[nnoremenu <silent> 1.10 PopUp.Copy\ Relative\ Path <Cmd>lua require('rediff.navigation').copy_tree_path()<CR>]]
+		)
+		vim.cmd(
+			[[nnoremenu <silent> 1.20 PopUp.Copy\ Permalink <Cmd>lua require('rediff.navigation').copy_tree_link()<CR>]]
 		)
 		return
 	end
@@ -55,21 +62,29 @@ function M.context_menu()
 end
 
 function M.copy_tree_path()
-	if context_path then
-		vim.fn.setreg("+", context_path, "v")
+	if context_target then
+		vim.fn.setreg("+", context_target.path, "v")
+	end
+end
+
+function M.copy_tree_link()
+	if context_target then
+		local ok, err = pcall(require("gitgud").copy_link, context_target)
+		if not ok then
+			vim.notify(tostring(err), vim.log.levels.ERROR)
+		end
 	end
 end
 
 function M.copy_path(absolute)
 	local win = api.nvim_get_current_win()
-	local relative, full = tree_path(win, api.nvim_win_get_cursor(win)[1])
+	local target = tree_target(win, api.nvim_win_get_cursor(win)[1])
 	local s = review.active()
 	if s and s.current and (win == s.old_win or win == s.new_win) then
-		relative = s.current.path
-		full = vim.fs.joinpath(s.root, relative)
+		target = { root = s.root, path = s.current.path }
 	end
-	local path = absolute and full or relative
-	if path then
+	if target then
+		local path = absolute and vim.fs.normalize(vim.fs.joinpath(target.root, target.path)) or target.path
 		vim.fn.setreg("+", path, "v")
 	end
 end

@@ -31,7 +31,7 @@ REVIEW QUICK REFERENCE
   Space j / Space k   Next/previous changed file
   h / l in tree       Collapse/expand group (also Left/Right); restore selection
   Enter in tree       Expand group only; keep tree focus
-  Right-click path    Menu with Copy Relative Path option (either tree)
+  Right-click path    Copy Relative Path or Copy Permalink (either tree)
   Cmd+C               Copy relative file path (tree or diff, Normal mode)
   Ctrl+Shift+C        Copy full file path (tree or diff, Normal mode)
   gd / Alt+Enter      Peek definition without leaving Review
@@ -97,6 +97,11 @@ Right-click a path in either tree and choose Copy Relative Path from the context
 menu to copy its repository-relative path to the system clipboard. Outside Git,
 paths are relative to the filesystem explorer's root. Opening or dismissing the
 menu does not copy anything; headers and blank rows omit the option.
+
+Choose Copy Permalink to link to the whole file or directory at HEAD. Branch
+reviews use the target commit, or the base commit for deleted files. Paths with
+no committed version report an error and preserve the clipboard. See |rediff-git|
+for permalink remote requirements.
 
 In Normal mode, Cmd+C copies the relative path and Ctrl+Shift+C copies the full
 path from either tree or a Review diff pane. Trees use the selected row; diff

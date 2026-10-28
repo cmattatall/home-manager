@@ -176,8 +176,8 @@ local function label(c)
 	return c.path .. ":" .. c.line .. (c.side and " · " .. c.side .. " snapshot" or "")
 end
 
-function M.copy_link()
-	local c = context()
+function M.copy_link(target)
+	local c = target or context()
 	local remote = git(c.root, { "remote", "get-url", "origin" })
 	assert(remote.code == 0, "Configure a GitHub origin remote to copy a link")
 	local address = vim.trim(remote.stdout):gsub("/$", ""):gsub("%.git$", "")
@@ -185,28 +185,45 @@ function M.copy_link()
 		or address:match("^git@github%.com:([%w_.%-]+/[%w_.%-]+)$")
 		or address:match("^ssh://git@github%.com/([%w_.%-]+/[%w_.%-]+)$")
 	assert(repository, "The origin remote must be a github.com HTTPS or SSH URL")
-	assert(c.head ~= "", "Commit this file before copying a permalink")
-	local committed = git(c.root, { "show", c.head .. ":" .. c.path })
-	assert(committed.code == 0, "This file has no committed version to link to")
-	local text = c.text:gsub("\r\n", "\n")
-	local line = c.line
-	for _, hunk in ipairs(vim.diff(committed.stdout, text, { result_type = "indices" })) do
-		local _, old_count, new_start, new_count = unpack(hunk)
-		if new_count == 0 then
-			if c.line <= new_start then
+
+	local head = c.head or vim.trim(git(c.root, { "rev-parse", "--verify", "HEAD" }).stdout)
+	assert(head ~= "", "Commit this path before copying a permalink")
+	local path = c.path == "." and "" or c.path
+	local kind, fragment = "blob", ""
+	if target then
+		local object = git(c.root, { "cat-file", "-t", head .. ":" .. path })
+		assert(object.code == 0, "This path has no committed version to link to")
+		kind = vim.trim(object.stdout)
+		assert(kind == "blob" or kind == "tree", "Select a committed file or directory")
+	else
+		local committed = git(c.root, { "show", head .. ":" .. path })
+		assert(committed.code == 0, "This file has no committed version to link to")
+		local text = c.text:gsub("\r\n", "\n")
+		local line = c.line
+		for _, hunk in ipairs(vim.diff(committed.stdout, text, { result_type = "indices" })) do
+			local _, old_count, new_start, new_count = unpack(hunk)
+			if new_count == 0 then
+				if c.line <= new_start then
+					break
+				end
+			elseif c.line < new_start then
 				break
+			else
+				assert(c.line >= new_start + new_count, "This line has uncommitted changes and no permalink")
 			end
-		elseif c.line < new_start then
-			break
-		else
-			assert(c.line >= new_start + new_count, "This line has uncommitted changes and no permalink")
+			line = line + old_count - new_count
 		end
-		line = line + old_count - new_count
+		fragment = string.format("#L%d", line)
 	end
-	local path = c.path:gsub("[^%w%-%._~/]", function(character)
+
+	path = path:gsub("[^%w%-%._~/]", function(character)
 		return string.format("%%%02X", character:byte())
 	end)
-	local url = string.format("https://github.com/%s/blob/%s/%s#L%d", repository, c.head, path, line)
+	local url = string.format("https://github.com/%s/%s/%s", repository, kind, head)
+	if path ~= "" then
+		url = url .. "/" .. path
+	end
+	url = url .. fragment
 	vim.fn.setreg("+", url, "v")
 	vim.notify("Permalink copied")
 end

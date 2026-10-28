@@ -74,6 +74,12 @@ context menu to copy its repository-relative path to the system clipboard.
 Outside Git, paths are relative to the filesystem explorer's root. Opening or
 dismissing the menu does not copy anything; headers and blank rows omit the option.
 
+Choose **Copy Permalink** to copy a commit-pinned link to the whole file or
+directory. Links use the github.com `origin` remote and `HEAD`. Branch reviews
+use the target commit, or the base commit for deleted files. A path without a
+committed version reports an error and preserves the clipboard. Push the
+referenced commit before sharing its link.
+
 In Normal mode, **Cmd+C** copies the relative path and **Ctrl+Shift+C** copies the
 full path from either tree or a Review diff pane. Tree shortcuts use the selected
 row; diff shortcuts use the displayed file. Headers and blank tree rows do nothing.
