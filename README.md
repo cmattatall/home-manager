@@ -370,7 +370,7 @@ happen to be present on a development node:
 | JSON, scripts, remote access | Node.js, jq, Python 3, curl, OpenSSH (Linux; macOS uses Apple's SSH) |
 | Cloud and database helpers | AWS CLI v2, PostgreSQL (`psql`; no database service is started) |
 | Builds | CMake, Make, Ninja, Clang/LLVM, Arm bare-metal GCC, Cargo/rustc, pre-commit |
-| Editor and panes | readiff as `rediff`, `nvim`, and `vim`; tmux; Kitty on macOS |
+| Editor and panes | readiff as `rediff`, `nvim`, and `vim`; tmux; Kitty |
 | Development-node helpers | Screen, Vagrant with libvirt support, usbutils, procps |
 
 macOS keeps `/usr/bin/ssh` for `UseKeychain` and Apple Keychain support. Installing
@@ -490,11 +490,14 @@ session. Disconnected/exited SSH panes stay visible; Enter reruns the connection
 There is no automatic reconnect loop. The dashboard has no tmux dependency;
 the separate existing tmux configuration remains available.
 
-On macOS, Home Manager installs Kitty and owns `~/.config/kitty/kitty.conf`.
-After activation, launch its Kitty application from your Home Manager
-applications directory (normally `~/Applications/Home Manager Apps`) or run
-`kitty`. Reload an already-running Kitty with `Cmd+Ctrl+,`.
-`paste_actions no-op` disables Kitty's paste filtering and confirmation warnings.
+Home Manager installs Kitty on macOS and Linux and owns
+`~/.config/kitty/kitty.conf`. After activation, run `kitty` from a graphical
+desktop. On macOS, you can also launch it from your Home Manager applications
+directory (normally `~/Applications/Home Manager Apps`). Reload an already-running
+Kitty with `Ctrl+Shift+F5`, or `Cmd+Ctrl+,` on macOS.
+
+On macOS, `paste_actions no-op` disables Kitty's paste filtering and confirmation
+warnings. The following extra shortcuts are configured on macOS:
 
 | Shortcut | In tmux | Outside tmux in Kitty |
 | --- | --- | --- |
@@ -517,8 +520,8 @@ not update the Mac's keyboard configuration.
 
 In ordinary shell panes, drag with the left mouse button to select text within
 that pane. tmux holds the view still while selecting. Releasing the button copies
-the text through OSC 52 to Kitty's Mac clipboard and returns to the live shell,
-ready for typing or pasting. Paste with Cmd+V.
+the text through OSC 52 to Kitty's system clipboard and returns to the live shell,
+ready for typing or pasting. Paste with Cmd+V on macOS or Ctrl+Shift+V on Linux.
 
 Outside tmux, Kitty also copies mouse selections to the clipboard automatically.
 Applications that capture the mouse retain their own behavior. Shift+drag uses

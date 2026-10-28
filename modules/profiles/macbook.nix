@@ -67,12 +67,10 @@ in
       ];
 
       programs.kitty = {
-        enable = true;
         settings = {
           term = "xterm-256color";
           enabled_layouts = "splits";
           paste_actions = "no-op";
-          copy_on_select = "clipboard";
           # Left Option sends Alt shortcuts; Right Option keeps special characters.
           macos_option_as_alt = "left";
         };

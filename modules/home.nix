@@ -58,5 +58,9 @@
     ++ lib.optionals (!pkgs.stdenv.hostPlatform.isDarwin) [ pkgs.openssh ];
 
     programs.home-manager.enable = true;
+    programs.kitty = {
+      enable = true;
+      settings.copy_on_select = "clipboard";
+    };
   };
 }
