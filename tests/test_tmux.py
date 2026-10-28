@@ -260,14 +260,16 @@ class TmuxPtyTest(unittest.TestCase):
         self.expect_output(
             client, mark, b"\x1b]52;;" + base64.b64encode(expected.encode()) + b"\x07", "clipboard",
         )
-        self.assertEqual("1 1", self.tmux(
-            "display-message", "-p", "-t", left, "#{pane_in_mode} #{selection_present}",
-        ), "Releasing the mouse must keep the selection highlighted")
-        client.send(b"q")
         self.assertEqual("0", poll(
             lambda: self.tmux("display-message", "-p", "-t", left, "#{pane_in_mode}"),
             lambda mode: mode == "0",
-        ), "q returns to the live shell")
+        ), "Releasing the mouse returns to the live shell")
+        client.send(b"printf 'COPY %s\\n' RESUMED\r")
+        output = poll(
+            lambda: self.tmux("capture-pane", "-p", "-t", left),
+            lambda text: "COPY RESUMED" in text,
+        )
+        self.assertIn("COPY RESUMED", output, "Typing after copying reaches the shell")
 
     def test_diff_rgb_colors_reach_outer_terminal(self):
         client = self.attach()

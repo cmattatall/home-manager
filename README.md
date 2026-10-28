@@ -516,12 +516,14 @@ on the Mac and reload Kitty for this mapping; activating only the SSH host does
 not update the Mac's keyboard configuration.
 
 In ordinary shell panes, drag with the left mouse button to select text within
-that pane. Releasing the button copies it through OSC 52 to Kitty's Mac clipboard;
-the highlight stays visible in tmux copy mode. Press q to clear it and return to
-the live shell before typing or pasting. Paste with Cmd+V (no Cmd+C or remote
-clipboard utility is needed). Applications that capture the mouse retain their
-own behavior. Shift+drag uses Kitty's native selection instead, followed by Cmd+C,
-but can span adjacent tmux panes.
+that pane. tmux holds the view still while selecting. Releasing the button copies
+the text through OSC 52 to Kitty's Mac clipboard and returns to the live shell,
+ready for typing or pasting. Paste with Cmd+V.
+
+Outside tmux, Kitty also copies mouse selections to the clipboard automatically.
+Applications that capture the mouse retain their own behavior. Shift+drag uses
+Kitty's native selection and automatic copying instead, but can span adjacent
+tmux panes.
 
 New panes inherit the current pane's directory. tmux's prefix remains Ctrl+B.
 Kitty forwards the keys only while its `in_tmux` user variable is present.

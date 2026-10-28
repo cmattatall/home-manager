@@ -4,9 +4,8 @@
       enable = true;
       mouse = true;
       extraConfig = ''
-        # Copy on mouse release without clearing the visible selection.
-        bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-no-clear
-        bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-no-clear
+        bind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel
+        bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel
 
         bind-key -n C-S-Enter split-window -h -c '#{pane_current_path}'
         bind-key -n C-M-S-Enter split-window -v -c '#{pane_current_path}'
