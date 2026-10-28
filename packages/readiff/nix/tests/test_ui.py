@@ -227,6 +227,10 @@ class EditorUI(unittest.TestCase):
             ),
         )
         self.assertIn("BRANCH DIFF", self.lua(editor, "return r.statusline()"))
+        self.assertEqual(
+            " Total  +4  −4",
+            self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_buf, 1, 2, false)[1]"),
+        )
         for layout in ("merged", "split"):
             self.keys(editor, f":View {layout}<CR>")
             self.assertTrue(
@@ -347,6 +351,60 @@ class EditorUI(unittest.TestCase):
         self.assertEqual(index, git("write-tree"))
         self.assertEqual(status, git("status", "--porcelain"))
         self.assertEqual("worktree only\n", Path(self.root, "auth.lua").read_text())
+
+    def test_review_totals_include_all_git_groups_and_survive_filtering(self):
+        Path(self.root, "staged.bin").write_bytes(b"\0binary\n")
+        subprocess.run(
+            ["git", "-C", self.root, "add", "auth.lua", "staged.bin"], check=True
+        )
+        auth = Path(self.root, "auth.lua")
+        auth.write_text(auth.read_text().replace("M.timeout = 30", "M.timeout = 60"))
+        Path(self.root, "odd\tname\n.txt").write_text("one\ntwo\nthree")
+        Path(self.root, "empty.txt").touch()
+        Path(self.root, "untracked.bin").write_bytes(b"\0binary\n")
+        editor = self.launch(self.root)
+
+        def assert_totals(added, deleted):
+            self.assertEqual(
+                f" Total  +{added}  −{deleted}",
+                self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_buf, 1, 2, false)[1]"),
+            )
+
+        assert_totals(8, 5)
+        for reload_theme in (False, True):
+            if reload_theme:
+                editor.command("colorscheme rose-pine")
+            editor.command("redraw!")
+            for text, color in (("+8", 0x4ADE80), ("−5", 0xF87171)):
+                cell = editor.exec_lua(
+                    """
+                    local s = require('rediff.review').state
+                    local line = vim.api.nvim_buf_get_lines(s.tree_buf, 1, 2, false)[1]
+                    local column = line:find(..., 1, true)
+                    local position = vim.fn.screenpos(s.tree_win, 2, column)
+                    return vim.api.nvim__inspect_cell(1, position.row - 1, position.col - 1)
+                    """,
+                    text,
+                )
+                self.assertEqual(text[0], cell[0])
+                self.assertEqual(color, cell[1]["foreground"])
+                self.assertTrue(cell[1]["bold"])
+
+        self.keys(editor, "/auth<CR>")
+        assert_totals(8, 5)
+        Path(self.root, "plan.md").write_text("first\nsecond\nthird\nfourth\n")
+        self.wait_for(
+            editor,
+            "vim.api.nvim_buf_get_lines(s.tree_buf, 1, 2, false)[1] == ' Total  +10  −5'",
+        )
+        self.keys(editor, "/<C-u>no-matching-path<CR>")
+        self.assertEqual(0, self.lua(editor, "return #s.entries"))
+        assert_totals(10, 5)
+        subprocess.run(["git", "-C", self.root, "add", "-A"], check=True)
+        self.keys(editor, "<Esc> R")
+        assert_totals(10, 5)
+        self.keys(editor, ":View merged<CR>")
+        assert_totals(10, 5)
 
     def test_tree_path_filter_is_local_and_survives_refresh_and_staging(self):
         Path(self.root, "src").mkdir()
@@ -8883,6 +8941,10 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         editor = self.launch(str(root))
         self.assertTrue(
             self.lua(editor, "return r.active() ~= nil and #s.entries == 0")
+        )
+        self.assertEqual(
+            " Total  +0  −0",
+            self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_buf, 1, 2, false)[1]"),
         )
         self.keys(editor, ":fs<CR>")
         self.assertEqual(

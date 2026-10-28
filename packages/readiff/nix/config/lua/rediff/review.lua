@@ -713,6 +713,7 @@ local function read_changes(s, preferred, cached_entries)
 	return {
 		all_entries = all_entries,
 		entries = entries,
+		line_totals = cached_entries and s.line_totals or git.line_totals(s.root, all_entries, s.comparison),
 		reference = reference,
 		index = index,
 		snapshot = ok and snapshot or nil,
@@ -732,18 +733,22 @@ function M.refresh(preferred, changes)
 	s.annotation_id = nil
 	s.entries, s.reference = changes.entries, changes.reference
 	s.all_entries = changes.all_entries
+	s.line_totals = changes.line_totals
+	local additions = "+" .. s.line_totals.added
+	local deletions = "−" .. s.line_totals.deleted
 	local lines = {
 		s.comparison and " BRANCH DIFF · Commits" or " REVIEW · Git changes",
+		" Total  " .. additions .. "  " .. deletions,
 	}
 	if s.file_filter and s.file_filter ~= "" then
 		vim.wo[s.tree_win].winbar = " / %<"
 			.. vim.fn.strtrans(s.file_filter):gsub("%%", "%%%%")
 			.. string.format(" %%=%d/%d ", #s.entries, #s.all_entries)
-		lines[2] = string.format(" %d of %d changes", #s.entries, #s.all_entries)
-		lines[3] = " / edit · Esc clear"
+		lines[3] = string.format(" %d of %d changes", #s.entries, #s.all_entries)
+		lines[4] = " / edit · Esc clear"
 	else
 		vim.wo[s.tree_win].winbar = " / Filter paths…"
-		lines[2] = string.format(" %d changes", #s.all_entries)
+		lines[3] = string.format(" %d changes", #s.all_entries)
 	end
 	local rows = {}
 	s.group_rows = {}
@@ -772,6 +777,18 @@ function M.refresh(preferred, changes)
 	api.nvim_buf_clear_namespace(s.tree_buf, tree_ns, 0, -1)
 	api.nvim_buf_clear_namespace(s.tree_buf, filter_ns, 0, -1)
 	api.nvim_buf_clear_namespace(s.tree_buf, active_ns, 0, -1)
+	for id, chunk in ipairs({
+		{ "Total", "ReviewTotal" },
+		{ additions, "ReviewAdded" },
+		{ deletions, "ReviewDeleted" },
+	}) do
+		local first, last = lines[2]:find(chunk[1], 1, true)
+		api.nvim_buf_set_extmark(s.tree_buf, tree_ns, 1, first - 1, {
+			id = id,
+			end_col = last,
+			hl_group = chunk[2],
+		})
+	end
 	for row, index in pairs(rows) do
 		local entry = s.entries[index]
 		local highlight = status_highlights[entry.status]
@@ -2151,6 +2168,7 @@ function M.setup()
 	local function review_highlights()
 		api.nvim_set_hl(0, "RediffMode", { fg = palette.base, bg = palette.foam, bold = true })
 		api.nvim_set_hl(0, "ReviewFilterMatch", { fg = palette.gold, bold = true })
+		api.nvim_set_hl(0, "ReviewTotal", { fg = palette.text, bold = true })
 		api.nvim_set_hl(0, "ReviewAdded", { fg = "#4ade80", bold = true })
 		api.nvim_set_hl(0, "ReviewModified", { fg = "#facc15", bold = true })
 		api.nvim_set_hl(0, "ReviewUntracked", { fg = "#4ade80", bold = true })

@@ -180,6 +180,7 @@ local function test()
 	equal(true, vim.list_contains(sidebar(), " U plan.md"), "Untracked files have a U badge")
 	equal({
 		" REVIEW · Git changes",
+		" Total  +4  −4",
 		" 3 changes",
 		" ▾ STAGED (0)",
 		"   (none)",
@@ -197,6 +198,9 @@ local function test()
 		-1,
 		{ details = true }
 	)
+	headers = vim.tbl_filter(function(mark)
+		return mark[4].line_hl_group ~= nil
+	end, headers)
 	equal("ReviewStaged", headers[1][4].line_hl_group, "Staged header has its own full-row color")
 	equal("ReviewUnstaged", headers[2][4].line_hl_group, "Unstaged header has a distinct full-row color")
 	equal(5, vim.api.nvim_win_get_cursor(s.new_win)[1], "Opening a file targets its first hunk")

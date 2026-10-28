@@ -82,6 +82,41 @@ function M.entries(root, comparison)
 	return result
 end
 
+function M.line_totals(root, entries, comparison)
+	local totals = { added = 0, deleted = 0 }
+	local function add_diff(revisions, untracked_path)
+		local args = { "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--numstat" }
+		if untracked_path then
+			vim.list_extend(args, { "--no-index", "--", "/dev/null", root .. "/" .. untracked_path })
+		else
+			vim.list_extend(args, revisions)
+			table.insert(args, "--")
+		end
+		local output, code = M.run(root, args, nil, untracked_path ~= nil)
+		assert(code == 0 or code == 1, "Cannot count changed lines: " .. (untracked_path or root))
+		for line in output:gmatch("[^\n]+") do
+			local added, deleted = line:match("^(%d+)\t(%d+)\t")
+			if added then
+				totals.added = totals.added + tonumber(added)
+				totals.deleted = totals.deleted + tonumber(deleted)
+			end
+		end
+	end
+
+	if comparison then
+		add_diff({ comparison.base, comparison.head })
+	else
+		add_diff({ "--cached" })
+		add_diff({})
+		for _, entry in ipairs(entries) do
+			if entry.group == "untracked" then
+				add_diff({}, entry.path)
+			end
+		end
+	end
+	return totals
+end
+
 local function blob(root, revision, path)
 	local text, code = M.run(root, { "show", revision .. ":" .. path }, nil, true)
 	if code ~= 0 then

@@ -252,6 +252,11 @@ and collapsed or empty group headers, skipping blank rows. The selected header
 is highlighted. Refresh preserves collapsed groups;
 :fs/:fu and hunk navigation reveal their target file.
 
+The Total row shows added lines in green and deleted lines in red, summed across
+both Git groups including untracked text files. Binary files contribute zero
+lines. In branch mode it counts the selected commit comparison. Totals cover
+the whole review even when paths are filtered, and update on refresh.
+
 In the file tree, / focuses the inline Filter paths… field. Matching updates as
 you type, using case-insensitive fuzzy matching against repository-relative paths.
 For example, nx/tui matches nix/tests/test_ui.py. Matching characters are
