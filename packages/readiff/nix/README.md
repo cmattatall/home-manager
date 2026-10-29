@@ -63,11 +63,10 @@ to staged/unstaged worktree changes, preserving notes and their original snapsho
 Typed **`:gd BASE TARGET`** is a shortcut for `:git diff`, both inside and outside
 Review. Normal-mode `gd` is unchanged. Scripts should use `:Git diff` directly.
 
-**`:git base BASE`** changes only the base, keeping the current comparison's
-target SHA pinned. If no commit comparison is open, it compares BASE against
-the current `HEAD`. It does not check out commits or change local files/index.
-Scripts can use `:Git base BASE`. Tab completes `base` and `diff`; other Git
-subcommands are not supported.
+**`:git base BASE`** compares a commit against saved working-tree files, including
+staged, unstaged, and untracked changes. **`:git base HEAD`** shows local changes
+against HEAD. Save editor buffers to include their edits. Scripts use
+`:Git base BASE`.
 
 **Right-click a path** in either tree and choose **Copy Relative Path** from the
 context menu to copy its repository-relative path to the system clipboard.

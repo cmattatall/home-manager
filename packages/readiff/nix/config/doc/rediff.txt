@@ -87,10 +87,21 @@ Split/merged views, file/hunk navigation, filtering, and annotations work as in
 Review. Staging, reverting, and :fs/:fu are unavailable here. :Review returns to
 worktree changes; Space q leaves for editing. Notes retain their commit snapshots.
 
-:git base BASE changes only the base of the current comparison, preserving its
-pinned target SHA. Without a commit comparison, it compares BASE against the
-current HEAD. For example: :git base HEAD~3. It never checks out a commit or
-changes local files/index. Scripts should use :Git base BASE.
+BASE DIFF MODE
+
+:git base BASE compares a commit against the saved working tree, including
+staged, unstaged, and untracked changes in one WORKTREE group. For example,
+:git base HEAD~1 includes the last commit and your local changes. :git base HEAD
+shows local changes against HEAD. Save editor buffers to include their edits.
+Scripts use :Git base BASE.
+
+The base is pinned to its resolved SHA. Live refresh and Space R update the
+working-tree side. Repeating :git base BASE resolves the base again and refreshes.
+Split/merged views, navigation, filtering, and annotations work as in Review.
+Use :Review for separate staged/unstaged groups, staging, and reverting.
+
+Both comparison commands preserve your checked-out branch, HEAD, index, and
+working files. You can change comparisons while local edits are present.
 
 Right-click a path in either tree and choose Copy Relative Path from the context
 menu to copy its repository-relative path to the system clipboard. Outside Git,
@@ -246,7 +257,7 @@ is highlighted. Refresh preserves collapsed groups;
 
 The Total row shows added lines in green and deleted lines in red, summed across
 both Git groups including untracked text files. Binary files contribute zero
-lines. In branch mode it counts the selected commit comparison. Totals cover
+lines. In base/branch mode it counts the selected comparison. Totals cover
 the whole review even when paths are filtered, and update on refresh.
 
 The brown/gold header above the diff shows the current file's path, full
@@ -552,6 +563,9 @@ In the list:
 branch/path is supplied. Enter switches or confirms deletion; j/k, R and q/Esc
 select, refresh and close. These pickers have no create/delete management shortcuts.
 
+Switching worktrees requires the destination to have a checked-out branch.
+For a detached checkout, run git switch -c BRANCH in that directory first.
+
 :harness use amp|omp|claude selects the launch type for this worktree.
 
 :worktree new [branch [path]] creates from current HEAD and starts that harness in
@@ -702,7 +716,7 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
 
   :Review / :ReviewLeave       Enter worktree Review / leave Review
   :Git diff BASE TARGET       Compare two commits (SHAs, branches, or tags)
-  :Git base BASE              Change base, retaining target (defaults to HEAD)
+  :Git base BASE              Compare a commit against the saved working tree
   :Explorer / :FocusDiff       Focus tree / diff or editor
   :Files / :Search             Fuzzy file / text search
   :Symbols / :WorkspaceSymbols Telescope file / workspace symbol search

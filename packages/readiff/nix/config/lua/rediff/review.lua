@@ -139,10 +139,14 @@ local function entry_key(entry)
 	return entry.group
 		.. "\0"
 		.. entry.path
-		.. (entry.group == "branch" and ("\0" .. entry.base .. "\0" .. entry.head) or "")
+		.. (entry.base and ("\0" .. entry.base) or "")
+		.. (entry.group == "branch" and ("\0" .. entry.head) or "")
 end
 
 local function tree_group(entry)
+	if entry.base and entry.group == "untracked" then
+		return "worktree"
+	end
 	return entry.group == "untracked" and "unstaged" or entry.group
 end
 
@@ -591,12 +595,19 @@ function M.show(index, snapshot, keep_fold)
 		s.diff = assert(require("codediff.core.diff").compute_diff(old_lines, new_lines, renderer.diff_options()))
 		require("codediff.ui.inline").render_inline_diff(s.new_buf, s.diff, old_lines, new_lines, { filetype = ft })
 	else
-		vim.wo[s.old_win].winbar = " OLD · "
-			.. (snapshot.base and snapshot.base:sub(1, 12) or (buffer_snapshot and "BUFFER" or (snapshot.group == "staged" and "HEAD" or "INDEX")))
-			.. " "
-		vim.wo[s.new_win].winbar = " NEW · "
-			.. (snapshot.base and snapshot.head:sub(1, 12) or (buffer_snapshot and "BUFFER" or (snapshot.group == "staged" and "INDEX" or "WORKTREE")))
-			.. " "
+		local old_label, new_label = "INDEX", "WORKTREE"
+		if snapshot.base then
+			old_label = snapshot.base:sub(1, 12)
+			if snapshot.group == "branch" then
+				new_label = snapshot.head:sub(1, 12)
+			end
+		elseif buffer_snapshot then
+			old_label, new_label = "BUFFER", "BUFFER"
+		elseif snapshot.group == "staged" then
+			old_label, new_label = "HEAD", "INDEX"
+		end
+		vim.wo[s.old_win].winbar = " OLD · " .. old_label .. " "
+		vim.wo[s.new_win].winbar = " NEW · " .. new_label .. " "
 		s.diff = renderer.compute_and_render(
 			s.old_buf,
 			s.new_buf,
@@ -673,9 +684,15 @@ local function filter_positions(path, query)
 end
 
 local function read_changes(s, preferred, cached_entries)
-	local reference = cached_entries and s.reference
-		or (s.comparison and (s.comparison.base:sub(1, 12) .. " → " .. s.comparison.head:sub(1, 12)))
-		or git.reference(s.root)
+	local reference
+	if cached_entries then
+		reference = s.reference
+	elseif s.comparison then
+		local target = s.comparison.head and s.comparison.head:sub(1, 12) or "WORKTREE"
+		reference = s.comparison.base:sub(1, 12) .. " → " .. target
+	else
+		reference = git.reference(s.root)
+	end
 	local all_entries = cached_entries or git.entries(s.root, s.comparison)
 	local entries = vim.list_slice(all_entries)
 	if s.file_filter and s.file_filter ~= "" then
@@ -735,8 +752,12 @@ function M.refresh(preferred, changes)
 	s.line_totals = changes.line_totals
 	local additions = "+" .. s.line_totals.added
 	local deletions = "−" .. s.line_totals.deleted
+	local title = " REVIEW · Git changes"
+	if s.comparison then
+		title = s.comparison.head and " BRANCH DIFF · Commits" or " BASE DIFF · Working tree"
+	end
 	local lines = {
-		s.comparison and " BRANCH DIFF · Commits" or " REVIEW · Git changes",
+		title,
 		" Total  " .. additions .. "  " .. deletions,
 	}
 	if s.file_filter and s.file_filter ~= "" then
@@ -851,7 +872,8 @@ function M.refresh(preferred, changes)
 				vim.wo[s.old_win].winbar = ""
 			end
 		elseif s.comparison then
-			vim.wo[s.new_win].winbar = " No differences between commits "
+			vim.wo[s.new_win].winbar = s.comparison.head and " No differences between commits "
+				or " No working-tree differences from base "
 			if s.old_win then
 				vim.wo[s.old_win].winbar = ""
 			end
@@ -997,7 +1019,7 @@ end
 function M.tree_fold(collapsed)
 	local s = state()
 	local row = api.nvim_win_get_cursor(s.tree_win)[1]
-	local group = s.comparison and "branch" or (row >= s.group_rows.unstaged and "unstaged" or "staged")
+	local group = s.comparison and s.groups[1] or (row >= s.group_rows.unstaged and "unstaged" or "staged")
 	if (s.collapsed[group] == true) == collapsed then
 		return
 	end
@@ -1104,7 +1126,7 @@ end
 
 function M.focus(group)
 	local s = assert(M.active(), "Enter Review first")
-	assert(not s.comparison, "Staged/unstaged groups are unavailable in branch diff mode; use :Review")
+	assert(not s.comparison, "Staged/unstaged groups are unavailable in base/commit comparisons; use :Review")
 	assert(group == "staged" or group == "unstaged", "Usage: focus staged|unstaged")
 	local win = api.nvim_get_current_win()
 	for i, entry in ipairs(s.entries) do
@@ -1270,7 +1292,7 @@ end
 
 function M.stage(whole_file, unstage)
 	local s = assert(M.active(), "Enter Review first")
-	assert(not s.comparison, "Staging is unavailable in branch diff mode; use :Review for worktree changes")
+	assert(not s.comparison, "Staging is unavailable in base/commit comparisons; use :Review for staging")
 	assert(not s.annotation_id, "Press Space R to return to current files before staging")
 	local win = api.nvim_get_current_win()
 	local snapshot, side, line = s.current, "new", 1
@@ -1330,7 +1352,7 @@ end
 
 function M.revert(first, last)
 	local s = assert(M.active(), "Enter Review first")
-	assert(not s.comparison, "Reverting is unavailable in branch diff mode; use :Review for worktree changes")
+	assert(not s.comparison, "Reverting is unavailable in base/commit comparisons; use :Review for reverting")
 	assert(not s.annotation_id, "Press Space R to return to current files before reverting")
 	assert(not s.composer, "Close the annotation before reverting")
 	local side = side_at_cursor()
@@ -1989,6 +2011,9 @@ function M.open(root, comparison)
 		assert(root == M.state.root, "Leave the other repository's Review first")
 		if vim.deep_equal(comparison, M.state.comparison) then
 			api.nvim_set_current_tabpage(M.state.tab)
+			if comparison and not comparison.head then
+				M.refresh(M.state.current)
+			end
 			return
 		end
 	end
@@ -2012,7 +2037,7 @@ function M.open(root, comparison)
 	local s = {
 		root = root,
 		comparison = comparison,
-		groups = comparison and { "branch" } or { "staged", "unstaged" },
+		groups = comparison and { comparison.head and "branch" or "worktree" } or { "staged", "unstaged" },
 		directory = directory,
 		comments = pending.comments or {},
 		drafts = pending.drafts or {},
@@ -2129,7 +2154,11 @@ function M.statusline()
 	if s then
 		local file = s.current and vim.fn.strtrans(s.current.path):gsub("%%", "%%%%")
 			or (#s.entries > 0 and "No file selected" or "No changes")
-		return (s.comparison and "%#RediffMode# BRANCH DIFF %*· " or "%#RediffMode# REVIEW %*· ")
+		local mode = "REVIEW"
+		if s.comparison then
+			mode = s.comparison.head and "BRANCH DIFF" or "BASE DIFF"
+		end
+		return "%#RediffMode# " .. mode .. " %*· "
 			.. vim.fn.strtrans(s.reference or ""):gsub("%%", "%%%%")
 			.. " · "
 			.. directory

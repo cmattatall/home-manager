@@ -25,6 +25,25 @@ def pump(editor):
     timer.join()
 
 
+def checkout_state(root):
+    def git(*args):
+        return subprocess.check_output(["git", "-C", root, *args])
+
+    paths = git("ls-files", "--cached", "--others", "--exclude-standard", "-z")
+    files = {}
+    for name in paths.decode().split("\0"):
+        if name:
+            path = Path(root, name)
+            files[name] = path.read_bytes() if path.exists() else None
+
+    return {
+        "branch": git("symbolic-ref", "HEAD"),
+        "head": git("rev-parse", "HEAD"),
+        "index": git("write-tree"),
+        "files": files,
+    }
+
+
 class EditorUI(unittest.TestCase):
     def setUp(self):
         # Match Git/Neovim's canonical paths (macOS /var -> /private/var).
@@ -167,6 +186,165 @@ class EditorUI(unittest.TestCase):
         self.assertEqual("verbose", editor.funcs.getcmdline())
         self.keys(editor, "<C-c>")
 
+    def test_base_compares_commits_to_live_worktree_including_staged_and_untracked(self):
+        def git(*args):
+            return subprocess.check_output(
+                ["git", "-C", self.root, *args], text=True
+            ).strip()
+
+        files = {
+            "committed.txt": "previous\n",
+            "staged.txt": "original\n",
+            "mixed.txt": "one\ntwo\nthree\n",
+            "removed.txt": "gone\n",
+            "untracked-existing.txt": "same\nold\n",
+        }
+        for name, text in files.items():
+            Path(self.root, name).write_text(text)
+        git("add", "-A")
+        git("commit", "-qm", "Base fixture")
+        base = git("rev-parse", "HEAD")
+        Path(self.root, "committed.txt").write_text("committed\n")
+        git("add", "committed.txt")
+        git("commit", "-qm", "Committed change")
+        head = git("rev-parse", "HEAD")
+        Path(self.root, "staged.txt").write_text("staged\n")
+        mixed = Path(self.root, "mixed.txt")
+        mixed.write_text("one\nindex\nthree\n")
+        git("add", "staged.txt", "mixed.txt")
+        mixed.write_text("one\nchanged\nthree\nextra\n")
+        Path(self.root, "removed.txt").unlink()
+        git("rm", "--cached", "untracked-existing.txt")
+        untracked_existing = Path(self.root, "untracked-existing.txt")
+        untracked_existing.write_text("same\nnew\nextra\n")
+        untracked = Path(self.root, ":(glob)untracked.txt")
+        untracked.write_text("new\nanother\n")
+        Path(self.root, "binary.dat").write_bytes(b"\x00\x01")
+        index, status = git("write-tree"), git("status", "--porcelain")
+        original_checkout = checkout_state(self.root)
+        editor = self.launch(self.root)
+
+        def entries():
+            return self.lua(
+                editor,
+                """
+                    local paths = {}
+                    for _, entry in ipairs(s.entries) do
+                        paths[entry.path] = entry.status
+                    end
+                    return paths
+                """,
+            )
+
+        def select(name):
+            editor.exec_lua(STATE + """
+                for i,entry in ipairs(s.entries) do
+                    if entry.path == ... then
+                        r.show(i)
+                        vim.api.nvim_set_current_win(s.new_win)
+                        return
+                    end
+                end
+                error('Missing file')
+            """, name)
+
+        expected = {
+            "committed.txt": "M",
+            "staged.txt": "M",
+            "mixed.txt": "M",
+            "removed.txt": "D",
+            ":(glob)untracked.txt": "U",
+            "binary.dat": "U",
+            "untracked-existing.txt": "U",
+        }
+        self.keys(editor, ":git b<Tab>")
+        self.assertEqual("Git base", editor.funcs.getcmdline())
+        self.keys(editor, " HEAD~1<CR>")
+        self.assertEqual(expected, entries())
+        self.assertEqual(original_checkout, checkout_state(self.root))
+        self.assertEqual(
+            {"added": 8, "deleted": 5}, self.lua(editor, "return s.line_totals")
+        )
+        self.assertEqual(
+            [base, True, True],
+            self.lua(editor, """
+                return {s.comparison.base, s.comparison.head == nil, s.live_refresh == true}
+            """),
+        )
+        self.assertIn("BASE DIFF", self.lua(editor, "return r.statusline()"))
+        self.assertIn("WORKTREE", self.lua(editor, "return s.reference"))
+        select("mixed.txt")
+        self.assertEqual(
+            [files["mixed.txt"], mixed.read_text()],
+            self.lua(editor, "return {s.current.old, s.current.new}"),
+        )
+        for layout in ("merged", "split"):
+            self.keys(editor, f":View {layout}<CR>")
+            self.assertTrue(self.lua(editor, "return #s.diff.changes > 0"))
+            summary = self.lua(
+                editor, "return vim.api.nvim_buf_get_lines(s.summary_buf, 0, 1, false)[1]"
+            )
+            self.assertIn("mixed.txt", summary)
+        self.assertEqual(
+            " NEW · WORKTREE ", self.lua(editor, "return vim.wo[s.new_win].winbar")
+        )
+        self.assertIn(base[:12], self.lua(editor, "return vim.wo[s.old_win].winbar"))
+        self.keys(editor, ":ReviewStage file<CR>")
+        self.assertIn("Staging is unavailable", editor.vars["startup_notice"])
+        self.keys(editor, ":ReviewRevert<CR>")
+        self.assertIn("Reverting is unavailable", editor.vars["startup_notice"])
+        self.assertEqual(index, git("write-tree"))
+        self.assertEqual(status, git("status", "--porcelain"))
+
+        self.keys(editor, ":git base HEAD<CR>")
+        del expected["committed.txt"]
+        self.assertEqual(expected, entries())
+        self.assertEqual(original_checkout, checkout_state(self.root))
+        self.assertEqual(
+            {"added": 7, "deleted": 4}, self.lua(editor, "return s.line_totals")
+        )
+        self.assertEqual(head, self.lua(editor, "return s.comparison.base"))
+        select("staged.txt")
+        self.assertEqual(
+            ["original\n", "staged\n"],
+            self.lua(editor, "return {s.current.old, s.current.new}"),
+        )
+        select(untracked_existing.name)
+        self.assertEqual(
+            [files[untracked_existing.name], untracked_existing.read_text()],
+            self.lua(editor, "return {s.current.old, s.current.new}"),
+        )
+        select(untracked.name)
+        self.assertEqual(
+            ["", untracked.read_text()],
+            self.lua(editor, "return {s.current.old, s.current.new}"),
+        )
+        self.assertTrue(self.lua(
+            editor, "return pcall(require('rediff.git').validate, s.root, s.current)"
+        ))
+
+        untracked.write_text("new\nanother\nlive update\n")
+        self.wait_for(editor, "s.current.new == 'new\\nanother\\nlive update\\n'")
+        self.assertEqual(
+            {"added": 8, "deleted": 4}, self.lua(editor, "return s.line_totals")
+        )
+        self.lua(editor, "require('rediff.live').stop(s)")
+        untracked.write_text("new\nanother\nmanual update\n")
+        updated_checkout = checkout_state(self.root)
+        self.keys(editor, ":git base HEAD<CR>")
+        self.assertEqual(untracked.read_text(), self.lua(editor, "return s.current.new"))
+        self.assertEqual(updated_checkout, checkout_state(self.root))
+
+        self.keys(editor, f":git diff {base} {head}<CR>")
+        self.assertEqual({"committed.txt": "M"}, entries())
+        self.assertEqual(updated_checkout, checkout_state(self.root))
+        self.keys(editor, ":git base HEAD<CR>")
+        self.assertEqual(expected, entries())
+        self.assertEqual(updated_checkout, checkout_state(self.root))
+        self.keys(editor, ":Review<CR>")
+        self.assertTrue(self.lua(editor, "return s.comparison == nil"))
+        self.assertEqual(updated_checkout, checkout_state(self.root))
+
     def test_branch_diff_pins_two_commits_without_touching_worktree(self):
         def git(*args):
             return (
@@ -192,10 +370,8 @@ class EditorUI(unittest.TestCase):
         Path(self.root, "auth.lua").write_text("worktree only\n")
         Path(self.root, "untracked.txt").write_text("not part of comparison\n")
         index, status = git("write-tree"), git("status", "--porcelain")
+        original_checkout = checkout_state(self.root)
         editor = self.launch(self.root)
-        self.keys(editor, ":git b<Tab>")
-        self.assertEqual("Git base", editor.funcs.getcmdline())
-        self.keys(editor, f" {base[:12]}<CR>")
 
         def select_auth():
             self.lua(
@@ -203,14 +379,10 @@ class EditorUI(unittest.TestCase):
                 "for i,e in ipairs(s.entries) do if e.path=='auth.lua' then r.show(i) end end",
             )
 
-        select_auth()
-        self.assertEqual(
-            [base, git("rev-parse", "HEAD"), "unrelated HEAD\n"],
-            self.lua(editor, "return {s.current.base, s.current.head, s.current.new}"),
-        )
         self.keys(editor, ":ReviewLeave<CR>:git d<Tab>")
         self.assertEqual("Git diff", editor.funcs.getcmdline())
         self.keys(editor, f" {base[:12]} review-target<CR>")
+        self.assertEqual(original_checkout, checkout_state(self.root))
         self.assertEqual(
             {":(glob)plan.md": "A", "auth.lua": "M", "removed.lua": "D"},
             self.lua(
@@ -268,16 +440,17 @@ class EditorUI(unittest.TestCase):
         git("branch", "-f", "review-target", "HEAD")
         self.keys(editor, " R")
         self.assertEqual(snapshot, self.lua(editor, "return s.current.id"))
-        # Changing the base must not resolve the moved target branch again.
-        self.keys(editor, f":git base {target}<CR>")
+        self.keys(editor, f":git diff {target} {target}<CR>")
+        self.assertEqual(original_checkout, checkout_state(self.root))
         self.assertEqual(
             [target, target, 0],
             self.lua(
                 editor, "return {s.comparison.base, s.comparison.head, #s.entries}"
             ),
         )
-        editor.command(f"Git base {base}")
+        editor.command(f"Git diff {base} {target}")
         select_auth()
+        self.assertEqual(original_checkout, checkout_state(self.root))
         self.assertEqual(snapshot, self.lua(editor, "return s.current.id"))
         self.assertEqual(1, self.lua(editor, "return #s.comments"))
         for args in (
@@ -306,6 +479,7 @@ class EditorUI(unittest.TestCase):
             self.assertEqual(snapshot, self.lua(editor, "return s.current.id"))
         # Reverse order reverses additions/deletions, independently of HEAD.
         self.keys(editor, f":gd {target} {base}<CR>")
+        self.assertEqual(original_checkout, checkout_state(self.root))
         self.assertEqual(
             {":(glob)plan.md": "D", "auth.lua": "M", "removed.lua": "A"},
             self.lua(
@@ -350,7 +524,7 @@ class EditorUI(unittest.TestCase):
         )
         self.assertEqual(index, git("write-tree"))
         self.assertEqual(status, git("status", "--porcelain"))
-        self.assertEqual("worktree only\n", Path(self.root, "auth.lua").read_text())
+        self.assertEqual(original_checkout, checkout_state(self.root))
 
     def test_review_totals_include_all_git_groups_and_survive_filtering(self):
         Path(self.root, "staged.bin").write_bytes(b"\0binary\n")
@@ -7984,6 +8158,42 @@ func greeting() string {
         path.write_text(path.read_text().replace("return 987", "return 654"))
         self.wait_for(editor, 's.current.new:find("return 654", 1, true) ~= nil')
 
+    def test_worktree_switch_rejects_detached_head_and_preserves_review(self):
+        detached = Path(self.directory.name, "detached")
+        subprocess.run(
+            ["git", "-C", self.root, "worktree", "add", "--detach", str(detached), "HEAD"],
+            check=True,
+            capture_output=True,
+        )
+        original_checkout = checkout_state(self.root)
+        editor = self.launch(self.root)
+        self.keys(editor, "<Tab>5GiKeep this annotation<Esc>:w<CR>")
+        review_state = """
+            return {s.root, s.tab, s.current.id, s.comments, s.harness, vim.fn.getcwd()}
+        """
+        original_review = self.lua(editor, review_state)
+
+        for command in (
+            f":worktree switch {detached}<CR>",
+            ":worktree list<CR>j<CR>",
+        ):
+            self.keys(editor, command)
+            self.assertEqual(self.root, self.lua(editor, "return s.root"))
+            self.assertIn("Detached HEAD", editor.vars["startup_notice"])
+            self.assertEqual(original_review, self.lua(editor, review_state))
+            self.assertEqual(original_checkout, checkout_state(self.root))
+
+        subprocess.run(
+            ["git", "-C", str(detached), "switch", "-c", "attached-topic"],
+            check=True,
+            capture_output=True,
+        )
+        self.keys(editor, ":worktree switch attached-topic<CR>")
+        self.assertEqual(str(detached), self.lua(editor, "return s.root"))
+        self.keys(editor, ":worktree switch main<CR>")
+        self.assertEqual("Keep this annotation", self.lua(editor, "return s.comments[1].text"))
+        self.assertEqual(original_checkout, checkout_state(self.root))
+
     def test_worktrees_and_selected_harness(self):
         binary = Path(self.directory.name, "bin")
         binary.mkdir()
@@ -8019,6 +8229,7 @@ func greeting() string {
         self.keys(editor, "iParent note<Esc>:w<CR>")
         self.keys(editor, ":worktree new topic<CR>")
         target = str(Path(self.root + "-topic").resolve())
+        self.assertEqual(b"refs/heads/topic\n", checkout_state(target)["branch"])
         self.wait_for(editor, "vim.fn.filereadable(vim.env.HARNESS_TEST_LOG) == 1")
         self.assertEqual(
             [str(binary / "amp"), target, "0"], marker.read_text().splitlines()

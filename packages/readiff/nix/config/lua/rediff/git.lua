@@ -26,33 +26,58 @@ local function paths(root, args)
 	return vim.split(M.run(root, args), "\0", { plain = true, trimempty = true })
 end
 
+local function blob(root, revision, path)
+	local text, code = M.run(root, { "show", revision .. ":" .. path }, nil, true)
+	if code ~= 0 then
+		return ""
+	end
+	return text
+end
+
 function M.comparison(root, base, head)
 	local function resolve(ref)
 		return vim.trim(M.run(root, { "rev-parse", "--verify", "--end-of-options", ref .. "^{commit}" }))
 	end
-	return { base = resolve(base), head = resolve(head) }
+	return { base = resolve(base), head = head and resolve(head) }
 end
 
 function M.entries(root, comparison)
+	if not comparison or not comparison.head then
+		assert(
+			#paths(root, { "diff", "--name-only", "--diff-filter=U", "-z" }) == 0,
+			"Resolve merge conflicts before entering Review"
+		)
+	end
 	if comparison then
-		local fields =
-			paths(root, { "diff", "--name-status", "--no-renames", "-z", comparison.base, comparison.head, "--" })
-		local result = {}
+		local args = { "diff", "--name-status", "--no-renames", "-z", comparison.base }
+		if comparison.head then
+			table.insert(args, comparison.head)
+		end
+		table.insert(args, "--")
+		local fields = paths(root, args)
+		local result, seen = {}, {}
 		for i = 1, #fields, 2 do
-			table.insert(result, {
+			local entry = {
 				path = fields[i + 1],
-				group = "branch",
+				group = comparison.head and "branch" or "worktree",
 				status = fields[i],
 				base = comparison.base,
 				head = comparison.head,
-			})
+			}
+			table.insert(result, entry)
+			seen[entry.path] = entry
+		end
+		if not comparison.head then
+			for _, path in ipairs(paths(root, { "ls-files", "--others", "--exclude-standard", "-z" })) do
+				if seen[path] then
+					seen[path].group, seen[path].status = "untracked", "U"
+				else
+					table.insert(result, { path = path, group = "untracked", status = "U", base = comparison.base })
+				end
+			end
 		end
 		return result
 	end
-	assert(
-		#paths(root, { "diff", "--name-only", "--diff-filter=U", "-z" }) == 0,
-		"Resolve merge conflicts before entering Review"
-	)
 	local result = {}
 	for _, group in ipairs({ "staged", "unstaged", "untracked" }) do
 		local args = { "diff", "--name-status", "--find-renames", "-z" }
@@ -84,22 +109,44 @@ end
 
 function M.line_totals(root, entries, comparison)
 	local totals = { added = 0, deleted = 0 }
-	local function add_diff(revisions, untracked_path)
-		local args = { "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--numstat" }
+	local untracked = {}
+	for _, entry in ipairs(entries) do
+		if entry.group == "untracked" then
+			untracked[entry.path] = true
+		end
+	end
+	local function add_diff(revisions, untracked_path, old_text)
+		local args = { "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--numstat", "-z" }
+		local old_file
 		if untracked_path then
-			vim.list_extend(args, { "--no-index", "--", "/dev/null", root .. "/" .. untracked_path })
+			if old_text and old_text ~= "" then
+				old_file = vim.fn.tempname()
+				local fd = assert(vim.uv.fs_open(old_file, "w", 384))
+				assert(vim.uv.fs_write(fd, old_text, 0))
+				assert(vim.uv.fs_close(fd))
+			end
+			vim.list_extend(args, { "--no-index", "--", old_file or "/dev/null", root .. "/" .. untracked_path })
 		else
 			vim.list_extend(args, revisions)
 			table.insert(args, "--")
 		end
 		local output, code = M.run(root, args, nil, untracked_path ~= nil)
+		if old_file then
+			assert(vim.uv.fs_unlink(old_file))
+		end
 		assert(code == 0 or code == 1, "Cannot count changed lines: " .. (untracked_path or root))
-		for line in output:gmatch("[^\n]+") do
-			local added, deleted = line:match("^(%d+)\t(%d+)\t")
-			if added then
+		local records = vim.split(output, "\0", { plain = true })
+		local index = 1
+		while index <= #records do
+			local added, deleted, path = records[index]:match("^(%S+)\t(%S+)\t(.*)$")
+			-- A path removed from the index can still exist as an untracked file.
+			local counted_separately = comparison and untracked[path] and not untracked_path
+			if tonumber(added) and not counted_separately then
 				totals.added = totals.added + tonumber(added)
 				totals.deleted = totals.deleted + tonumber(deleted)
 			end
+			-- No-index records with different paths have two extra NUL-delimited fields.
+			index = index + (path == "" and 3 or 1)
 		end
 	end
 
@@ -108,21 +155,14 @@ function M.line_totals(root, entries, comparison)
 	else
 		add_diff({ "--cached" })
 		add_diff({})
-		for _, entry in ipairs(entries) do
-			if entry.group == "untracked" then
-				add_diff({}, entry.path)
-			end
+	end
+	for _, entry in ipairs(entries) do
+		if entry.group == "untracked" then
+			local old_text = entry.base and blob(root, entry.base, entry.path)
+			add_diff({}, entry.path, old_text)
 		end
 	end
 	return totals
-end
-
-local function blob(root, revision, path)
-	local text, code = M.run(root, { "show", revision .. ":" .. path }, nil, true)
-	if code ~= 0 then
-		return ""
-	end
-	return text
 end
 
 local function worktree(root, path)
@@ -154,11 +194,14 @@ function M.snapshot(root, entry, buffer_text)
 		new = buffer_text or worktree(root, entry.path):gsub("\r\n", "\n")
 		old, patch = new, ""
 	elseif entry.group == "untracked" then
-		old, new = "", worktree(root, entry.path)
+		old = entry.base and blob(root, entry.base, entry.path) or ""
+		new = worktree(root, entry.path)
 		patch = vim.diff(old, new, { result_type = "unified", ctxlen = 3 })
 	else
 		if entry.group == "branch" then
 			old, new = blob(root, entry.base, entry.path), blob(root, entry.head, entry.path)
+		elseif entry.group == "worktree" then
+			old, new = blob(root, entry.base, entry.path), worktree(root, entry.path)
 		else
 			old = blob(root, entry.group == "staged" and "HEAD" or "", entry.path)
 			new = entry.group == "staged" and blob(root, "", entry.path) or worktree(root, entry.path)
@@ -167,6 +210,8 @@ function M.snapshot(root, entry, buffer_text)
 			{ "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "--binary", "--unified=3" }
 		if entry.group == "branch" then
 			vim.list_extend(args, { entry.base, entry.head })
+		elseif entry.group == "worktree" then
+			table.insert(args, entry.base)
 		elseif entry.group == "staged" then
 			table.insert(args, "--cached")
 		end
@@ -234,7 +279,7 @@ function M.hunks(patch)
 end
 
 function M.stage(root, snapshot, side, line, whole_file)
-	assert(snapshot.group ~= "branch", "Staging is unavailable in branch diff mode; use :Review for worktree changes")
+	assert(not snapshot.base, "Staging is unavailable in base/commit comparisons; use :Review for staging")
 	M.validate(root, snapshot)
 	if snapshot.group == "untracked" then
 		local _, hunks = M.hunks(snapshot.patch)
@@ -269,7 +314,7 @@ end
 
 -- Reverse only the selected Git hunks, never replace a whole-file snapshot.
 function M.revert(root, snapshot, side, first, last)
-	assert(snapshot.group ~= "branch", "Reverting is unavailable in branch diff mode; use :Review for worktree changes")
+	assert(not snapshot.base, "Reverting is unavailable in base/commit comparisons; use :Review for reverting")
 	assert(snapshot.group ~= "buffer", "Refresh to current Git changes before reverting")
 	M.validate(root, snapshot)
 	local patch = snapshot.patch

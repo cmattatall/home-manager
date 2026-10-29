@@ -40,6 +40,7 @@ function M.switch(target)
 	for _, entry in ipairs(M.list()) do
 		if target == entry.path or absolute == entry.path or entry.branch == "refs/heads/" .. target then
 			assert(not entry.bare and not entry.prunable, "Worktree is not available: " .. entry.path)
+			assert(entry.branch, "Detached HEAD: attach a branch in " .. entry.path .. " before switching worktrees")
 			path = entry.path
 			break
 		end

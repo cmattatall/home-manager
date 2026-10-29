@@ -12,11 +12,7 @@ local function compare(args)
 	)
 	local state = review.state
 	local root = state and state.root or git.root()
-	local head = args[3]
-	if action == "base" then
-		head = state and state.comparison and state.comparison.head or "HEAD"
-	end
-	review.open(root, git.comparison(root, args[2], head))
+	review.open(root, git.comparison(root, args[2], args[3]))
 end
 
 local actions = {
@@ -38,7 +34,7 @@ function actions.help()
 	local lines = {
 		"Commands · :git · Tab completes actions · scripts use :Git",
 		"  diff BASE TARGET       Compare two commits, branches, or tags",
-		"  base BASE              Change the comparison base, retaining its target",
+		"  base BASE              Compare a commit against the working tree",
 		"  blame-line             Show this line's author, date and commit",
 		"  blame                  Browse blame for every source line",
 		"  toggle / blame-toggle  Toggle inline blame (on by default)",
