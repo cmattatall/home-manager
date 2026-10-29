@@ -310,8 +310,14 @@ Nix shell. Keep employer-specific build, deployment, and database helpers in
 machine-local shell configuration outside this repository.
 
 With Bazel and fzf available, `bzlfind` selects and prints a target from `//...`.
-`bzlrun [arguments...]` selects a binary target and runs it, passing arguments
-after Bazel's `--`. Cancelling the picker leaves without running a target.
+`bzlrun [pattern] [arguments...]` matches a literal, case-sensitive substring of
+binary target labels. One match runs directly. Multiple matches open fzf to
+refine the selection. No matches report an error.
+For example, `bzlrun toolingbox setup --help` finds the target containing
+`toolingbox` and passes only `setup --help` to it, after Bazel's `--`.
+With no pattern, or when the first argument starts with `-`, fzf lists all binary
+targets. Use `bzlrun -- setup --help` to pick a target and pass positional
+arguments without a pattern. Cancelling the picker leaves without running a target.
 
 In Bash, `nxd` runs plain `nix develop`, preserving the project's shell-hook
 functions, aliases, and completions. Nix loads `~/.bashrc`, and Starship renders

@@ -305,13 +305,68 @@ class BazelHelpersTest(StartupTestBase):
                 result = self.run_shell(shell, self.ordinary_dir, shell, "bzlfind")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, "//lib:library\n")
+                for arguments, forwarded in (
+                    ('--name "two words"', ["<--name>", "<two words>"]),
+                    ('-- setup --help', ["<setup>", "<--help>"]),
+                    ('', []),
+                ):
+                    result = self.run_shell(
+                        shell, self.ordinary_dir, shell, f'bzlrun {arguments}'
+                    )
+                    self.assertEqual(result.returncode, 7, result.stderr)
+                    self.assertEqual(result.stdout.splitlines(), [
+                        "<run>", "<//app:binary>", "<-->", *forwarded,
+                    ])
+
+    def test_unique_literal_match_runs_without_picker(self) -> None:
+        _write_stub(self.stub_dir, "bazel", textwrap.dedent("""\
+            case "$1" in
+                query)
+                    printf '%s\\n' '//app:tool-ing-box' '//app:toolingbox' \\
+                        '//app:toolXv2' '//app:tool.v2' ;;
+                run) printf '<%s>\\n' "$@"; exit 7 ;;
+            esac
+        """))
+        _write_stub(self.stub_dir, "fzf", 'case "$1" in --bash|--zsh) exit 0;; esac\nexit 99')
+        for shell in filter(None, [BASH, ZSH]):
+            for pattern in ("toolingbox", "tool.v2", "//app:toolingbox"):
+                with self.subTest(shell=shell, pattern=pattern):
+                    result = self.run_shell(
+                        shell, self.ordinary_dir, shell,
+                        f'bzlrun {pattern} setup --help "two words" ""',
+                    )
+                    target = "//app:tool.v2" if pattern == "tool.v2" else "//app:toolingbox"
+                    self.assertEqual(result.returncode, 7, result.stderr)
+                    self.assertEqual(result.stdout.splitlines(), [
+                        "<run>", f"<{target}>", "<-->", "<setup>", "<--help>",
+                        "<two words>", "<>",
+                    ])
+
+    def test_multiple_matches_are_refined_and_no_match_does_not_run(self) -> None:
+        _write_stub(self.stub_dir, "bazel", textwrap.dedent("""\
+            case "$1" in
+                query)
+                    printf '%s\\n' '//app:toolingbox' '//app:unrelated' \\
+                        '//other:toolingbox' ;;
+                run) printf '<%s>\\n' "$@" ;;
+            esac
+        """))
+        _write_stub(self.stub_dir, "fzf", 'case "$1" in --bash|--zsh) exit 0;; esac\nsed -n "2p"')
+        for shell in filter(None, [BASH, ZSH]):
+            with self.subTest(shell=shell):
                 result = self.run_shell(
-                    shell, self.ordinary_dir, shell, 'bzlrun --name "two words"'
+                    shell, self.ordinary_dir, shell, 'bzlrun toolingbox setup --help'
                 )
-                self.assertEqual(result.returncode, 7, result.stderr)
+                self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.splitlines(), [
-                    "<run>", "<//app:binary>", "<-->", "<--name>", "<two words>",
+                    "<run>", "<//other:toolingbox>", "<-->", "<setup>", "<--help>",
                 ])
+                result = self.run_shell(
+                    shell, self.ordinary_dir, shell, 'bzlrun missing setup --help'
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
+                self.assertIn('no binary targets match "missing"', result.stderr)
 
     def test_cancelled_selection_and_failed_query_do_not_run(self) -> None:
         for shell in filter(None, [BASH, ZSH]):
@@ -319,7 +374,7 @@ class BazelHelpersTest(StartupTestBase):
                 with self.subTest(shell=shell, query_status=query_status):
                     _write_stub(self.stub_dir, "bazel", textwrap.dedent(f"""\
                         if [ "$1" = query ]; then
-                            echo '//app:partial'
+                            printf '%s\\n' '//app:partial' '//other:partial'
                             exit {query_status}
                         fi
                         echo unexpected-run >&2
@@ -330,9 +385,10 @@ class BazelHelpersTest(StartupTestBase):
                         if [ {picker_status} = 0 ]; then echo '//app:partial'; fi
                         exit {picker_status}
                     """))
-                    result = self.run_shell(shell, self.ordinary_dir, shell, "bzlrun")
-                    self.assertEqual(result.returncode, picker_status or query_status)
-                    self.assertEqual(result.stdout + result.stderr, "")
+                    for command in ("bzlrun", "bzlrun partial --help"):
+                        result = self.run_shell(shell, self.ordinary_dir, shell, command)
+                        self.assertEqual(result.returncode, picker_status or query_status)
+                        self.assertEqual(result.stdout + result.stderr, "")
 
 
 class HomeManagerAliasTest(StartupTestBase):
