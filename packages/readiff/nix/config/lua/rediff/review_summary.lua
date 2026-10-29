@@ -63,14 +63,9 @@ function M.update(s)
 
 		local width = api.nvim_win_get_width(s.summary_win)
 		local compact = width < 85
-		local name = vim.fn.strtrans(s.current.path)
-		if vim.fn.strdisplaywidth(name) > width - 70 then
-			name = "File"
-		end
 		local hunk_position = compact and (position .. "/" .. #s.diff.changes)
 			or (position .. " of " .. #s.diff.changes)
 		chunks = {
-			{ " " .. name .. "  ", "ReviewFileSummary" },
 			{ "+" .. added, "ReviewAdded" },
 			{ "  ", "ReviewFileSummary" },
 			{ "−" .. deleted, "ReviewDeleted" },
@@ -90,9 +85,29 @@ function M.update(s)
 		elseif continues_below then
 			table.insert(chunks, { " · ↓ Continues below", "ReviewFileSummary" })
 		end
-		if #s.diff.changes > 0 then
+		if #s.diff.changes > 0 and not compact then
 			table.insert(chunks, { " · ] next", "ReviewFileSummary" })
 		end
+
+		local mode = s.layout:upper()
+		if s.layout == "merged" and s.current.group == "buffer" then
+			mode = "BUFFER SNAPSHOT"
+		end
+		local content_width = 0
+		for _, chunk in ipairs(chunks) do
+			content_width = content_width + vim.fn.strdisplaywidth(chunk[1])
+		end
+		local name = vim.fn.strtrans(s.current.path)
+		local name_width = math.max(1, width - content_width - #mode - 5)
+		if vim.fn.strdisplaywidth(name) > name_width then
+			repeat
+				name = vim.fn.strcharpart(name, 1)
+			until vim.fn.strdisplaywidth(name) < name_width
+			name = "…" .. name
+		end
+		table.insert(chunks, 1, { " " .. name .. "  ", "ReviewFileSummary" })
+		local padding = width - vim.fn.strdisplaywidth(name) - content_width - #mode - 4
+		table.insert(chunks, { string.rep(" ", math.max(1, padding)) .. mode .. " ", "ReviewFileSummary" })
 	end
 
 	local parts = {}

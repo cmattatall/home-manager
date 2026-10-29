@@ -324,7 +324,22 @@ function _G.RediffCloseBuffer(_, _, button)
 		end)
 	end
 end
-local file_winbar = " %<%f%( %m%)%@v:lua.RediffCloseBuffer@ × %X"
+function _G.RediffFileGitStats()
+	local status = vim.b.gitsigns_status_dict
+	if not status or status.added == nil then
+		return ""
+	end
+	local added = status.added + status.changed
+	local deleted = status.removed + status.changed
+	return string.format(" %%#GitSignsAdd#+%d%%* %%#GitSignsDelete#−%d%%*", added, deleted)
+end
+local file_winbar = " %<%f%( %m%)%{%v:lua.RediffFileGitStats()%}%@v:lua.RediffCloseBuffer@ × %X"
+vim.api.nvim_create_autocmd("User", {
+	pattern = "GitSignsUpdate",
+	callback = function()
+		vim.cmd.redrawstatus({ bang = true })
+	end,
+})
 vim.api.nvim_create_autocmd("BufWinEnter", {
 	callback = function()
 		if vim.bo.buftype == "" and vim.api.nvim_win_get_config(0).relative == "" then

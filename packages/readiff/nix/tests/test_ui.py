@@ -563,6 +563,8 @@ class EditorUI(unittest.TestCase):
         self.assertIn("+61  −14", summary())
         self.assertIn("Hunk 1/3", summary())
         self.assertIn("↓ 2 below", summary())
+        self.assertIn("aaa-summary.lua", summary())
+        self.assertTrue(summary().endswith("SPLIT "))
         self.assertTrue(
             self.lua(
                 editor,
@@ -2483,7 +2485,7 @@ class EditorUI(unittest.TestCase):
         self.assertIn(committed[:12], blame(4, "Second Author"))
         full_blame([pending, pending, "First Author", "Second Author", pending])
 
-    def test_git_gutter_tracks_unsaved_edits_but_not_review_snapshots(self):
+    def test_git_gutter_and_header_track_unsaved_edits_but_not_review_snapshots(self):
         path = Path(self.root, "gutter.txt")
         original = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n"
         path.write_text(original)
@@ -2492,7 +2494,17 @@ class EditorUI(unittest.TestCase):
             ["git", "-C", self.root, "commit", "-m", "Gutter fixture"],
             check=True, capture_output=True,
         )
-        editor = self.launch(self.root, file="gutter.txt")
+        editor = self.launch(self.directory.name, file=self.root)
+        self.wait_for(editor, "vim.bo.filetype == 'neo-tree'")
+        self.assertGreater(editor.funcs.search(r"gutter\.txt", "w"), 0)
+        self.keys(editor, "<CR>")
+
+        def header(win=0):
+            return editor.api.eval_statusline(
+                editor.api.get_option_value("winbar", {"win": win}),
+                {"winid": win, "use_winbar": True},
+            )["str"]
+
         signs = """(function()
             local signs = {}
             for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(0,-1,0,-1,{details=true})) do
@@ -2504,19 +2516,38 @@ class EditorUI(unittest.TestCase):
             table.sort(signs, function(a,b) return a[1] < b[1] end)
             return signs
         end)()"""
-        self.wait_for(editor, "vim.b.gitsigns_head ~= nil")
+        self.wait_for(
+            editor, "vim.b.gitsigns_status_dict and vim.b.gitsigns_status_dict.added == 0"
+        )
         self.assertEqual([], self.lua(editor, "return " + signs))
-        editor.current.buffer[:] = ["one", "TWO", "three", "four", "added", "five", "six", "eight"]
-        self.wait_for(editor, "#" + signs + " == 3")
+        self.assertIn("+0 −0", header())
+        editor.current.buffer[:] = [
+            "one", "TWO", "three", "four", "added", "extra", "five", "six", "eight"
+        ]
+        self.wait_for(editor, "#" + signs + " == 4")
         self.assertEqual(
-            [[2, "GitSignsChange"], [5, "GitSignsAdd"], [7, "GitSignsDelete"]],
+            [
+                [2, "GitSignsChange"],
+                [5, "GitSignsAdd"],
+                [6, "GitSignsAdd"],
+                [8, "GitSignsDelete"],
+            ],
             self.lua(editor, "return " + signs),
         )
+        self.assertIn("[+]", header())
+        self.assertIn("+3 −2", header())
         self.assertEqual(original, path.read_text(), "Gutter includes unsaved edits")
         editor.command("colorscheme rose-pine")
         for group, color in (("GitSignsAdd", 0xA6E3A1), ("GitSignsChange", 0xF9E2AF), ("GitSignsDelete", 0xF38BA8)):
             self.assertEqual(color, editor.api.get_hl(0, {"name": group, "link": False})["fg"])
         editor.command("write")
+        self.assertIn("+3 −2", header())
+        subprocess.run(["git", "-C", self.root, "add", "gutter.txt"], check=True)
+        self.wait_for(
+            editor,
+            "vim.b.gitsigns_status_dict.added == 0 and vim.b.gitsigns_status_dict.changed == 0",
+        )
+        self.assertIn("+0 −0", header())
         editor.command("Review")
         for layout in ("split", "merged"):
             self.lua(editor, f"r.view('{layout}')")
@@ -2529,6 +2560,18 @@ class EditorUI(unittest.TestCase):
         editor.command("edit untracked.txt")
         self.wait_for(editor, "#" + signs + " == 1")
         self.assertEqual([[1, "GitSignsUntracked"]], self.lua(editor, "return " + signs))
+        self.assertIn("+1 −0", header())
+        untracked_win = editor.current.window.handle
+        editor.command("vsplit gutter.txt")
+        self.wait_for(
+            editor, "vim.b.gitsigns_status_dict and vim.b.gitsigns_status_dict.added == 0"
+        )
+        self.assertIn("+0 −0", header())
+        self.assertIn("+1 −0", header(untracked_win))
+        outside = Path(self.directory.name, "outside.txt")
+        outside.write_text("Outside Git\n")
+        editor.command("edit " + editor.funcs.fnameescape(str(outside)))
+        self.assertNotRegex(header(), r"[+−]\d")
 
     def test_gitgud_inline_blame_discards_stale_results(self):
         editor = self.launch(self.root, file="auth.lua")
@@ -9256,11 +9299,16 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         )
 
     def test_file_paths_are_visible_above_review_and_edit_windows(self):
-        names = ("src/100% ready.lua", "tests/100% ready.lua")
+        names = (
+            "src/100% ready.lua",
+            "tests/100% ready.lua",
+            "src/deeply/nested/feature/with/a/long/path/and/additional/directories/雪100% ready.lua",
+            "tests/empty.lua",
+        )
         for name in names:
             path = Path(self.root, name)
-            path.parent.mkdir(exist_ok=True)
-            path.write_text("return true\n")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("" if name == "tests/empty.lua" else "return true\n")
         editor = self.launch(self.root, file=names[0])
 
         def header(win):
@@ -9269,6 +9317,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
             })["str"]
 
         first = editor.current.window.handle
+        regular_highlights = editor.api.get_option_value("winhighlight", {"win": first})
         self.assertIn(names[0], header(first))
         editor.command("vsplit " + editor.funcs.fnameescape(names[1]))
         second = editor.current.window.handle
@@ -9288,14 +9337,30 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
                     error('Missing test file')
                 """, name)
                 windows = self.lua(editor, "return {s.new_win, s.old_win}")
+                summary = self.lua(
+                    editor, "return vim.api.nvim_buf_get_lines(s.summary_buf, 0, 1, false)[1]"
+                )
+                self.assertEqual(1, summary.count(Path(name).name))
+                self.assertTrue(summary.endswith(layout.upper() + " "))
+                if name == names[2]:
+                    self.assertTrue(summary.startswith(" …"), summary)
+                else:
+                    self.assertIn(name, summary)
                 for win in windows:
-                    self.assertIn(name, header(win))
-                self.assertIn("MERGED" if layout == "merged" else "NEW", header(windows[0]))
+                    self.assertNotIn(Path(name).name, header(win))
                 if layout == "split":
-                    self.assertIn("OLD", header(windows[1]))
+                    self.assertEqual(" NEW · WORKTREE ", header(windows[0]))
+                    self.assertEqual(" OLD · INDEX ", header(windows[1]))
+                else:
+                    self.assertEqual(
+                        "", editor.api.get_option_value("winbar", {"win": windows[0]})
+                    )
         self.keys(editor, ":ReviewLeave<CR>")
         self.assertIn(names[0], header(first))
         self.assertIn("tests/renamed.lua", header(second))
+        self.assertEqual(
+            regular_highlights, editor.api.get_option_value("winhighlight", {"win": first})
+        )
 
     def test_file_header_close_targets_clicked_buffer_and_confirms_unsaved_changes(self):
         editor = self.launch(self.root, file="auth.lua")
@@ -9310,13 +9375,14 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
             buf = editor.api.win_get_buf(win)
             name = Path(editor.api.buf_get_name(buf)).name
             modified = editor.api.get_option_value("modified", {"buf": buf})
-            expected = f" {name}{' [+]' if modified else ''} × "
+            expected_name = f" {name}{' [+]' if modified else ''} "
             header = editor.api.eval_statusline(
                 editor.api.get_option_value("winbar", {"win": win}),
                 {"winid": win, "use_winbar": True},
             )["str"]
-            self.assertEqual(expected, header)
-            col += expected.index("×")
+            self.assertTrue(header.startswith(expected_name), header)
+            self.assertTrue(header.endswith(" × "), header)
+            col += header.index("×")
             editor.api.input_mouse(button, "press", "", 0, row, col)
             editor.api.input_mouse(button, "release", "", 0, row, col)
             pump(editor)

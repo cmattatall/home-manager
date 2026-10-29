@@ -583,22 +583,18 @@ function M.show(index, snapshot, keep_fold)
 	map_staging(s.old_buf)
 	map_staging(s.new_buf)
 	local renderer = require("codediff.ui.view.render")
-	local path = " %<" .. vim.fn.strtrans(snapshot.path):gsub("%%", "%%%%")
 	local buffer_snapshot = snapshot.group == "buffer"
 	if s.layout == "merged" then
-		vim.wo[s.new_win].winbar = path
-			.. (buffer_snapshot and " %= BUFFER SNAPSHOT " or " %= MERGED · red: old / green: new ")
+		vim.wo[s.new_win].winbar = ""
 		vim.wo[s.new_win].scrollbind = false
 		vim.wo[s.new_win].wrap = false
 		s.diff = assert(require("codediff.core.diff").compute_diff(old_lines, new_lines, renderer.diff_options()))
 		require("codediff.ui.inline").render_inline_diff(s.new_buf, s.diff, old_lines, new_lines, { filetype = ft })
 	else
-		vim.wo[s.old_win].winbar = path
-			.. " %= OLD · "
+		vim.wo[s.old_win].winbar = " OLD · "
 			.. (snapshot.base and snapshot.base:sub(1, 12) or (buffer_snapshot and "BUFFER" or (snapshot.group == "staged" and "HEAD" or "INDEX")))
 			.. " "
-		vim.wo[s.new_win].winbar = path
-			.. " %= NEW · "
+		vim.wo[s.new_win].winbar = " NEW · "
 			.. (snapshot.base and snapshot.head:sub(1, 12) or (buffer_snapshot and "BUFFER" or (snapshot.group == "staged" and "INDEX" or "WORKTREE")))
 			.. " "
 		s.diff = renderer.compute_and_render(
@@ -627,6 +623,7 @@ function M.show(index, snapshot, keep_fold)
 		focus_hunk(1, keep_fold)
 	else
 		select_tree_file(keep_fold)
+		summary.update(s)
 	end
 	awareness.render()
 end

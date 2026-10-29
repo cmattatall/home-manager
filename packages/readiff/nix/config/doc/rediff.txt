@@ -184,6 +184,9 @@ GIT AND REFRESH                                                    *rediff-git*
 
 Ordinary files show Gitsigns gutter marks against Git's index, including unsaved
 edits: green for additions, yellow for modifications, and red for deletions.
+The file header shows green +added and red −deleted totals for the same comparison.
+Replaced lines count as both additions and deletions. Counts update while editing
+and after staging. Files matching the index show +0 −0.
 Untracked files get green dashed marks. Review snapshots keep their own diff
 rendering; Gitsigns does not attach to them. GitGud remains the blame provider.
 
@@ -257,11 +260,13 @@ both Git groups including untracked text files. Binary files contribute zero
 lines. In branch mode it counts the selected commit comparison. Totals cover
 the whole review even when paths are filtered, and update on refresh.
 
-The amber strip above the diff shows the current file's full added/deleted line
-counts and hunk position within the displayed comparison. Arrows show hunks
-outside the viewport, including changes farther down the file. The strip updates
-as you scroll. Use ] to visit the next hunk and [ to go back. Hunk position tracks
-your current location in the file.
+The brown/gold header above the diff shows the current file's path, full
+added/deleted line counts, hunk position, and view mode. Split panes share this
+header, with OLD/NEW labels identifying each side. Long paths shorten from the
+left to keep review information visible. Arrows show hunks outside the viewport,
+including changes farther down the file, and update as you scroll. Use ] to
+visit the next hunk and [ to go back. Hunk position tracks your current location
+in the file. Regular editing uses the normal file-header colors.
 
 In the file tree, / focuses the inline Filter paths… field. Matching updates as
 you type, using case-insensitive fuzzy matching against repository-relative paths.
