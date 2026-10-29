@@ -2,6 +2,56 @@ local M = {}
 local git = require("rediff.git")
 local review = require("rediff.review")
 
+function M.branches(root)
+	local output = git.run(root, {
+		"for-each-ref",
+		"--format=%(objectname)%09%(refname:short)%09%(symref)",
+		"refs/heads",
+		"refs/remotes",
+	})
+	local by_commit, branches = {}, {}
+	for _, line in ipairs(vim.split(output, "\n", { trimempty = true })) do
+		local commit, ref, symbolic = unpack(vim.split(line, "\t"))
+		if symbolic == "" then
+			local branch = by_commit[commit]
+			if not branch then
+				branch = { commit = commit, ref = ref, names = {}, parents = {}, children = {} }
+				by_commit[commit] = branch
+				table.insert(branches, branch)
+			end
+			table.insert(branch.names, ref)
+		end
+	end
+	for _, branch in ipairs(branches) do
+		local merged = git.run(root, {
+			"for-each-ref",
+			"--merged=" .. branch.commit,
+			"--format=%(objectname)",
+			"refs/heads",
+			"refs/remotes",
+		})
+		local ancestors = {}
+		for _, commit in ipairs(vim.split(merged, "\n", { trimempty = true })) do
+			if commit ~= branch.commit and by_commit[commit] then
+				ancestors[commit] = true
+			end
+		end
+		if next(ancestors) then
+			local args = vim.list_extend({ "merge-base", "--independent" }, vim.tbl_keys(ancestors))
+			for _, commit in ipairs(vim.split(git.run(root, args), "\n", { trimempty = true })) do
+				table.insert(branch.parents, by_commit[commit])
+			end
+			table.sort(branch.parents, function(a, b)
+				return a.ref < b.ref
+			end)
+			if #branch.parents == 1 then
+				table.insert(branch.parents[1].children, branch)
+			end
+		end
+	end
+	return branches
+end
+
 function M.discover(root, base_ref, tip_ref)
 	local endpoints = git.comparison(root, base_ref, tip_ref)
 	local _, code = git.run(root, { "merge-base", "--is-ancestor", endpoints.base, endpoints.head }, nil, true)

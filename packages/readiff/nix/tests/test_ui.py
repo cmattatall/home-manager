@@ -421,9 +421,10 @@ class EditorUI(unittest.TestCase):
         text = "\n".join(editor.current.buffer[:])
         for expected in ("Comparison 2 of 3", base, tip, "Checkout: main", "origin/middle"):
             self.assertIn(expected, text)
-        self.keys(editor, "q gs")
+        self.keys(editor, "q:git stack<CR>")
         self.wait_for(editor, "vim.bo.filetype == 'fzf'")
-        self.keys(editor, "review-base<CR>")
+        self.keys(editor, "review-base")
+        self.keys(editor, "<CR>")
         self.wait_for(
             editor, "s.comparison.base_ref == 'review-base' and vim.bo.filetype ~= 'fzf'"
         )
@@ -438,13 +439,13 @@ class EditorUI(unittest.TestCase):
         original = checkout_state(self.root)
         editor = self.launch(self.root)
         for answer in ("<Esc>", "<CR>", "   <CR>"):
-            self.keys(editor, " gs")
+            self.keys(editor, ":git stack<CR>")
             self.assertEqual("@", editor.funcs.getcmdtype())
             self.keys(editor, answer)
             self.assertTrue(self.lua(editor, "return s.comparison == nil"))
             self.assertEqual([], self.lua(editor, "return s.entries"))
 
-        self.keys(editor, " gsHEAD<CR>")
+        self.keys(editor, ":git stack<CR>HEAD<CR>")
         self.assertIn("at least two refs", editor.vars["startup_notice"])
         self.assertTrue(self.lua(editor, "return s.comparison == nil"))
 
@@ -463,7 +464,7 @@ class EditorUI(unittest.TestCase):
         self.keys(editor, " gu")
         self.assertEqual([], self.lua(editor, "return s.entries"))
         self.assertIn("2/2", self.lua(editor, "return s.reference"))
-        self.keys(editor, " gs")
+        self.keys(editor, ":git stack<CR>")
         self.wait_for(editor, "vim.bo.filetype == 'fzf'")
         self.keys(editor, "<Esc>")
         self.assertEqual(original, checkout_state(self.root))
@@ -577,6 +578,62 @@ class EditorUI(unittest.TestCase):
         self.assertEqual(original, checkout_state(self.root))
         self.assertEqual(refs, git("show-ref"))
 
+        self.keys(editor, " gs")
+        self.assertEqual("rediff-stacks", editor.current.buffer.options["filetype"])
+        panel = editor.current.window
+        text = "\n".join(editor.current.buffer[:])
+        for name in ("main", "z-foundation", "origin/a-middle", "sibling", "feature * checkout"):
+            self.assertIn(name, text)
+        self.assertNotIn("GitHub optional", text)
+        self.assertNotIn("origin/HEAD", text)
+        self.assertEqual(1, sum("z-foundation" in line for line in editor.current.buffer[:]))
+        tree = self.lua(editor, "return s.tree_win")
+        self.assertLess(panel.row, editor.api.win_get_position(tree)[0])
+        selected = self.lua(editor, "return s.comparison")
+
+        self.keys(editor, "/sibling<CR>")
+        self.assertNotIn("z-foundation", "\n".join(editor.current.buffer[:]))
+        self.assertIn("sibling", "\n".join(editor.current.buffer[:]))
+        self.assertEqual(selected, self.lua(editor, "return s.comparison"))
+        self.keys(editor, "/<C-u>missing-branch<CR>")
+        self.assertIn("No matching branches", editor.current.buffer[:])
+        self.keys(editor, "<Esc> gs")
+        self.keys(editor, "ggh")
+        self.assertNotIn("z-foundation", "\n".join(editor.current.buffer[:]))
+        self.keys(editor, "l")
+        self.assertIn("z-foundation", "\n".join(editor.current.buffer[:]))
+
+        def choose_branch(name):
+            for row, line in enumerate(editor.current.buffer[:], start=1):
+                if name in line:
+                    editor.current.window.cursor = (row, 0)
+                    self.keys(editor, "<CR>")
+                    return
+            self.fail(f"Missing branch: {name}")
+
+        choose_branch("z-foundation")
+        self.assertEqual(
+            [base, foundation],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+        )
+        self.assertEqual("rediff-stacks", editor.current.buffer.options["filetype"])
+        self.assertIn("reviewing", "\n".join(editor.current.buffer[:]))
+        choose_branch("origin/a-middle")
+        self.assertEqual(middle, self.lua(editor, "return s.comparison.head"))
+        self.keys(editor, " gu gs")
+        self.assertEqual(tip, self.lua(editor, "return s.comparison.head"))
+        git("branch", "new-alias", "feature")
+        self.keys(editor, "r")
+        self.assertIn("new-alias", "\n".join(editor.current.buffer[:]))
+        git("branch", "-D", "new-alias")
+        self.keys(editor, "q")
+        self.assertTrue(self.lua(editor, "return s ~= nil"))
+        self.keys(editor, ":git stacks<CR>")
+        self.assertEqual("rediff-stacks", editor.current.buffer.options["filetype"])
+        self.assertNotIn("new-alias", "\n".join(editor.current.buffer[:]))
+        self.assertEqual(original, checkout_state(self.root))
+        self.assertEqual(refs, git("show-ref"))
+
     def test_branch_stack_requires_a_parent_choice_at_merges(self):
         def git(*args):
             return subprocess.check_output(
@@ -598,6 +655,11 @@ class EditorUI(unittest.TestCase):
         tip = git("rev-parse", "HEAD")
         original = checkout_state(self.root)
         editor = self.launch(self.root)
+        self.keys(editor, " gs")
+        self.assertEqual("rediff-stacks", editor.current.buffer.options["filetype"])
+        self.assertIn("tip ? parent unclear", "\n".join(editor.current.buffer[:]))
+        self.assertTrue(self.lua(editor, "return s.comparison == nil"))
+        self.keys(editor, "q")
         self.keys(editor, ":git diff main tip<CR>")
         selected = self.lua(editor, "return s.comparison")
         self.keys(editor, ":git branch-stack main tip<CR>")
@@ -622,6 +684,30 @@ class EditorUI(unittest.TestCase):
                 self.lua(editor, "return {s.comparison.base, s.comparison.head, s.current.path}"),
             )
             self.assertIn("2/2", self.lua(editor, "return s.reference"))
+
+        self.keys(editor, " gs")
+        for row, line in enumerate(editor.current.buffer[:], start=1):
+            if "tip ? parent unclear" in line:
+                editor.current.window.cursor = (row, 0)
+                break
+        selected = self.lua(editor, "return s.comparison")
+        self.keys(editor, "<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "<Esc>")
+        self.assertEqual(selected, self.lua(editor, "return s.comparison"))
+        self.keys(editor, "<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "left")
+        self.keys(editor, "<CR>")
+        self.wait_for(editor, "s.comparison.base_ref == 'left'")
+        self.assertEqual("rediff-stacks", editor.current.buffer.options["filetype"])
+        self.assertEqual([commits["left"], tip], self.lua(editor, "return {s.comparison.base, s.comparison.head}"))
+        self.keys(editor, "<Tab>")
+        self.assertEqual(self.lua(editor, "return s.tree_win"), editor.current.window.handle)
+        self.keys(editor, "q")
+        self.assertTrue(editor.exec_lua("return require('rediff.review').state == nil"))
+        self.keys(editor, ":git stacks<CR>")
+        self.assertEqual("rediff-stacks", editor.current.buffer.options["filetype"])
         self.assertEqual(original, checkout_state(self.root))
 
     def test_pr_stack_discovery_fetches_exact_endpoints_and_preserves_checkout(self):
@@ -3078,7 +3164,7 @@ class EditorUI(unittest.TestCase):
         window = editor.current.window.handle
         actions = [
             "base", "blame", "blame-line", "blame-toggle", "branch-stack", "comparison", "copy-link",
-            "diff", "down", "help", "pr", "pr-stack", "refresh-refs", "stack", "toggle", "up",
+            "diff", "down", "help", "pr", "pr-stack", "refresh-refs", "stack", "stacks", "toggle", "up",
         ]
 
         for command, close in (

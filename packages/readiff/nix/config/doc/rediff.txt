@@ -98,17 +98,44 @@ Space p lists searchable Git actions with descriptions and keyboard shortcuts.
 Tab completes branches, tags, and remote-tracking refs in comparison commands and
 prompts. You can also type any expression that Git resolves to a commit.
 
+STACKS SIDEBAR
+
+Space gs or :git stacks opens a persistent branch tree above the file list.
+It lists local and remote-tracking branches immediately, using locally available
+Git refs. No base/tip input or GitHub connection is required. Branches at the same
+commit share a row. Relationships are labelled inferred because Git ancestry
+does not record the author's intended stack. Branches with multiple nearest
+ancestors appear separately with "parent unclear".
+
+  j/k          Move through branches without changing the comparison
+  Enter        Review against the parent, or choose a parent when ambiguous
+  h/l          Collapse/expand a branch's descendants
+  /            Filter branch names, keeping matching ancestors visible
+  r            Rescan local refs without fetching
+  Tab          Focus the file list
+  Esc          Clear the filter and focus the file list
+  q            Close the Stacks panel
+
+The panel marks checkout and reviewing separately. Enter opens the selected
+comparison and includes the unambiguous surrounding chain for Space gu/gd.
+Forks stop automatic forward traversal. Root branches have no ancestor branch
+ref to compare against. Select a child, or use :git diff for explicit endpoints.
+Browsing and opening comparisons preserve checkout, refs, index, and working
+files. The panel stays open across comparisons. It appears in Review when invoked
+from ordinary editing. The current PR number is shown when its head matches a
+locally available branch.
+
 COMPARISON STACKS
 
 :git stack REF REF ... defines adjacent comparisons and opens the first.
 For example, :git stack v1.0 origin/foundation HEAD~1 HEAD creates three
 comparisons. Each pair is resolved when the stack is defined.
-With no stack defined, Space gs or :git stack prompts for space-separated refs
+With no stack defined, :git stack prompts for space-separated refs
 in base-to-tip order. Escape or an empty answer keeps the current Review.
 
   Space gu / :git up       Next comparison toward the tip
   Space gd / :git down     Previous comparison toward the base
-  Space gs / :git stack    Choose a comparison from the stack
+  :git stack              Choose a comparison from the loaded stack
   Space gD / :git diff     Prompt for a new pair of refs
   Space gc                Show current comparison details
 
@@ -116,7 +143,7 @@ Up/down stops at the ends and restores each comparison's selected file, layout,
 and position. Close the annotation composer before switching comparisons.
 The stack lasts for this editor session, separately for each worktree. Defining
 a new stack or opening :git diff/:git base replaces that worktree's stack.
-Returning to :Review leaves the stack available through Space gs.
+Returning to :Review leaves the stack available through :git stack.
 Notes and feedback remain shared within the worktree across comparisons.
 
 MANUALLY STACKED BRANCHES
@@ -133,7 +160,7 @@ The base must be an ancestor of the tip. To choose every endpoint yourself, use
 :git stack REF REF ... instead. This also works for rebased or divergent branches
 whose intended order cannot be inferred from ancestry.
 
-Use Space gu/gd and Space gs to navigate the discovered comparisons. Discovery
+Use Space gu/gd and :git stack to navigate the discovered comparisons. Discovery
 preserves your checkout, refs, index, and working files. It uses locally available
 refs without fetching. Rerun :git branch-stack after branch tips change to
 rediscover the whole sequence.
@@ -142,7 +169,7 @@ GITHUB PR STACKS
 
 Space gS or :git pr-stack discovers published, open GitHub stacks in the current
 repository. Choose a stack to review its PRs in base-to-tip order, then use
-Space gu/gd to move between PRs and Space gs to choose a comparison. Space gc
+Space gu/gd to move between PRs and :git stack to choose a comparison. Space gc
 shows the PR title, status, URL, and full commit IDs. The discovery action is
 also available in Space p.
 
@@ -788,6 +815,7 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
   :Git diff [BASE TARGET]     Compare two commit-ish refs, or prompt
   :Git base [BASE]            Compare a ref against saved working files, or prompt
   :Git comparison            Show refs, commit IDs, checkout, and harness
+  :Git stacks                Browse branch stacks in the sidebar
   :Git stack [REF REF ...]    Choose or define adjacent comparisons
   :Git branch-stack [BASE [TIP]] Discover branch tips by Git ancestry, or prompt
   :Git pr-stack              Discover published GitHub PR stacks

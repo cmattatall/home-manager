@@ -72,12 +72,12 @@ local function select(root, stack, index)
 	end
 end
 
-function M.set(root, comparisons)
+function M.set(root, comparisons, index)
 	local stack = {}
 	for _, comparison in ipairs(comparisons) do
 		table.insert(stack, { comparison = comparison })
 	end
-	select(root, stack, 1)
+	select(root, stack, index or 1)
 end
 
 function M.move(root, direction)

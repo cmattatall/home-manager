@@ -139,6 +139,12 @@ local actions = {
 		arguments = true,
 		usage = "stack [REF REF ...]",
 		description = "Choose or define a comparison stack",
+	},
+	stacks = {
+		run = function()
+			require("rediff.stack_panel").open(root())
+		end,
+		description = "Browse branch stacks in the sidebar",
 		key = "gs",
 	},
 	["pr-stack"] = {

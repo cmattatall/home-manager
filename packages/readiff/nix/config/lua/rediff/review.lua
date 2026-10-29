@@ -2173,6 +2173,7 @@ function M.open(root, comparison)
 	require("rediff.live").start(s)
 	require("rediff.discards").load(s.root)
 	awareness.start(s.root)
+	require("rediff.stack_panel").restore(s)
 	api.nvim_exec_autocmds("User", { pattern = "ReviewEnter" })
 end
 
@@ -2599,6 +2600,7 @@ function M.setup()
 					local width = api.nvim_win_get_width(s.old_win) + api.nvim_win_get_width(s.new_win)
 					api.nvim_win_set_width(s.old_win, math.floor(width / 2))
 				end
+				require("rediff.stack_panel").resize(s)
 				render_comments(false, s)
 			end
 		end,
