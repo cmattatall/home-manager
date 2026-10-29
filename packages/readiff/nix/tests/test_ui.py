@@ -500,6 +500,137 @@ class EditorUI(unittest.TestCase):
         self.assertIn("Filter paths…", filter_header())
         self.assertEqual("", self.lua(editor, "return s.file_filter"))
 
+    def test_file_summary_counts_offscreen_changes_and_follows_scrolling(self):
+        path = Path(self.root, "aaa-summary.lua")
+        original = [f"local value_{line} = {line}\n" for line in range(1, 141)]
+        path.write_text("".join(original))
+        subprocess.run(["git", "-C", self.root, "add", path.name], check=True)
+        subprocess.run(
+            ["git", "-C", self.root, "commit", "-m", "Summary baseline"],
+            check=True,
+            capture_output=True,
+        )
+        changed = (
+            original[:4]
+            + ["local top_change = true\n"]
+            + original[5:70]
+            + [f"local added_{line} = true\n" for line in range(60)]
+            + original[80:120]
+            + original[123:]
+        )
+        path.write_text("".join(changed))
+        editor = self.launch(self.root)
+        self.lua(editor, "require('rediff.live').stop(s)")
+
+        def summary():
+            return self.lua(
+                editor, "return vim.api.nvim_buf_get_lines(s.summary_buf, 0, 1, false)[1]"
+            )
+
+        self.assertIn("aaa-summary.lua  +61  −14", summary())
+        self.assertIn("Hunk 1 of 3", summary())
+        self.assertIn("↓ 2 more hunks below", summary())
+        self.assertIn(
+            "ReviewAdded",
+            self.lua(
+                editor,
+                """
+                local marks = vim.api.nvim_buf_get_extmarks(s.summary_buf,
+                    vim.api.nvim_get_namespaces()['rediff.file-summary'], 0, -1, {details=true})
+                return vim.tbl_map(function(mark) return mark[4].hl_group end, marks)
+                """,
+            ),
+        )
+        self.keys(editor, "<Tab>]Gzb")
+        self.assertIn("Hunk 3 of 3", summary())
+        self.assertIn("↑ 2 above", summary())
+        self.assertNotIn("below", summary())
+        self.assertIn("+61  −14", summary())
+
+        self.keys(editor, "ggzt")
+        self.assertIn("↓ 2 more hunks below", summary())
+        self.keys(editor, ":view merged<CR>")
+        self.assertIn("+61  −14", summary())
+        self.assertIn("↓ 2 more hunks below", summary())
+        self.keys(editor, "2]")
+        self.assertIn("Hunk 2 of 3", summary())
+        self.keys(editor, ":view split<CR>")
+        self.assertIn("Hunk 2 of 3", summary())
+
+        self.keys(editor, "ggzt")
+        editor.ui_try_resize(80, 32)
+        pump(editor)
+        self.assertIn("+61  −14", summary())
+        self.assertIn("Hunk 1/3", summary())
+        self.assertIn("↓ 2 below", summary())
+        self.assertTrue(
+            self.lua(
+                editor,
+                """
+                local text = vim.api.nvim_buf_get_lines(s.summary_buf, 0, 1, false)[1]
+                return vim.fn.strdisplaywidth(text) <= vim.api.nvim_win_get_width(s.summary_win)
+                """,
+            )
+        )
+        editor.ui_try_resize(132, 32)
+        pump(editor)
+
+        # Summary follows the displayed snapshot until refresh.
+        path.write_text("".join(original))
+        self.assertIn("+61  −14", summary())
+        self.keys(editor, " R")
+        self.assertNotIn("aaa-summary.lua", summary())
+        self.assertIn("auth.lua  +2  −2", summary())
+        self.keys(editor, ":fu<CR>2]")
+        self.assertIn("removed.lua  +0  −2", summary())
+        self.keys(editor, "]")
+        self.assertIn("plan.md  +2  −0", summary())
+        self.keys(editor, "<Tab>/no-such-file<CR>")
+        self.assertEqual(" No file selected", summary())
+        self.keys(editor, "q")
+        self.assertFalse(
+            editor.exec_lua(
+                "return vim.iter(vim.api.nvim_list_bufs()):any(function(buf) "
+                "return vim.bo[buf].filetype == 'rediff-file-summary' end)"
+            )
+        )
+
+    def test_file_summary_warns_about_partially_visible_deletions(self):
+        path = Path(self.root, "aaa-deleted.txt")
+        path.write_text("".join(f"Removed line {line}\n" for line in range(100)))
+        subprocess.run(["git", "-C", self.root, "add", path.name], check=True)
+        subprocess.run(
+            ["git", "-C", self.root, "commit", "-m", "Deletion baseline"],
+            check=True,
+            capture_output=True,
+        )
+        path.write_text("")
+        editor = self.launch(self.root)
+        self.lua(editor, "require('rediff.live').stop(s)")
+        self.keys(editor, "<Tab>ggzt")
+        summary = self.lua(
+            editor, "return vim.api.nvim_buf_get_lines(s.summary_buf, 0, 1, false)[1]"
+        )
+        self.assertIn("+0  −100", summary)
+        self.assertIn("Hunk 1 of 1", summary)
+        self.assertIn("↓ Continues below", summary)
+        self.keys(editor, ":view merged<CR>ggzt")
+        summary = self.lua(
+            editor, "return vim.api.nvim_buf_get_lines(s.summary_buf, 0, 1, false)[1]"
+        )
+        self.assertIn("+0  −100", summary)
+        self.assertIn("↑ Starts above", summary)
+        self.keys(editor, ":view split<CR>S")
+        self.assertNotIn(
+            "aaa-deleted.txt",
+            self.lua(editor, "return vim.api.nvim_buf_get_lines(s.summary_buf, 0, 1, false)[1]"),
+        )
+        self.keys(editor, ":fs<CR>")
+        self.assertIn(
+            "+0  −100",
+            self.lua(editor, "return vim.api.nvim_buf_get_lines(s.summary_buf, 0, 1, false)[1]"),
+        )
+
     def test_tree_filter_matches_full_paths_and_restores_selection_and_folds(self):
         paths = [
             "nix/default.nix",
@@ -5274,10 +5405,10 @@ func greeting() string {
         self.wait_for(editor, "vim.fn.filereadable(vim.env.HARNESS_TEST_LOG) == 1")
         self.assertEqual([self.root], log.read_text().splitlines())
         self.assertEqual("t", editor.api.get_mode()["mode"])
-        self.assertEqual(4, len(editor.api.tabpage_list_wins(0)))
+        self.assertEqual(5, len(editor.api.tabpage_list_wins(0)))
         job = editor.current.buffer.vars["terminal_job_id"]
         self.keys(editor, "<Esc>:hide<CR><Space>r<Space>r")
-        self.assertEqual(3, len(editor.api.tabpage_list_wins(0)))
+        self.assertEqual(4, len(editor.api.tabpage_list_wins(0)))
         self.keys(editor, ":ho<CR>")
         self.assertEqual(job, editor.current.buffer.vars["terminal_job_id"])
         self.assertEqual([self.root], log.read_text().splitlines())
@@ -5417,7 +5548,7 @@ func greeting() string {
             ),
         )
         self.assertEqual(
-            3, self.lua(editor, "return #vim.api.nvim_tabpage_list_wins(0)")
+            4, self.lua(editor, "return #vim.api.nvim_tabpage_list_wins(0)")
         )
         self.assertTrue(
             self.lua(editor, 'return require("rediff.harness").get(s.root).last == nil')
@@ -7273,7 +7404,7 @@ func greeting() string {
         index = subprocess.check_output(["git", "-C", self.root, "write-tree"])
         self.keys(editor, ":view merged<CR>")
         self.assertEqual(
-            ["merged", 2, 2],
+            ["merged", 3, 2],
             self.lua(
                 editor,
                 "return {s.layout, #vim.api.nvim_tabpage_list_wins(0), s.selected_hunk}",
@@ -7296,7 +7427,7 @@ func greeting() string {
         )
         self.keys(editor, ":view<CR>")
         self.assertEqual(
-            ["split", 3, 1],
+            ["split", 4, 1],
             self.lua(
                 editor,
                 "return {s.layout, #vim.api.nvim_tabpage_list_wins(0), #s.comments}",
@@ -8352,7 +8483,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         self.assertEqual("terminal", editor.current.buffer.options["buftype"])
         self.assertEqual("hide", editor.current.buffer.options["bufhidden"])
         self.assertEqual(tabs, len(editor.api.list_tabpages()))
-        self.assertEqual(4, len(editor.api.tabpage_list_wins(0)))
+        self.assertEqual(5, len(editor.api.tabpage_list_wins(0)))
         self.assertEqual(self.root, log.read_text().split("|")[0])
         self.keys(editor, "hello pane<CR>")
         self.wait_for(
@@ -8381,8 +8512,8 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         self.assertEqual("n", editor.api.get_mode()["mode"])
         self.keys(editor, ":ho<CR>")
         self.assertEqual(buf, editor.current.buffer.number)
-        self.assertEqual(4, len(editor.api.tabpage_list_wins(0)))
-        for layout, count in (("merged", 3), ("split", 4)):
+        self.assertEqual(5, len(editor.api.tabpage_list_wins(0)))
+        for layout, count in (("merged", 4), ("split", 5)):
             self.keys(
                 editor, f"<C-\\><C-n>:hide<CR>:view {layout}<CR>:harness open<CR>"
             )
@@ -8431,7 +8562,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
                 "Entering Review keeps the harness visible without :ho",
             )
             self.assertEqual(1, len(editor.funcs.win_findbuf(buf)))
-            self.assertEqual(4, len(editor.api.tabpage_list_wins(0)))
+            self.assertEqual(5, len(editor.api.tabpage_list_wins(0)))
             self.keys(editor, ":ho<CR>")
             self.assertEqual(job, editor.current.buffer.vars["terminal_job_id"])
         # Hiding in Review carries through both directions of the toggle.
@@ -8706,7 +8837,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         self.assertEqual(str(other) + "|session-b", log.read_text().splitlines()[1])
         other_job = editor.current.buffer.vars["terminal_job_id"]
         self.assertNotEqual(other_job, local_job)
-        self.assertEqual(4, len(editor.api.tabpage_list_wins(0)))
+        self.assertEqual(5, len(editor.api.tabpage_list_wins(0)))
         self.keys(editor, "<Esc>:worktree switch main<CR>:ho<CR>")
         self.assertEqual(local_job, editor.current.buffer.vars["terminal_job_id"])
         self.keys(editor, "<Esc>:worktree switch other<CR>:ho<CR>")
@@ -9051,11 +9182,11 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         )
         self.keys(editor, ":view merged<CR>")
         self.assertEqual(
-            2, self.lua(editor, "return #vim.api.nvim_tabpage_list_wins(0)")
+            3, self.lua(editor, "return #vim.api.nvim_tabpage_list_wins(0)")
         )
         self.keys(editor, ":view split<CR>")
         self.assertEqual(
-            3, self.lua(editor, "return #vim.api.nvim_tabpage_list_wins(0)")
+            4, self.lua(editor, "return #vim.api.nvim_tabpage_list_wins(0)")
         )
 
     def test_tree_staging_advances_and_combines_untracked(self):

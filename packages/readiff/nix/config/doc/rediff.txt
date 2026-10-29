@@ -257,6 +257,12 @@ both Git groups including untracked text files. Binary files contribute zero
 lines. In branch mode it counts the selected commit comparison. Totals cover
 the whole review even when paths are filtered, and update on refresh.
 
+The amber strip above the diff shows the current file's full added/deleted line
+counts and hunk position within the displayed comparison. Arrows show hunks
+outside the viewport, including changes farther down the file. The strip updates
+as you scroll. Use ] to visit the next hunk and [ to go back. Hunk position tracks
+your current location in the file.
+
 In the file tree, / focuses the inline Filter paths… field. Matching updates as
 you type, using case-insensitive fuzzy matching against repository-relative paths.
 For example, nx/tui matches nix/tests/test_ui.py. Matching characters are
