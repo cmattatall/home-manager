@@ -309,6 +309,10 @@ The portable shell configuration provides `nd` for explicitly entering a nested
 Nix shell. Keep employer-specific build, deployment, and database helpers in
 machine-local shell configuration outside this repository.
 
+With Bazel and fzf available, `bzlfind` selects and prints a target from `//...`.
+`bzlrun [arguments...]` selects a binary target and runs it, passing arguments
+after Bazel's `--`. Cancelling the picker leaves without running a target.
+
 In Bash, `nxd` runs plain `nix develop`, preserving the project's shell-hook
 functions, aliases, and completions. Nix loads `~/.bashrc`, and Starship renders
 the personal prompt. In Zsh, `nxd` keeps Zsh with `--command zsh -i`: exported

@@ -284,6 +284,57 @@ class GitWorktreeAddTest(StartupTestBase):
                     self.assertFalse((self.home / "should-not-run").exists())
 
 
+class BazelHelpersTest(StartupTestBase):
+    def test_selects_targets_and_forwards_run_arguments(self) -> None:
+        _write_stub(self.stub_dir, "bazel", textwrap.dedent("""\
+            case "$1" in
+                query)
+                    case "$2" in
+                        "kind('.*_binary|sh_binary', //...)")
+                            printf '%s\\n' '//app:first' '//app:binary' ;;
+                        '//...')
+                            printf '%s\\n' '//app:first' '//lib:library' ;;
+                        *) exit 2 ;;
+                    esac ;;
+                run) printf '<%s>\\n' "$@"; exit 7 ;;
+            esac
+        """))
+        _write_stub(self.stub_dir, "fzf", 'case "$1" in --bash|--zsh) exit 0;; esac\nsed -n "2p"')
+        for shell in filter(None, [BASH, ZSH]):
+            with self.subTest(shell=shell):
+                result = self.run_shell(shell, self.ordinary_dir, shell, "bzlfind")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "//lib:library\n")
+                result = self.run_shell(
+                    shell, self.ordinary_dir, shell, 'bzlrun --name "two words"'
+                )
+                self.assertEqual(result.returncode, 7, result.stderr)
+                self.assertEqual(result.stdout.splitlines(), [
+                    "<run>", "<//app:binary>", "<-->", "<--name>", "<two words>",
+                ])
+
+    def test_cancelled_selection_and_failed_query_do_not_run(self) -> None:
+        for shell in filter(None, [BASH, ZSH]):
+            for query_status, picker_status in ((0, 130), (7, 0)):
+                with self.subTest(shell=shell, query_status=query_status):
+                    _write_stub(self.stub_dir, "bazel", textwrap.dedent(f"""\
+                        if [ "$1" = query ]; then
+                            echo '//app:partial'
+                            exit {query_status}
+                        fi
+                        echo unexpected-run >&2
+                    """))
+                    _write_stub(self.stub_dir, "fzf", textwrap.dedent(f"""\
+                        case "$1" in --bash|--zsh) exit 0;; esac
+                        cat >/dev/null
+                        if [ {picker_status} = 0 ]; then echo '//app:partial'; fi
+                        exit {picker_status}
+                    """))
+                    result = self.run_shell(shell, self.ordinary_dir, shell, "bzlrun")
+                    self.assertEqual(result.returncode, picker_status or query_status)
+                    self.assertEqual(result.stdout + result.stderr, "")
+
+
 class HomeManagerAliasTest(StartupTestBase):
     def test_hm_pull_updates_only_the_pin_and_preserves_failed_switch_for_retry(self) -> None:
         old, new = "a" * 40, "b" * 40

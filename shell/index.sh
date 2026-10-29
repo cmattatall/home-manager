@@ -21,6 +21,7 @@ source_one jsonfmt.sh
 source_one textmanip.sh
 source_one paths.sh
 source_one cmake.sh
+source_one bazel.sh
 source_one arm-none-eabi.sh
 source_one llvm.sh
 source_one psql.sh
