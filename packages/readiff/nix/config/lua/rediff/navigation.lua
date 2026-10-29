@@ -34,8 +34,8 @@ function M.context_menu()
 	context_target = nil
 	pcall(vim.cmd, [[nunmenu PopUp.Copy\ Relative\ Path]])
 	pcall(vim.cmd, [[nunmenu PopUp.Copy\ Permalink]])
-	pcall(vim.cmd, [[nunmenu PopUp.gitgud:\ open\ pr]])
-	pcall(vim.cmd, [[nunmenu PopUp.gitgud:\ blame]])
+	pcall(vim.cmd, [[nunmenu PopUp.Git:\ open\ pr]])
+	pcall(vim.cmd, [[nunmenu PopUp.Git:\ blame]])
 	local mouse = vim.fn.getmousepos()
 	if mouse.winid == 0 or mouse.line == 0 then
 		return
@@ -55,9 +55,9 @@ function M.context_menu()
 	local is_snapshot = s and s.current and (buf == s.old_buf or buf == s.new_buf)
 	local is_file = vim.bo[buf].buftype == "" and api.nvim_buf_get_name(buf) ~= ""
 	if is_file or is_snapshot then
-		vim.cmd([[nnoremenu <silent> 1.10 PopUp.Copy\ Permalink <Cmd>GitGud copy-link<CR>]])
-		vim.cmd([[nnoremenu <silent> 1.20 PopUp.gitgud:\ open\ pr <Cmd>GitGud pr<CR>]])
-		vim.cmd([[nnoremenu <silent> 1.30 PopUp.gitgud:\ blame <Cmd>GitGud blame-line<CR>]])
+		vim.cmd([[nnoremenu <silent> 1.10 PopUp.Copy\ Permalink <Cmd>Git copy-link<CR>]])
+		vim.cmd([[nnoremenu <silent> 1.20 PopUp.Git:\ open\ pr <Cmd>Git pr<CR>]])
+		vim.cmd([[nnoremenu <silent> 1.30 PopUp.Git:\ blame <Cmd>Git blame-line<CR>]])
 	end
 end
 
@@ -69,7 +69,7 @@ end
 
 function M.copy_tree_link()
 	if context_target then
-		local ok, err = pcall(require("gitgud").copy_link, context_target)
+		local ok, err = pcall(require("rediff.history").copy_link, context_target)
 		if not ok then
 			vim.notify(tostring(err), vim.log.levels.ERROR)
 		end

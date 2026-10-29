@@ -300,9 +300,9 @@ class EditorUI(unittest.TestCase):
         for args in ("does-not-exist HEAD", "HEAD", "HEAD HEAD extra", "--all HEAD"):
             self.keys(editor, f":git diff {args}<CR>")
             self.assertEqual(snapshot, self.lua(editor, "return s.current.id"))
-        for args in ("", "status", "reset --hard"):
+        for args in ("status", "reset --hard"):
             self.keys(editor, f":git {args}<CR>")
-            self.assertIn("Usage: git diff", editor.vars["startup_notice"])
+            self.assertIn("Unknown Git action", editor.vars["startup_notice"])
             self.assertEqual(snapshot, self.lua(editor, "return s.current.id"))
         # Reverse order reverses additions/deletions, independently of HEAD.
         self.keys(editor, f":gd {target} {base}<CR>")
@@ -2307,17 +2307,18 @@ class EditorUI(unittest.TestCase):
             ),
         )
 
-    def test_gitgud_help_lists_actions_and_shortcuts_without_a_repository(self):
+    def test_git_help_lists_actions_and_shortcuts_without_a_repository(self):
         editor = self.launch(self.directory.name)
         source = editor.current.buffer.number
         window = editor.current.window.handle
-        actions = ["blame", "blame-line", "blame-toggle", "copy-link", "help", "pr", "toggle"]
+        actions = [
+            "base", "blame", "blame-line", "blame-toggle", "copy-link",
+            "diff", "help", "pr", "toggle",
+        ]
 
         for command, close in (
-            ("Gitgud", "q"),
-            ("GitGud", "<Esc>"),
-            ("gitgud", "q"),
-            ("gg", "<Esc>"),
+            ("Git", "q"),
+            ("git", "<Esc>"),
         ):
             self.keys(editor, f":{command} h<Tab>")
             self.assertTrue(editor.funcs.getcmdline().endswith(" help"))
@@ -2330,7 +2331,7 @@ class EditorUI(unittest.TestCase):
             for key, action in (
                 ("<Space>gb", "blame-line"),
                 ("<Space>gB", "blame"),
-                ("<Space>gi", "blame-toggle"),
+                ("<Space>gi", "toggle"),
                 ("<Space>gp", "pr"),
             ):
                 self.assertIn(f"{key}  →  {action}", text)
@@ -2344,13 +2345,30 @@ class EditorUI(unittest.TestCase):
             self.assertEqual(window, editor.current.window.handle)
             self.assertEqual(source, editor.current.buffer.number)
 
-        self.assertEqual(actions, editor.funcs.getcompletion("Gitgud ", "cmdline"))
+        self.assertEqual(actions, editor.funcs.getcompletion("Git ", "cmdline"))
+        self.assertEqual(["blame-line"], editor.funcs.getcompletion("Git blame-l", "cmdline"))
+        self.assertEqual([], editor.funcs.getcompletion("Git blame-line ", "cmdline"))
+        self.assertEqual([], editor.funcs.getcompletion("Git diff HEAD ", "cmdline"))
+        for command in ("GitGud", "Gitgud"):
+            self.assertEqual(0, editor.funcs.exists(":" + command))
+        for alias in ("gitgud", "gg"):
+            self.assertEqual("", editor.funcs.maparg(alias, "c", True))
+        self.keys(editor, ":git copy-<Tab>")
+        self.assertEqual("Git copy-link", editor.funcs.getcmdline())
+        self.keys(editor, "<C-c>")
+        for command in (
+            "blame extra", "toggle extra", "pr extra", "copy-link extra", "help extra",
+        ):
+            editor.command("Git " + command)
+            self.assertIn("Usage: git " + command.split()[0], editor.vars["startup_notice"])
+            self.assertEqual(window, editor.current.window.handle)
         editor.exec_lua("vim.keymap.del('n', '<leader>gp')")
-        editor.command("Gitgud help")
+        self.keys(editor, ":git<CR>")
+        self.assertIn("diff BASE TARGET", "\n".join(editor.current.buffer[:]))
         self.assertNotIn("<Space>gp", "\n".join(editor.current.buffer[:]))
         self.keys(editor, "q")
 
-        for text in (":echo 'gg ", "/gg "):
+        for text in (":echo 'git ", "/git "):
             self.keys(editor, text)
             self.assertEqual(text[1:], editor.funcs.getcmdline())
             self.keys(editor, "<C-c>")
@@ -2410,7 +2428,7 @@ class EditorUI(unittest.TestCase):
         def full_blame(authors):
             window = editor.current.window.handle
             source_lines = editor.current.buffer[:]
-            editor.command("GitGud blame")
+            editor.command("Git blame")
             self.wait_for(
                 editor,
                 "table.concat(vim.api.nvim_buf_get_lines(0,0,-1,false),' '):find('Second Author',1,true) ~= nil",
@@ -2433,12 +2451,8 @@ class EditorUI(unittest.TestCase):
         full_blame(
             [pending, pending, pending, "First Author", "Second Author", pending]
         )
-        blame(1, "Not committed yet", ":gitgud pr<CR>")
+        blame(1, "Not committed yet", ":git pr<CR>")
         self.assertEqual(0, editor.funcs.exists(":GitBlame"))
-        self.assertEqual(
-            ["blame", "blame-line", "blame-toggle", "copy-link", "help", "pr", "toggle"],
-            editor.funcs.getcompletion("GitGud ", "cmdline"),
-        )
         self.assertEqual("", editor.funcs.maparg("<Space>gP", "n"))
         editor.command("edit!")
         editor.command("tcd " + self.root)
@@ -2573,7 +2587,7 @@ class EditorUI(unittest.TestCase):
         editor.command("edit " + editor.funcs.fnameescape(str(outside)))
         self.assertNotRegex(header(), r"[+−]\d")
 
-    def test_gitgud_inline_blame_discards_stale_results(self):
+    def test_git_inline_blame_discards_stale_results(self):
         editor = self.launch(self.root, file="auth.lua")
         visible = """(function()
             local text = {}
@@ -2584,9 +2598,9 @@ class EditorUI(unittest.TestCase):
         end)()"""
         # Startup enables annotations without a command or explicit CursorHold.
         self.wait_for(editor, visible + ":find('Review Test',1,true) ~= nil")
-        self.keys(editor, ":gitgud<CR>")
+        self.keys(editor, ":git toggle<CR>")
         self.assertEqual("", self.lua(editor, "return " + visible))
-        editor.command("GitGud toggle")
+        editor.command("Git toggle")
         self.wait_for(editor, visible + ":find('Review Test',1,true) ~= nil")
         self.keys(editor, "4j")
         editor.command("doautocmd CursorHold")
@@ -2597,7 +2611,7 @@ class EditorUI(unittest.TestCase):
         self.keys(editor, "Iunsaved <Esc>")
         editor.command("doautocmd CursorHold")
         self.wait_for(editor, visible + ":find('Not committed yet',1,true) ~= nil")
-        editor.command("GitGud blame-toggle")
+        editor.command("Git blame-toggle")
         self.assertEqual("", self.lua(editor, "return " + visible))
         editor.command("edit!")
         editor.command("Review")
@@ -2607,14 +2621,14 @@ class EditorUI(unittest.TestCase):
         )
         editor.current.window.cursor = (5, 0)
         pump(editor)
-        editor.command("GitGud")
+        editor.command("Git toggle")
         self.wait_for(editor, visible + ":find('Review Test',1,true) ~= nil")
         self.lua(editor, "vim.api.nvim_set_current_win(s.new_win)")
         editor.current.window.cursor = (5, 0)
         pump(editor)
         editor.command("doautocmd CursorHold")
         self.wait_for(editor, visible + ":find('Not committed yet',1,true) ~= nil")
-        editor.command("GitGud")
+        editor.command("Git toggle")
         self.assertEqual("", self.lua(editor, "return " + visible))
         # Hold one real Git response until after focus and line have changed.
         editor.exec_lua("""
@@ -2631,7 +2645,7 @@ class EditorUI(unittest.TestCase):
             end
             restore_system = function() vim.system = system end
         """)
-        editor.command("GitGud blame-toggle")
+        editor.command("Git blame-toggle")
         self.wait_for(editor, "finish_blame ~= nil")
         self.keys(editor, "k")
         editor.exec_lua("restore_system(); finish_blame()")
@@ -2639,7 +2653,7 @@ class EditorUI(unittest.TestCase):
         self.assertNotIn("Not committed yet", self.lua(editor, "return " + visible))
         editor.command("doautocmd CursorHold")
         self.wait_for(editor, visible + ":find('Review Test',1,true) ~= nil")
-        editor.command("GitGud blame-toggle")
+        editor.command("Git blame-toggle")
         self.assertEqual("", self.lua(editor, "return " + visible))
 
     def test_github_links_map_unsaved_lines_to_committed_source(self):
@@ -2673,7 +2687,7 @@ class EditorUI(unittest.TestCase):
                 check=True,
             )
             editor.current.window.cursor = (4, 0)
-            editor.command("GitGud copy-link")
+            editor.command("Git copy-link")
             self.assertEqual(url + "#L4", editor.vars["copied"])
 
         editor.current.buffer[:] = [
@@ -2681,22 +2695,22 @@ class EditorUI(unittest.TestCase):
         ]
         for line, committed in ((2, 1), (4, 3), (5, 5), (6, 6)):
             editor.current.window.cursor = (line, 0)
-            editor.command("GitGud copy-link")
+            editor.command("Git copy-link")
             self.assertEqual(url + f"#L{committed}", editor.vars["copied"])
         for line in (1, 7):
             editor.vars["copied"] = "unchanged"
             editor.current.window.cursor = (line, 0)
-            editor.command("GitGud copy-link")
+            editor.command("Git copy-link")
             self.assertEqual("unchanged", editor.vars["copied"])
             self.assertIn("uncommitted changes", editor.vars["startup_notice"])
 
         editor.current.buffer[2] = "modified second"
         editor.current.window.cursor = (3, 0)
-        editor.command("GitGud copy-link")
+        editor.command("Git copy-link")
         self.assertEqual("unchanged", editor.vars["copied"])
         self.assertIn("uncommitted changes", editor.vars["startup_notice"])
         editor.command("edit! plan.md")
-        editor.command("GitGud copy-link")
+        editor.command("Git copy-link")
         self.assertEqual("unchanged", editor.vars["copied"])
         self.assertIn("no committed version", editor.vars["startup_notice"])
         subprocess.run(
@@ -2706,11 +2720,11 @@ class EditorUI(unittest.TestCase):
             ],
             check=True,
         )
-        editor.command("GitGud copy-link")
+        editor.command("Git copy-link")
         self.assertEqual("unchanged", editor.vars["copied"])
         self.assertIn("github.com", editor.vars["startup_notice"])
         subprocess.run(["git", "-C", self.root, "remote", "remove", "origin"], check=True)
-        editor.command("GitGud copy-link")
+        editor.command("Git copy-link")
         self.assertEqual("unchanged", editor.vars["copied"])
         self.assertIn("Configure a GitHub origin", editor.vars["startup_notice"])
 
@@ -2904,8 +2918,8 @@ class EditorUI(unittest.TestCase):
                 right_click(window, menu_line)
                 self.keys(editor, "<Esc>")
                 menu = editor.funcs.menu_info("PopUp", "n")["submenus"]
-                self.assertIn("gitgud: open pr", menu)
-                self.assertIn("gitgud: blame", menu)
+                self.assertIn("Git: open pr", menu)
+                self.assertIn("Git: blame", menu)
                 right_click(window, menu_line)
                 self.keys(editor, "<Down>" * (menu.index(command) + 1) + "<CR>")
             self.wait_for(
@@ -2921,9 +2935,9 @@ class EditorUI(unittest.TestCase):
             editor,
             "for i,e in ipairs(s.entries) do if e.path == 'auth.lua' then r.show(i); break end end; vim.api.nvim_set_current_win(s.old_win)",
         )
-        popup("gitgud: blame", "Review Test", menu_line=5)
+        popup("Git: blame", "Review Test", menu_line=5)
         self.keys(editor, "q")
-        popup("gitgud: open pr", "/pull/81", menu_line=5)
+        popup("Git: open pr", "/pull/81", menu_line=5)
         links = editor.exec_lua(
             "local urls = {}; for _,m in ipairs(vim.api.nvim_buf_get_extmarks(0,-1,0,-1,{details=true})) do if m[4].url then table.insert(urls,m[4].url) end end; return urls"
         )
@@ -2937,15 +2951,15 @@ class EditorUI(unittest.TestCase):
         right_click(editor.current.window.handle, 1)
         self.keys(editor, "<Esc>")
         menu = editor.funcs.menu_info("PopUp", "n")["submenus"]
-        self.assertNotIn("gitgud: open pr", menu)
-        self.assertNotIn("gitgud: blame", menu)
+        self.assertNotIn("Git: open pr", menu)
+        self.assertNotIn("Git: blame", menu)
         row = editor.current.buffer[:].index(links[0]) + 1
         editor.current.window.cursor = (row, 0)
         self.keys(editor, "y")
         self.assertEqual(links[0], editor.funcs.getreg('"'))
         self.keys(editor, "q")
         # The same PR action is available from a selected full-file blame row.
-        popup("GitGud blame", "return false")
+        popup("Git blame", "return false")
         editor.current.window.cursor = (5, 0)
         self.keys(editor, "p")
         self.wait_for(
@@ -2955,29 +2969,29 @@ class EditorUI(unittest.TestCase):
         self.assertIn("auth.lua:5", "\n".join(editor.current.buffer[:]))
         self.keys(editor, "qq")
         self.lua(editor, "vim.api.nvim_set_current_win(s.new_win)")
-        popup("gitgud: open pr", "Not committed yet", menu_line=5)
+        popup("Git: open pr", "Not committed yet", menu_line=5)
         self.keys(editor, "q")
-        popup("gitgud: blame", "Not committed yet", menu_line=5)
+        popup("Git: blame", "Not committed yet", menu_line=5)
         self.keys(editor, "q")
         right_click(self.lua(editor, "return s.tree_win"), 1)
         self.keys(editor, "<Esc>")
         menu = editor.funcs.menu_info("PopUp", "n")["submenus"]
-        self.assertNotIn("gitgud: open pr", menu)
-        self.assertNotIn("gitgud: blame", menu)
+        self.assertNotIn("Git: open pr", menu)
+        self.assertNotIn("Git: blame", menu)
         editor.command("ReviewLeave")
-        popup("gitgud: blame", "Not committed yet", menu_line=5)
+        popup("Git: blame", "Not committed yet", menu_line=5)
         self.keys(editor, "q")
-        popup("gitgud: open pr", "/pull/81", menu_line=3)
+        popup("Git: open pr", "/pull/81", menu_line=3)
         self.keys(editor, "q")
         response.write_text("")
-        popup("GitGud pr", "No pull request")
+        popup("Git pr", "No pull request")
         self.keys(editor, "q")
         response.write_text("error")
-        popup("GitGud pr", "GitHub authentication required")
+        popup("Git pr", "GitHub authentication required")
         self.keys(editor, "q")
         response.write_text("delay")
         window = editor.current.window.handle
-        popup("GitGud pr", "Looking up pull requests")
+        popup("Git pr", "Looking up pull requests")
         self.keys(editor, "q")
         time.sleep(1.1)
         pump(editor)

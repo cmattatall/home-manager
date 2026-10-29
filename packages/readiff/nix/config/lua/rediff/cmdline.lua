@@ -25,13 +25,13 @@ function M.suffix(line)
 		lead, matches = line, vim.fn.getcompletion(line, "command")
 	elseif
 		line:match("^Harness%s+[%a%s]*$")
-		or line:match("^Git%s+%a*$")
+		or line:match("^Git%s+[%a%-]*$")
 		or line:match("^Focus%s+%a*$")
 		or line:match("^Worktree%s+%a*$")
 		or line:match("^Annotations%s+%a*$")
 		or line:match("^Lsp%s+%a*$")
 	then
-		lead, matches = line:match("(%a*)$"), vim.fn.getcompletion(line, "cmdline")
+		lead, matches = line:match("([%a%-]*)$"), vim.fn.getcompletion(line, "cmdline")
 	else
 		return ""
 	end

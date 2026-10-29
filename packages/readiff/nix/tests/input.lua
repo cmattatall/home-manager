@@ -18,6 +18,8 @@ return function(equal)
 		{ "Harness use c", "laude" },
 		{ "workt", "ree" },
 		{ "Worktree sw", "itch" },
+		{ "Git blame-l", "ine" },
+		{ "Git copy-", "link" },
 		{ "Focus st", "aged" },
 		{ "Focus u", "nstaged" },
 		{ "Focus unstaged", "" },

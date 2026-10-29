@@ -2456,37 +2456,6 @@ function M.setup()
 		end),
 		{ range = true, desc = "Revert selected Git hunks and notify the agent" }
 	)
-	api.nvim_create_user_command(
-		"Git",
-		guard(function(opts)
-			local action = opts.fargs[1]
-			assert(
-				(action == "diff" and #opts.fargs == 3) or (action == "base" and #opts.fargs == 2),
-				"Usage: git diff BASE TARGET | git base BASE (commit SHAs, branches, or tags)"
-			)
-			local root = M.state and M.state.root or git.root()
-			local head = opts.fargs[3]
-			if action == "base" then
-				head = M.state and M.state.comparison and M.state.comparison.head or "HEAD"
-			end
-			M.open(root, git.comparison(root, opts.fargs[2], head))
-		end),
-		{
-			nargs = "*",
-			complete = function(lead, line, position)
-				if line:sub(1, position):match("^%s*Git%s+%S*$") then
-					return vim.tbl_filter(function(action)
-						return vim.startswith(action, lead)
-					end, { "base", "diff" })
-				end
-				return {}
-			end,
-		}
-	)
-	vim.cmd([[cnoreabbrev <expr> git getcmdtype() == ':' && getcmdline() == 'git' && getcmdpos() == 4 ? 'Git' : 'git']])
-	vim.cmd(
-		[[cnoreabbrev <expr> gd getcmdtype() == ':' && getcmdline() == 'gd' && getcmdpos() == 3 ? 'Git diff' : 'gd']]
-	)
 	local commands = {
 		Review = M.open,
 		ReviewLeave = M.leave,

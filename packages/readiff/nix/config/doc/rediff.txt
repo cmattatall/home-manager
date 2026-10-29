@@ -79,7 +79,6 @@ TARGET on the NEW side. Use full/short SHAs, branches, tags, or refs like HEAD~2
 For example: :git diff main HEAD or :git diff a1b2c3d e4f5a6b.
 Typed :gd BASE TARGET is a shortcut, in Review or ordinary editing.
 Scripts should use :Git diff. Normal-mode gd still finds symbol definitions.
-Tab completes base and diff; other Git subcommands are not supported.
 This is an exact endpoint diff, not a merge-base (three-dot) comparison.
 Both refs are resolved to fixed SHAs when opened. Space R refreshes those same
 commits; run :git diff again to pick up a moved branch. Local staged, unstaged,
@@ -188,35 +187,33 @@ The file header shows green +added and red −deleted totals for the same compar
 Replaced lines count as both additions and deletions. Counts update while editing
 and after staging. Files matching the index show +0 −0.
 Untracked files get green dashed marks. Review snapshots keep their own diff
-rendering; Gitsigns does not attach to them. GitGud remains the blame provider.
+rendering; Gitsigns does not attach to them.
 
-gitgud provides one interface in ordinary files and Review source panes:
-  Space g b / :GitGud blame-line   Show author, date and commit for this line
-  Space g B / :GitGud blame        Browse blame for every source line
-  Space g i / :GitGud toggle       Toggle inline blame for the focused line
-  Space g p / :GitGud pr           Show this line's associated PR links
+:git provides comparisons, blame, and links in ordinary files and Review:
+  Space g b / :git blame-line     Show author, date and commit for this line
+  Space g B / :git blame          Browse blame for every source line
+  Space g i / :git toggle         Toggle inline blame for the focused line
+  Space g p / :git pr             Show this line's associated PR links
 
-Right-click a source line and choose "gitgud: open pr" for its PR links or
-"gitgud: blame" for its author, date and commit. In Review, these actions use
+Right-click a source line and choose "Git: open pr" for its PR links or
+"Git: blame" for its author, date and commit. In Review, these actions use
 the clicked OLD/NEW snapshot.
 
 Choose "Copy Permalink" to copy a commit-pinned URL for the clicked line to
-the system clipboard. :GitGud copy-link does the same for the cursor line.
+the system clipboard. :git copy-link does the same for the cursor line.
 Links use the github.com origin remote (HTTPS or SSH) and HEAD, or the selected
 OLD/NEW commit in a branch comparison. Local edits before the line are accounted
 for. Added or modified lines without a committed counterpart report an error
 and preserve the clipboard. Push the referenced commit before sharing its link.
 For red virtual deletions in merged view, use the OLD pane in split view.
 
-:Gitgud help (also :GitGud help) opens a scrollable reference with all actions,
-configured Normal-mode shortcuts, and shortcuts inside Gitgud windows. It works
-from any buffer, including outside a Git repository. q/Esc closes it.
+:git or :git help opens a scrollable reference with all actions, configured
+Normal-mode shortcuts, and shortcuts inside Git windows. It works from any
+buffer, including outside a Git repository. q/Esc closes it.
 
-:Gitgud is an alias for :GitGud. :gitgud and :gg are typed aliases, so :gg help
-opens the same reference. Tab completes subcommands, including help.
-:GitGud without arguments toggles inline blame, just like :GitGud toggle.
-:GitGud blame-toggle remains an alias. In blame views, p shows the selected
-line's PRs. In full-file blame, Enter returns to that source line.
+Tab completes subcommands, including diff, base, and help. Scripts use :Git.
+:git blame-toggle is an alias for :git toggle. In blame views, p shows the
+selected line's PRs. In full-file blame, Enter returns to that source line.
 q/Esc closes the view.
 Full-file blame is read-only and keeps your editor/Review layout intact.
 
@@ -233,18 +230,10 @@ editing includes unsaved buffer contents. New/uncommitted lines have no commit
 or PR. Merged-view red deletions are virtual lines: switch to split view and use
 the OLD pane to blame them. Closing a loading popup discards late results.
 
-Inline blame is on by default. Use Space g i or :GitGud to toggle it. It follows
+Inline blame is on by default. Use Space g i or :git toggle to toggle it. It follows
 the focused source line after CursorHold, clears when you move/edit, and discards
 stale asynchronous results. It annotates the end of the line without replacing
 source text.
-
-The local gitgud Lua plugin also works without Rediff: copy lua/gitgud/ into your
-Neovim config's lua/ directory and call require('gitgud').setup(). It is tested
-with the bundled Neovim 0.12 and Git 2.54; gh is needed only for PR lookups.
-Rediff supplies snapshot context through setup's context() callback: return
-{root,path,head,text,side?}, where path is repo-relative, head is a
-pinned commit SHA (empty for unborn HEAD), and text is the exact snapshot.
-Return nil to use normal file-buffer discovery. No Gitsigns dependency.
 
 STAGED compares HEAD/index; UNSTAGED compares index/worktree and includes untracked
 files. Badges: M modified, U untracked, R rename, A added, D deleted. Partially
@@ -718,8 +707,10 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
   :Files / :Search             Fuzzy file / text search
   :Symbols / :WorkspaceSymbols Telescope file / workspace symbol search
   :Commands                   Find available commands
-  :GitGud blame[-line|-toggle] Full-file / current-line / inline blame
-  :GitGud pr                  Show links to this line's associated PRs
+  :Git blame[-line|-toggle]   Full-file / current-line / inline blame
+  :Git pr                    Show links to this line's associated PRs
+  :Git copy-link             Copy a permalink to the cursor line
+  :Git [help]                Git commands and shortcuts
   :View [split|merged]         Choose layout; no argument toggles
   :Focus staged|unstaged      Select first file/hunk in that group
   :ReviewRefresh              Refresh snapshots and file list

@@ -102,8 +102,8 @@ Implemented: tree/diff focus and pane switching; cross-file counted hunk and
 file navigation; fuzzy file/content search; staged/unstaged groups and status badges;
 hunk/file staging; protected diffs;
 line/range feedback drafts; help; live/manual refresh; and worktree switching
-and creation with a selected harness process. Our gitgud plugin provides line,
-full-file and inline blame plus clickable GitHub PR links in editing and Review.
+and creation with a selected harness process. `:git` provides commit comparisons,
+line, full-file and inline blame, and clickable GitHub PR links in editing and Review.
 PR links are displayed, never opened on the remote SSH host.
 
 Partial: annotations support native editing, exact ranges, fuzzy discovery and
