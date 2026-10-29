@@ -498,6 +498,152 @@ class EditorUI(unittest.TestCase):
         self.keys(editor, "q")
         self.assertEqual(original, checkout_state(self.root))
 
+    def test_pr_stack_discovery_fetches_exact_endpoints_and_preserves_checkout(self):
+        remote = Path(self.directory.name, "published")
+        subprocess.run(["git", "clone", "-q", self.root, str(remote)], check=True)
+
+        def remote_git(*args):
+            return subprocess.check_output(
+                ["git", "-C", str(remote), *args], text=True
+            ).strip()
+
+        remote_git("config", "user.name", "Reviewer")
+        remote_git("config", "user.email", "reviewer@example.test")
+        base = remote_git("rev-parse", "HEAD")
+        Path(remote, "stack.txt").write_text("first slice\n")
+        remote_git("add", "stack.txt")
+        remote_git("commit", "-qm", "First slice")
+        middle = remote_git("rev-parse", "HEAD")
+        Path(remote, "stack.txt").write_text("first slice\nsecond slice\n")
+        remote_git("commit", "-qam", "Second slice")
+        tip = remote_git("rev-parse", "HEAD")
+        for branch in ("foundation", "feature"):
+            subprocess.run(["git", "-C", self.root, "branch", branch], check=True)
+        original = checkout_state(self.root)
+        refs = subprocess.check_output(["git", "-C", self.root, "show-ref"])
+        fetch_head = Path(self.root, ".git", "FETCH_HEAD")
+        fetch_head.write_text("preserve previous fetch\n")
+
+        members = [
+            {"number": 42, "head": {"ref": "foundation", "sha": middle}},
+            {"number": 7, "head": {"ref": "feature", "sha": tip}},
+        ]
+        responses = {
+            "repo": {"nameWithOwner": "example/project", "url": remote.as_uri()},
+            "stacks": [[], [{
+                "number": 19, "open": True, "base": {"ref": "main"},
+                "pull_requests": members,
+            }]],
+        }
+        for number, title, parent, head, base_ref, head_ref in (
+            (42, "First slice", base, middle, "main", "foundation"),
+            (7, "Second slice", middle, tip, "foundation", "feature"),
+        ):
+            responses[str(number)] = {
+                "number": number, "title": title, "state": "open", "draft": number == 7,
+                "merged_at": None, "html_url": f"https://github.com/example/project/pull/{number}",
+                "base": {"sha": parent, "ref": base_ref},
+                "head": {"sha": head, "ref": head_ref},
+            }
+        response_file = Path(self.directory.name, "github.json")
+        response_file.write_text(json.dumps(responses))
+        mode_file = Path(self.directory.name, "github-mode")
+        mode_file.write_text("ok")
+        bin_dir = Path(self.directory.name, "bin")
+        bin_dir.mkdir()
+        fake_gh = bin_dir / "gh"
+        fake_gh.write_text(
+            f"#!{sys.executable}\n"
+            "import json, pathlib, sys, time\n"
+            f"mode = pathlib.Path({str(mode_file)!r}).read_text()\n"
+            "if mode == 'error': sys.stderr.write('GitHub authentication required'); sys.exit(1)\n"
+            "if mode == 'delay': time.sleep(1)\n"
+            f"responses = json.loads(pathlib.Path({str(response_file)!r}).read_text())\n"
+            "if sys.argv[1:3] == ['repo', 'view']: key = 'repo'\n"
+            "elif sys.argv[1] == 'api':\n"
+            "    endpoint = sys.argv[-1]\n"
+            "    key = 'stacks' if '/stacks?' in endpoint else endpoint.rsplit('/', 1)[-1]\n"
+            "else: sys.exit('Unexpected GitHub command')\n"
+            "print(json.dumps(responses[key]))\n"
+        )
+        fake_gh.chmod(0o755)
+        editor = self.launch(self.root)
+        editor.exec_lua("vim.env.PATH = ... .. ':' .. vim.env.PATH", str(bin_dir))
+
+        def discover():
+            self.keys(editor, ":git pr-stack<CR>")
+            self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+
+        discover()
+        self.keys(editor, "<Esc>")
+        self.assertTrue(self.lua(editor, "return s.comparison == nil"))
+        discover()
+        self.keys(editor, "19<CR>")
+        self.wait_for(editor, "s.comparison and s.comparison.pr ~= nil")
+        self.assertEqual(
+            [base, middle, 42],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head, s.comparison.pr.number}"),
+        )
+        self.assertEqual("first slice\n", self.lua(editor, "return s.current.new"))
+        self.keys(editor, " gu")
+        self.assertEqual(
+            [middle, tip, 7, "draft"],
+            self.lua(editor, """
+                return {s.comparison.base, s.comparison.head, s.comparison.pr.number, s.comparison.pr.state}
+            """),
+        )
+        self.assertEqual(
+            ["first slice\n", "first slice\nsecond slice\n"],
+            self.lua(editor, "return {s.current.old, s.current.new}"),
+        )
+        selected = self.lua(editor, "return s.comparison")
+        editor.command("Git refresh-refs")
+        self.assertIn("reload comparisons from GitHub", editor.vars["startup_notice"])
+        self.assertEqual(selected, self.lua(editor, "return s.comparison"))
+        self.keys(editor, " gc")
+        self.assertIn("PR #7 · Second slice", "\n".join(editor.current.buffer[:]))
+        self.assertIn(responses["7"]["html_url"], "\n".join(editor.current.buffer[:]))
+        self.keys(editor, "q")
+
+        responses["7"]["head"]["sha"] = "1" * 40
+        response_file.write_text(json.dumps(responses))
+        discover()
+        self.keys(editor, "19<CR>")
+        self.wait_for(editor, """
+            table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\\n')
+                :find('Lookup failed', 1, true) ~= nil
+        """)
+        self.keys(editor, "q")
+        self.assertEqual(selected, self.lua(editor, "return s.comparison"))
+
+        responses["stacks"] = [[]]
+        response_file.write_text(json.dumps(responses))
+        self.keys(editor, " gS")
+        self.wait_for(editor, """
+            table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\\n')
+                :find('No open GitHub PR stacks', 1, true) ~= nil
+        """)
+        self.keys(editor, "q")
+        self.assertEqual(selected, self.lua(editor, "return s.comparison"))
+
+        mode_file.write_text("error")
+        self.keys(editor, " gS")
+        self.wait_for(editor, """
+            table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\\n')
+                :find('GitHub authentication required', 1, true) ~= nil
+        """)
+        self.keys(editor, "q")
+        self.assertEqual(selected, self.lua(editor, "return s.comparison"))
+        mode_file.write_text("delay")
+        self.keys(editor, " gSq")
+        time.sleep(1.2)
+        pump(editor)
+        self.assertNotEqual("fzf", editor.current.buffer.options["filetype"])
+        self.assertEqual(selected, self.lua(editor, "return s.comparison"))
+        self.assertEqual(original, checkout_state(self.root))
+        self.assertEqual(refs, subprocess.check_output(["git", "-C", self.root, "show-ref"]))
+        self.assertEqual("preserve previous fetch\n", fetch_head.read_text())
+
     def test_base_compares_commits_to_live_worktree_including_staged_and_untracked(self):
         def git(*args):
             return subprocess.check_output(
@@ -2802,7 +2948,7 @@ class EditorUI(unittest.TestCase):
         window = editor.current.window.handle
         actions = [
             "base", "blame", "blame-line", "blame-toggle", "comparison", "copy-link",
-            "diff", "down", "help", "pr", "refresh-refs", "stack", "toggle", "up",
+            "diff", "down", "help", "pr", "pr-stack", "refresh-refs", "stack", "toggle", "up",
         ]
 
         for command, close in (

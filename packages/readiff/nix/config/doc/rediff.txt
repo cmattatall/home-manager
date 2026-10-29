@@ -119,6 +119,24 @@ a new stack or opening :git diff/:git base replaces that worktree's stack.
 Returning to :Review leaves the stack available through Space gs.
 Notes and feedback remain shared within the worktree across comparisons.
 
+GITHUB PR STACKS
+
+Space gS or :git pr-stack discovers published, open GitHub stacks in the current
+repository. Choose a stack to review its PRs in base-to-tip order, then use
+Space gu/gd to move between PRs and Space gs to choose a comparison. Space gc
+shows the PR title, status, URL, and full commit IDs. The discovery action is
+also available in Space p.
+
+Authenticate with gh auth login on the machine running readiff. Discovery uses
+the repository selected by gh repo view and requires GitHub's stacks API.
+Unpublished local stacks can be opened with :git stack REF REF ... instead.
+
+Each comparison uses the PR's exact base and head commits reported by GitHub,
+including when local branches differ. Missing commit objects are fetched into
+the local repository. Checkout, local branch refs, the index, and working files
+are preserved. Ordinary refresh keeps those commits. Run :git pr-stack again
+to load updated PRs.
+
 BASE DIFF MODE
 
 :git base BASE compares a commit against the saved working tree, including
@@ -751,6 +769,7 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
   :Git base [BASE]            Compare a ref against saved working files, or prompt
   :Git comparison            Show refs, commit IDs, checkout, and harness
   :Git stack [REF REF ...]    Choose or define adjacent comparisons
+  :Git pr-stack              Discover published GitHub PR stacks
   :Git up / :Git down         Move toward the tip / base of the comparison stack
   :Git refresh-refs           Resolve the current comparison's refs again
   :Explorer / :FocusDiff       Focus tree / diff or editor

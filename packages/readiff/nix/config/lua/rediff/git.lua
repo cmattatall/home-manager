@@ -51,7 +51,8 @@ function M.comparison_label(comparison)
 	end
 	local base = endpoint(comparison.base, comparison.base_ref)
 	local head = comparison.head and endpoint(comparison.head, comparison.head_ref) or "WORKTREE"
-	return base .. " → " .. head
+	local label = base .. " → " .. head
+	return comparison.pr and ("PR #" .. comparison.pr.number .. " · " .. label) or label
 end
 
 function M.refs(root, lead)

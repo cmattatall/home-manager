@@ -95,9 +95,19 @@ local function details()
 		"Worktree: " .. s.root,
 		require("rediff.harness").statusline(s.root),
 		"",
-		":git refresh-refs resolves the input refs again.",
+		comparison.pr and ":git pr-stack reloads comparisons from GitHub."
+			or ":git refresh-refs resolves the input refs again.",
 		"Notes and feedback remain shared within this worktree.",
 	}
+	if comparison.pr then
+		local pr = comparison.pr
+		vim.list_extend(lines, {
+			"",
+			pr.repository .. " · Stack #" .. pr.stack .. " · " .. pr.state,
+			"PR #" .. pr.number .. " · " .. pr.title,
+			pr.url,
+		})
+	end
 	require("rediff.git_popup")
 		.open("Comparison · OLD → NEW", "q/Esc close · Space gu up · Space gd down")
 		.show(lines)
@@ -123,6 +133,13 @@ local actions = {
 		usage = "stack [REF REF ...]",
 		description = "Choose or define a comparison stack",
 		key = "gs",
+	},
+	["pr-stack"] = {
+		run = function()
+			require("rediff.pr_stack").discover(root())
+		end,
+		description = "Discover GitHub PR stacks",
+		key = "gS",
 	},
 	up = {
 		run = function()

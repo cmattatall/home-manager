@@ -105,6 +105,10 @@ function M.choose(root)
 	for index, item in ipairs(stack) do
 		local marker = index == current and " * " or "   "
 		rows[index] = index .. marker .. git.comparison_label(item.comparison)
+		if item.comparison.pr then
+			local pr = item.comparison.pr
+			rows[index] = rows[index] .. " · " .. pr.state .. " · " .. vim.fn.strtrans(pr.title)
+		end
 	end
 	require("fzf-lua").fzf_exec(rows, {
 		prompt = "Comparisons> ",
@@ -130,6 +134,7 @@ function M.refresh(root)
 	local s = require("rediff.review").state
 	assert(s and s.comparison, "Open a comparison before refreshing refs")
 	local comparison = s.comparison
+	assert(not comparison.pr, "Use :git pr-stack to reload comparisons from GitHub")
 	local refreshed =
 		git.comparison(root, comparison.base_ref or comparison.base, comparison.head_ref or comparison.head)
 	local index = M.position(root, comparison)
