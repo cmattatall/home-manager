@@ -39,6 +39,7 @@ format = '[\($branch\)]($style) '
 style = 'green'
 
 [nix_shell]
+symbol = '❄️ '
 format = '[$symbol]($style)'
 style = 'cyan'
 
