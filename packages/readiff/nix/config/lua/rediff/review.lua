@@ -702,8 +702,10 @@ local function read_changes(s, preferred, cached_entries)
 	if cached_entries then
 		reference = s.reference
 	elseif s.comparison then
-		local target = s.comparison.head and s.comparison.head:sub(1, 12) or "WORKTREE"
-		reference = s.comparison.base:sub(1, 12) .. " → " .. target
+		local index, count = require("rediff.comparison_stack").position(s.root, s.comparison)
+		local position = index and (index .. "/" .. count .. " · ") or ""
+		reference = position .. git.comparison_label(s.comparison)
+		s.checkout = git.reference(s.root)
 	else
 		reference = git.reference(s.root)
 	end
@@ -768,21 +770,27 @@ function M.refresh(preferred, changes)
 	local deletions = "−" .. s.line_totals.deleted
 	local title = " REVIEW · Git changes"
 	if s.comparison then
-		title = s.comparison.head and " BRANCH DIFF · Commits" or " BASE DIFF · Working tree"
+		local index, count = require("rediff.comparison_stack").position(s.root, s.comparison)
+		title = " COMPARE" .. (index and (" " .. index .. "/" .. count) or "")
 	end
 	local lines = {
 		title,
 		" Total  " .. additions .. "  " .. deletions,
 	}
+	if s.comparison then
+		table.insert(lines, " Space gc details")
+		table.insert(lines, " Space gu up")
+		table.insert(lines, " Space gd down")
+	end
 	if s.file_filter and s.file_filter ~= "" then
 		vim.wo[s.tree_win].winbar = " / %<"
 			.. vim.fn.strtrans(s.file_filter):gsub("%%", "%%%%")
 			.. string.format(" %%=%d/%d ", #s.entries, #s.all_entries)
-		lines[3] = string.format(" %d of %d changes", #s.entries, #s.all_entries)
-		lines[4] = " / edit · Esc clear"
+		table.insert(lines, string.format(" %d of %d changes", #s.entries, #s.all_entries))
+		table.insert(lines, " / edit · Esc clear")
 	else
 		vim.wo[s.tree_win].winbar = " / Filter paths…"
-		lines[3] = string.format(" %d changes", #s.all_entries)
+		table.insert(lines, string.format(" %d changes", #s.all_entries))
 	end
 	local rows = {}
 	s.group_rows = {}
@@ -793,7 +801,8 @@ function M.refresh(preferred, changes)
 				count = count + 1
 			end
 		end
-		table.insert(lines, string.format(" ▾ %s (%d)", group:upper(), count))
+		local label = group == "branch" and "COMMITS" or group:upper()
+		table.insert(lines, string.format(" ▾ %s (%d)", label, count))
 		s.group_rows[group] = #lines
 		for i, entry in ipairs(s.entries) do
 			if tree_group(entry) == group then
@@ -2029,8 +2038,9 @@ function M.open(root, comparison)
 	if M.state then
 		assert(root == M.state.root, "Leave the other repository's Review first")
 		if vim.deep_equal(comparison, M.state.comparison) then
+			M.state.comparison = comparison
 			api.nvim_set_current_tabpage(M.state.tab)
-			if comparison and not comparison.head then
+			if comparison and not M.state.composer then
 				M.refresh(M.state.current)
 			end
 			return
@@ -2176,10 +2186,13 @@ function M.statusline()
 			or (#s.entries > 0 and "No file selected" or "No changes")
 		local mode = "REVIEW"
 		if s.comparison then
-			mode = s.comparison.head and "BRANCH DIFF" or "BASE DIFF"
+			mode = "COMPARE"
 		end
-		return "%#RediffMode# " .. mode .. " %*· "
+		return "%#RediffMode# "
+			.. mode
+			.. " %*· "
 			.. vim.fn.strtrans(s.reference or ""):gsub("%%", "%%%%")
+			.. (s.checkout and (" · checkout: " .. vim.fn.strtrans(s.checkout):gsub("%%", "%%%%")) or "")
 			.. " · "
 			.. directory
 			.. " · "

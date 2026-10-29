@@ -200,6 +200,13 @@ PATH precedence, and integration with an existing home configuration.
    retries a failed batch. Staged hunks revert in both index and worktree;
    files with unstaged edits must be unstaged first.
 
+To review a sequence of refs, use `:git stack v1.0 origin/topic HEAD~1 HEAD`.
+**Space gu/gd** moves up/down its adjacent comparisons without checking out code.
+**Space gs** chooses a comparison, **Space gc** shows its endpoints, and
+**Space gD** prompts for a new pair. Find these actions in **Space p**.
+See `:help rediff-review` for ref refresh, working-tree comparisons, and stack
+lifetime. Notes and feedback are shared across comparisons in a worktree.
+
 For a live Amp session, `:harness install amp` installs the readiff and desloppify
 plugins. Alternatively, enable `programs.rediff.ampPlugin.enable` in Home Manager. Reload Amp's
 plugins, then run `:harness connect amp`. `:harness list` shows available and

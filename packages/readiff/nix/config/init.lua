@@ -293,7 +293,7 @@ for _, binding in ipairs({
 			if vim.bo.filetype == "help" and vim.api.nvim_win_get_config(0).relative ~= "" then
 				vim.cmd.close()
 			end
-			require("fzf-lua").commands()
+			require("rediff.git_commands").palette()
 		end,
 		"Find commands",
 	},

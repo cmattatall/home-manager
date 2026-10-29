@@ -38,7 +38,31 @@ function M.comparison(root, base, head)
 	local function resolve(ref)
 		return vim.trim(M.run(root, { "rev-parse", "--verify", "--end-of-options", ref .. "^{commit}" }))
 	end
-	return { base = resolve(base), head = head and resolve(head) }
+	return { base = resolve(base), head = head and resolve(head), base_ref = base, head_ref = head }
+end
+
+function M.comparison_label(comparison)
+	local function endpoint(commit, ref)
+		local label = commit:sub(1, 12)
+		if ref and not vim.startswith(commit, ref) then
+			label = label .. " (" .. ref .. ")"
+		end
+		return label
+	end
+	local base = endpoint(comparison.base, comparison.base_ref)
+	local head = comparison.head and endpoint(comparison.head, comparison.head_ref) or "WORKTREE"
+	return base .. " → " .. head
+end
+
+function M.refs(root, lead)
+	local output =
+		M.run(root, { "for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes", "refs/tags" })
+	local refs = vim.split(output, "\n", { trimempty = true })
+	table.insert(refs, "HEAD")
+	table.sort(refs)
+	return vim.tbl_filter(function(ref)
+		return vim.startswith(ref, lead)
+	end, refs)
 end
 
 function M.entries(root, comparison)

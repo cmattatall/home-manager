@@ -73,20 +73,51 @@ Outside Git, startup stays in ordinary editing without a sidebar.
 Headless runs open neither Review nor the tree. Space r toggles Review.
 The bottom bar shows the branch (or detached @short-SHA), harness and delivery.
 
-BRANCH DIFF MODE
+COMPARING GIT REFS
 
 :git diff BASE TARGET compares two commits, with BASE on the OLD side and
-TARGET on the NEW side. Use full/short SHAs, branches, tags, or refs like HEAD~2.
+TARGET on the NEW side. Use full/short SHAs, branches, tags, remote-tracking refs,
+or expressions like HEAD~2. :git diff without arguments prompts for both refs.
 For example: :git diff main HEAD or :git diff a1b2c3d e4f5a6b.
 Typed :gd BASE TARGET is a shortcut, in Review or ordinary editing.
 Scripts should use :Git diff. Normal-mode gd still finds symbol definitions.
 This is an exact endpoint diff, not a merge-base (three-dot) comparison.
 Both refs are resolved to fixed SHAs when opened. Space R refreshes those same
-commits; run :git diff again to pick up a moved branch. Local staged, unstaged,
-and untracked changes are excluded. Renames appear as a deletion and addition.
+commits. :git refresh-refs resolves the current comparison's expressions again.
+Local staged, unstaged, and untracked changes are excluded. Renames appear as a
+deletion and addition.
 Split/merged views, file/hunk navigation, filtering, and annotations work as in
 Review. Staging, reverting, and :fs/:fu are unavailable here. :Review returns to
 worktree changes; Space q leaves for editing. Notes retain their commit snapshots.
+
+The comparison header shows resolved commit IDs, input refs in parentheses,
+and stack position. The statusline labels the checked-out branch separately.
+Space gc opens full comparison details, including commit IDs and the feedback
+harness.
+Space p lists searchable Git actions with descriptions and keyboard shortcuts.
+Tab completes branches, tags, and remote-tracking refs in comparison commands and
+prompts. You can also type any expression that Git resolves to a commit.
+
+COMPARISON STACKS
+
+:git stack REF REF ... defines adjacent comparisons and opens the first.
+For example, :git stack v1.0 origin/foundation HEAD~1 HEAD creates three
+comparisons. Each pair is resolved when the stack is defined.
+With no stack defined, Space gs or :git stack prompts for space-separated refs
+in base-to-tip order. Escape or an empty answer keeps the current Review.
+
+  Space gu / :git up       Next comparison toward the tip
+  Space gd / :git down     Previous comparison toward the base
+  Space gs / :git stack    Choose a comparison from the stack
+  Space gD / :git diff     Prompt for a new pair of refs
+  Space gc                Show current comparison details
+
+Up/down stops at the ends and restores each comparison's selected file, layout,
+and position. Close the annotation composer before switching comparisons.
+The stack lasts for this editor session, separately for each worktree. Defining
+a new stack or opening :git diff/:git base replaces that worktree's stack.
+Returning to :Review leaves the stack available through Space gs.
+Notes and feedback remain shared within the worktree across comparisons.
 
 BASE DIFF MODE
 
@@ -94,9 +125,9 @@ BASE DIFF MODE
 staged, unstaged, and untracked changes in one WORKTREE group. For example,
 :git base HEAD~1 includes the last commit and your local changes. :git base HEAD
 shows local changes against HEAD. Save editor buffers to include their edits.
-Scripts use :Git base BASE.
+:git base without arguments prompts for its base. Scripts use :Git base BASE.
 
-The base is pinned to its resolved SHA. Live refresh and Space R update the
+The base uses the commit resolved when opened. Live refresh and Space R update the
 working-tree side. Repeating :git base BASE resolves the base again and refreshes.
 Split/merged views, navigation, filtering, and annotations work as in Review.
 Use :Review for separate staged/unstaged groups, staging, and reverting.
@@ -716,8 +747,12 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
 :focus = :Focus, :fs = :Focus staged, :fu = :Focus unstaged.
 
   :Review / :ReviewLeave       Enter worktree Review / leave Review
-  :Git diff BASE TARGET       Compare two commits (SHAs, branches, or tags)
-  :Git base BASE              Compare a commit against the saved working tree
+  :Git diff [BASE TARGET]     Compare two commit-ish refs, or prompt
+  :Git base [BASE]            Compare a ref against saved working files, or prompt
+  :Git comparison            Show refs, commit IDs, checkout, and harness
+  :Git stack [REF REF ...]    Choose or define adjacent comparisons
+  :Git up / :Git down         Move toward the tip / base of the comparison stack
+  :Git refresh-refs           Resolve the current comparison's refs again
   :Explorer / :FocusDiff       Focus tree / diff or editor
   :Files / :Search             Fuzzy file / text search
   :Symbols / :WorkspaceSymbols Telescope file / workspace symbol search

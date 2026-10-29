@@ -3,48 +3,181 @@ local api = vim.api
 local history = require("rediff.history")
 local git = require("rediff.git")
 local review = require("rediff.review")
+local stack = require("rediff.comparison_stack")
+
+local function root()
+	return review.state and review.state.root or git.root()
+end
+
+local function guarded(fn)
+	local ok, err = pcall(fn)
+	if not ok then
+		vim.notify(tostring(err), vim.log.levels.ERROR)
+	end
+end
 
 local function compare(args)
 	local action = args[1]
+	local directory = root()
+	if #args == 1 then
+		vim.ui.input({ prompt = "Base ref (OLD): ", completion = "customlist,v:lua.RediffGitRefs" }, function(base)
+			if not base or base == "" then
+				return
+			end
+			local function open(head)
+				guarded(function()
+					assert(root() == directory, "Worktree changed. Choose the comparison again")
+					stack.set(directory, { git.comparison(directory, base, head) })
+				end)
+			end
+			if action == "base" then
+				open()
+			else
+				vim.ui.input(
+					{ prompt = "Target ref (NEW): ", completion = "customlist,v:lua.RediffGitRefs" },
+					function(head)
+						if head and head ~= "" then
+							open(head)
+						end
+					end
+				)
+			end
+		end)
+		return
+	end
 	assert(
 		(action == "diff" and #args == 3) or (action == "base" and #args == 2),
 		"Usage: git diff BASE TARGET | git base BASE (commit SHAs, branches, or tags)"
 	)
-	local state = review.state
-	local root = state and state.root or git.root()
-	review.open(root, git.comparison(root, args[2], args[3]))
+	stack.set(directory, { git.comparison(directory, args[2], args[3]) })
+end
+
+local function comparisons(args)
+	local directory = root()
+	if #args == 1 then
+		if stack.choose(directory) then
+			return
+		end
+		vim.ui.input({ prompt = "Stack refs (base to tip, space-separated): " }, function(input)
+			if not input or vim.trim(input) == "" then
+				return
+			end
+			guarded(function()
+				assert(root() == directory, "Worktree changed. Choose the comparison again")
+				local refs = vim.split(input, "%s+", { trimempty = true })
+				local arguments = vim.list_extend({ "stack" }, refs)
+				comparisons(arguments)
+			end)
+		end)
+		return
+	end
+	assert(#args >= 3, "Usage: git stack REF REF ... (at least two refs)")
+	local items = {}
+	for index = 2, #args - 1 do
+		table.insert(items, git.comparison(directory, args[index], args[index + 1]))
+	end
+	stack.set(directory, items)
+end
+
+local function details()
+	local s = review.state
+	assert(s and s.comparison, "Open a comparison with :git diff or :git base first")
+	local comparison = s.comparison
+	local index, count = stack.position(s.root, comparison)
+	local lines = {
+		git.comparison_label(comparison),
+		index and string.format("Comparison %d of %d", index, count) or "Comparison",
+		"",
+		"OLD  " .. comparison.base,
+		"NEW  " .. (comparison.head or "WORKTREE (saved staged, unstaged, and untracked files)"),
+		"",
+		"Checkout: " .. git.reference(s.root),
+		"Worktree: " .. s.root,
+		require("rediff.harness").statusline(s.root),
+		"",
+		":git refresh-refs resolves the input refs again.",
+		"Notes and feedback remain shared within this worktree.",
+	}
+	require("rediff.git_popup")
+		.open("Comparison · OLD → NEW", "q/Esc close · Space gu up · Space gd down")
+		.show(lines)
 end
 
 local actions = {
-	base = compare,
-	diff = compare,
-	blame = history.blame,
-	["blame-line"] = function()
-		history.blame_line(false)
-	end,
-	["blame-toggle"] = history.toggle_inline,
-	toggle = history.toggle_inline,
-	["copy-link"] = history.copy_link,
-	pr = function()
-		history.blame_line(true)
-	end,
+	base = {
+		run = compare,
+		arguments = true,
+		usage = "base [BASE]",
+		description = "Compare a ref to saved working files",
+	},
+	diff = {
+		run = compare,
+		arguments = true,
+		usage = "diff BASE TARGET (or prompt)",
+		description = "Compare two Git refs",
+		key = "gD",
+	},
+	stack = {
+		run = comparisons,
+		arguments = true,
+		usage = "stack [REF REF ...]",
+		description = "Choose or define a comparison stack",
+		key = "gs",
+	},
+	up = {
+		run = function()
+			stack.move(root(), 1)
+		end,
+		description = "Next comparison toward the tip",
+		key = "gu",
+	},
+	down = {
+		run = function()
+			stack.move(root(), -1)
+		end,
+		description = "Previous comparison toward the base",
+		key = "gd",
+	},
+	comparison = { run = details, description = "Show comparison refs, commits, and checkout", key = "gc" },
+	["refresh-refs"] = {
+		run = function()
+			stack.refresh(root())
+		end,
+		description = "Resolve current comparison refs again",
+	},
+	blame = { run = history.blame, description = "Browse blame for every source line", key = "gB" },
+	["blame-line"] = {
+		run = function()
+			history.blame_line(false)
+		end,
+		description = "Show this line's author, date and commit",
+		key = "gb",
+	},
+	["blame-toggle"] = { run = history.toggle_inline, description = "Toggle inline blame" },
+	toggle = { run = history.toggle_inline, description = "Toggle inline blame", key = "gi" },
+	["copy-link"] = { run = history.copy_link, description = "Copy a permalink to this line" },
+	pr = {
+		run = function()
+			history.blame_line(true)
+		end,
+		description = "Show this line's associated GitHub PR links",
+		key = "gp",
+	},
 }
 
-function actions.help()
+local function help()
 	local lines = {
 		"Commands · :git · Tab completes actions · scripts use :Git",
-		"  diff BASE TARGET       Compare two commits, branches, or tags",
-		"  base BASE              Compare a commit against the working tree",
-		"  blame-line             Show this line's author, date and commit",
-		"  blame                  Browse blame for every source line",
-		"  toggle / blame-toggle  Toggle inline blame (on by default)",
-		"  pr                     Show this line's associated GitHub PR links",
-		"  copy-link              Copy a permalink to this line",
-		"  help / (no action)     Show this reference",
+	}
+	for _, name in ipairs(vim.fn.sort(vim.tbl_keys(actions))) do
+		local action = actions[name]
+		table.insert(lines, "  " .. (action.usage or name) .. "  · " .. action.description)
+	end
+	vim.list_extend(lines, {
 		"  :gd BASE TARGET        Typed shortcut for :git diff BASE TARGET",
 		"",
 		"Configured shortcuts · Normal mode",
-	}
+	})
 	local shortcuts = {}
 	for _, mapping in ipairs(api.nvim_get_keymap("n")) do
 		local action = (mapping.rhs or ""):match("^<Cmd>Git (.-)<CR>$")
@@ -75,22 +208,60 @@ function actions.help()
 	require("rediff.git_popup").open("Git · help · Ctrl-f/Ctrl-b page · q/Esc close", "/ search").show(lines)
 end
 
+actions.help = { run = help, description = "Git commands and shortcuts" }
+
 local function execute(args)
 	local name = args[1] or "help"
 	local action = assert(actions[name], "Unknown Git action. Use :git help or Tab to complete")
-	if name == "diff" or name == "base" then
-		return action(args)
+	if action.arguments then
+		return action.run(args)
 	end
 	assert(#args <= 1, "Usage: git " .. name)
-	action()
+	action.run()
+end
+
+function M.palette()
+	local s = review.active()
+	local header = s and s.comparison and ("Comparing " .. git.comparison_label(s.comparison)) or "Commands"
+	require("fzf-lua").commands({
+		header = header,
+		flatten = {
+			Git = function()
+				local rows = {}
+				for _, name in ipairs(vim.fn.sort(vim.tbl_keys(actions))) do
+					local action = actions[name]
+					local key = action.key and (" [Space " .. action.key .. "]") or ""
+					table.insert(rows, name .. "  · " .. action.description .. key)
+				end
+				return rows
+			end,
+		},
+		actions = {
+			["enter"] = function(selected, opts)
+				local action = selected[1] and selected[1]:match("^Git (%S+)")
+				if action and actions[action] then
+					guarded(function()
+						execute({ action })
+					end)
+				else
+					require("fzf-lua.actions").ex_run(selected, opts)
+				end
+			end,
+		},
+	})
 end
 
 function M.setup()
+	_G.RediffGitRefs = function(lead)
+		local ok, refs = pcall(function()
+			return git.refs(root(), lead)
+		end)
+		return ok and refs or {}
+	end
 	api.nvim_create_user_command("Git", function(opts)
-		local ok, err = pcall(execute, opts.fargs)
-		if not ok then
-			vim.notify(tostring(err), vim.log.levels.ERROR)
-		end
+		guarded(function()
+			execute(opts.fargs)
+		end)
 	end, {
 		nargs = "*",
 		desc = "Git comparisons, blame, and GitHub links",
@@ -100,13 +271,21 @@ function M.setup()
 					return vim.startswith(action, lead)
 				end, vim.fn.sort(vim.tbl_keys(actions)))
 			end
+			local action = line:match("^%s*Git%s+(%S+)%s")
+			if action == "diff" or action == "base" or action == "stack" then
+				return _G.RediffGitRefs(lead)
+			end
 			return {}
 		end,
 	})
 	vim.cmd([[cnoreabbrev <expr> git getcmdtype() == ':' && getcmdline() == 'git' && getcmdpos() == 4 ? 'Git' : 'git']])
-	vim.cmd([[cnoreabbrev <expr> gd getcmdtype() == ':' && getcmdline() == 'gd' && getcmdpos() == 3 ? 'Git diff' : 'gd']])
-	for key, action in pairs({ gb = "blame-line", gB = "blame", gi = "toggle", gp = "pr" }) do
-		vim.keymap.set("n", "<leader>" .. key, "<Cmd>Git " .. action .. "<CR>", { desc = "Git " .. action })
+	vim.cmd(
+		[[cnoreabbrev <expr> gd getcmdtype() == ':' && getcmdline() == 'gd' && getcmdpos() == 3 ? 'Git diff' : 'gd']]
+	)
+	for name, action in pairs(actions) do
+		if action.key then
+			vim.keymap.set("n", "<leader>" .. action.key, "<Cmd>Git " .. name .. "<CR>", { desc = action.description })
+		end
 	end
 end
 

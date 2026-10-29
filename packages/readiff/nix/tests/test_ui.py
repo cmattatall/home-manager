@@ -332,6 +332,172 @@ class EditorUI(unittest.TestCase):
         self.assertEqual("verbose", editor.funcs.getcmdline())
         self.keys(editor, "<C-c>")
 
+    def test_comparison_stack_navigates_pinned_refs_without_changing_checkout(self):
+        def git(*args):
+            return subprocess.check_output(
+                ["git", "-C", self.root, *args], text=True
+            ).strip()
+
+        git("tag", "review-base")
+        base = git("rev-parse", "HEAD")
+        git("add", "-A")
+        git("commit", "-qm", "First slice")
+        middle = git("rev-parse", "HEAD")
+        git("update-ref", "refs/remotes/origin/middle", middle)
+        Path(self.root, "second.txt").write_text("second slice\n")
+        git("add", "second.txt")
+        git("commit", "-qm", "Second slice")
+        tip = git("rev-parse", "HEAD")
+        Path(self.root, "second.txt").write_text("staged\n")
+        git("add", "second.txt")
+        Path(self.root, "second.txt").write_text("unstaged\n")
+        Path(self.root, "local.txt").write_text("untracked\n")
+        checkout = checkout_state(self.root)
+        editor = self.launch(self.root)
+        editor.command(f"Git stack review-base origin/middle {tip[:12]} HEAD~0")
+        self.assertEqual(
+            [base, middle], self.lua(editor, "return {s.comparison.base, s.comparison.head}")
+        )
+        self.assertEqual(
+            f"1/3 · {base[:12]} (review-base) → {middle[:12]} (origin/middle)",
+            self.lua(editor, "return s.reference"),
+        )
+        self.assertIn("checkout: main", self.lua(editor, "return r.statusline()"))
+        self.lua(editor, """
+            for i,entry in ipairs(s.entries) do
+                if entry.path == 'plan.md' then r.show(i) end
+            end
+            r.view('merged')
+            vim.api.nvim_set_current_win(s.new_win)
+        """)
+        self.keys(editor, "2GiFirst slice note<Esc>:w<CR>")
+        self.wait_for(editor, "s.composer == nil")
+        note = self.lua(editor, "return s.comments[1]")
+        self.keys(editor, " gu")
+        self.assertEqual(
+            [middle, tip], self.lua(editor, "return {s.comparison.base, s.comparison.head}")
+        )
+        self.assertEqual(
+            f"2/3 · {middle[:12]} (origin/middle) → {tip[:12]}",
+            self.lua(editor, "return s.reference"),
+        )
+        self.assertEqual(["second.txt"], self.lua(editor, """
+            return vim.tbl_map(function(entry) return entry.path end, s.entries)
+        """))
+        self.keys(editor, " gd")
+        self.assertEqual(
+            ["plan.md", "merged", 2],
+            self.lua(editor, """
+                return {s.current.path, s.layout, vim.api.nvim_win_get_cursor(s.new_win)[1]}
+            """),
+        )
+        self.assertEqual(note, self.lua(editor, "return s.comments[1]"))
+        self.keys(editor, " gd")
+        self.assertIn("Bottom of comparison stack", editor.vars["startup_notice"])
+        self.keys(editor, " gu gu")
+        self.assertEqual([], self.lua(editor, "return s.entries"))
+        self.assertIn("3/3", self.lua(editor, "return vim.wo[s.summary_win].winbar"))
+        self.keys(editor, " gu")
+        self.assertIn("Top of comparison stack", editor.vars["startup_notice"])
+        self.assertEqual(checkout, checkout_state(self.root))
+
+        editor.command("Git stack review-base origin/middle missing-ref")
+        self.assertIn("3/3", self.lua(editor, "return s.reference"))
+        self.assertEqual(note, self.lua(editor, "return s.comments[1]"))
+        self.keys(editor, " gd")
+        git("update-ref", "refs/remotes/origin/middle", base)
+        editor.command("ReviewRefresh")
+        self.assertEqual(middle, self.lua(editor, "return s.comparison.base"))
+        editor.command("Git refresh-refs")
+        self.assertEqual(base, self.lua(editor, "return s.comparison.base"))
+        self.assertEqual(note, self.lua(editor, "return s.comments[1]"))
+        self.assertEqual(checkout, checkout_state(self.root))
+        self.assertIn(
+            "origin/middle",
+            editor.funcs.getcompletion("Git diff review-base origin/", "cmdline"),
+        )
+
+        self.keys(editor, " gc")
+        text = "\n".join(editor.current.buffer[:])
+        for expected in ("Comparison 2 of 3", base, tip, "Checkout: main", "origin/middle"):
+            self.assertIn(expected, text)
+        self.keys(editor, "q gs")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "review-base<CR>")
+        self.wait_for(
+            editor, "s.comparison.base_ref == 'review-base' and vim.bo.filetype ~= 'fzf'"
+        )
+        self.assertEqual(middle, self.lua(editor, "return s.comparison.head"))
+        self.assertEqual(checkout, checkout_state(self.root))
+
+    def test_comparison_stack_from_startup_prompts_for_refs(self):
+        subprocess.run(["git", "-C", self.root, "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", self.root, "commit", "-qm", "Changes to review"], check=True
+        )
+        original = checkout_state(self.root)
+        editor = self.launch(self.root)
+        for answer in ("<Esc>", "<CR>", "   <CR>"):
+            self.keys(editor, " gs")
+            self.assertEqual("@", editor.funcs.getcmdtype())
+            self.keys(editor, answer)
+            self.assertTrue(self.lua(editor, "return s.comparison == nil"))
+            self.assertEqual([], self.lua(editor, "return s.entries"))
+
+        self.keys(editor, " gsHEAD<CR>")
+        self.assertIn("at least two refs", editor.vars["startup_notice"])
+        self.assertTrue(self.lua(editor, "return s.comparison == nil"))
+
+        self.keys(editor, " p")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "Choose or define a comparison stack")
+        self.wait_for(editor, """
+            table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\\n')
+                :find('Git stack', 1, true) ~= nil
+        """)
+        self.keys(editor, "<CR>")
+        self.assertEqual("@", editor.funcs.getcmdtype())
+        self.keys(editor, " HEAD~1  HEAD HEAD <CR>")
+        self.wait_for(editor, "s.comparison ~= nil")
+        self.assertEqual(3, self.lua(editor, "return #s.entries"))
+        self.keys(editor, " gu")
+        self.assertEqual([], self.lua(editor, "return s.entries"))
+        self.assertIn("2/2", self.lua(editor, "return s.reference"))
+        self.keys(editor, " gs")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "<Esc>")
+        self.assertEqual(original, checkout_state(self.root))
+
+    def test_comparison_palette_and_prompts_use_refs_and_preserve_cancelled_review(self):
+        editor = self.launch(self.root)
+        original = checkout_state(self.root)
+        self.keys(editor, " gD")
+        self.keys(editor, "HEAD<CR>HEAD<CR>")
+        self.wait_for(editor, "s.comparison ~= nil")
+        commit = original["head"].decode().strip()[:12]
+        self.assertEqual(
+            f"1/1 · {commit} (HEAD) → {commit} (HEAD)",
+            self.lua(editor, "return s.reference"),
+        )
+        comparison = self.lua(editor, "return s.comparison")
+        self.keys(editor, " gD<Esc>")
+        self.assertEqual(comparison, self.lua(editor, "return s.comparison"))
+        self.keys(editor, " gDHEAD<CR><Esc>")
+        self.assertEqual(comparison, self.lua(editor, "return s.comparison"))
+
+        self.keys(editor, " p")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "Show comparison refs")
+        self.wait_for(editor, """
+            table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\\n')
+                :find('Git comparison', 1, true) ~= nil
+        """)
+        self.keys(editor, "<CR>")
+        self.wait_for(editor, "vim.bo.filetype ~= 'fzf'")
+        self.assertIn("Checkout: main", "\n".join(editor.current.buffer[:]))
+        self.keys(editor, "q")
+        self.assertEqual(original, checkout_state(self.root))
+
     def test_base_compares_commits_to_live_worktree_including_staged_and_untracked(self):
         def git(*args):
             return subprocess.check_output(
@@ -417,8 +583,11 @@ class EditorUI(unittest.TestCase):
                 return {s.comparison.base, s.comparison.head == nil, s.live_refresh == true}
             """),
         )
-        self.assertIn("BASE DIFF", self.lua(editor, "return r.statusline()"))
-        self.assertIn("WORKTREE", self.lua(editor, "return s.reference"))
+        self.assertIn("COMPARE", self.lua(editor, "return r.statusline()"))
+        self.assertEqual(
+            f"1/1 · {base[:12]} (HEAD~1) → WORKTREE",
+            self.lua(editor, "return s.reference"),
+        )
         select("mixed.txt")
         self.assertEqual(
             [files["mixed.txt"], mixed.read_text()],
@@ -544,7 +713,7 @@ class EditorUI(unittest.TestCase):
                 "return {s.current.base, s.current.head, s.current.old, s.current.new, s.live_refresh == true}",
             ),
         )
-        self.assertIn("BRANCH DIFF", self.lua(editor, "return r.statusline()"))
+        self.assertIn("COMPARE", self.lua(editor, "return r.statusline()"))
         self.assertEqual(
             " Total  +4  −4",
             self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_buf, 1, 2, false)[1]"),
@@ -2632,8 +2801,8 @@ class EditorUI(unittest.TestCase):
         source = editor.current.buffer.number
         window = editor.current.window.handle
         actions = [
-            "base", "blame", "blame-line", "blame-toggle", "copy-link",
-            "diff", "help", "pr", "toggle",
+            "base", "blame", "blame-line", "blame-toggle", "comparison", "copy-link",
+            "diff", "down", "help", "pr", "refresh-refs", "stack", "toggle", "up",
         ]
 
         for command, close in (
@@ -7926,9 +8095,9 @@ func greeting() string {
         self.keys(editor, " r")
         check("REVIEW")
         self.keys(editor, ":git diff HEAD HEAD<CR>")
-        check("BRANCH DIFF")
+        check("COMPARE")
         editor.ui_try_resize(100, 28)
-        check("BRANCH DIFF")
+        check("COMPARE")
 
     def test_branch_and_manual_refresh(self):
         editor = self.launch(self.root)
