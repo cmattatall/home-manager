@@ -538,8 +538,8 @@ receive its notes by accident. Explicitly changing/disconnecting the target canc
 the pending automatic connection. While a configured or open harness is unconnected,
 **:w** keeps the notes and reports that nothing was sent; it does not silently
 switch to local-outbox delivery. Local-only review remains available when no
-harness is configured or running. Notes remain process-local until submitted;
-keep the editor open while reconnecting, then retry **:w**.
+harness is configured or running. Use **:ReviewSave** to keep unsent notes
+across editor restarts, then retry **:w** after reconnecting.
 Editor exit stops its terminal processes.
 If a launch fails, the new worktree is retained and an error is reported.
 

@@ -130,18 +130,20 @@ and complete selections stay in the local outbox. Archive paths are local to
 rediff; remote agents may need historical context supplied separately.
 Custom receivers still receive the complete JSON payload.
 
-Annotation `:w` saves the note
-locally and closes the panel. `:w` from a diff pane or Git
+Annotation `:w` adds the note
+to the review and closes the panel. `:w` from a diff pane or Git
 sidebar sends the saved batch. An empty batch shows a notice. Success updates
 the status bar quietly, without a receipt-path notification or Enter prompt.
 Accepted/completed delivery deletes sent notes, preserving newer notes and edits.
-Pending, failed, and local-only batches remain in the current editor session.
-Annotations survive leaving and
-re-entering Review, but a fresh editor process always starts without notes.
+`:ReviewSave` keeps notes, unfinished drafts, and their original source snapshots
+across editor restarts without sending. Sending also saves the review first.
+Unsaved reviews participate in native Vim quit checks. `:confirm qa` offers to
+save or discard changes, and `:qa!` discards changes since the last save.
+See `:help rediff-drafts` for the full save, send, and quit behavior.
 Submitted payloads and receipts remain in the outbox for inspection/retry.
 
 Closing an annotation with `Esc`, `:q`, or `:q!` keeps its draft for the same
-line/range in this editor session. `:wq` saves locally and closes.
+line/range in this editor session. `:wq` adds the note to the review and closes.
 Unwritten edits remain separate from the saved feedback batch.
 Notes appear below their source range as a small orange icon and orange text,
 without a label or border.

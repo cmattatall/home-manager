@@ -6,13 +6,14 @@ local harness = require("rediff.harness")
 local selection = require("rediff.selection")
 local awareness = require("rediff.awareness")
 local summary = require("rediff.review_summary")
+local storage = require("rediff.review_storage")
 local tree_ns = api.nvim_create_namespace("rediff.tree")
 local filter_ns = api.nvim_create_namespace("rediff.file-filter")
 local active_ns = api.nvim_create_namespace("rediff.active-file")
 local hunk_ns = api.nvim_create_namespace("rediff.hunk")
 local annotation_ns = api.nvim_create_namespace("rediff.annotations")
 local composer_ns = api.nvim_create_namespace("rediff.composer")
-local reviews = {} -- Pending annotations belong to this editor process, not the next launch.
+local reviews = {}
 local saved_guicursor
 local status_highlights = {
 	A = "ReviewAdded",
@@ -97,6 +98,7 @@ function M.notes(root)
 			annotation_status = {},
 			harness = harness.get(root).target,
 		}
+		storage.load(reviews[root])
 	end
 	return reviews[root]
 end
@@ -152,9 +154,21 @@ end
 
 local function save(s)
 	s = s or annotation_state()
+	storage.changed(s)
 	feedback.write(s.directory .. "/draft.json", {
 		harness = s.harness,
 	})
+end
+
+function M.save_review()
+	local s = M.active() or require("rediff.annotations").context()
+	local notes = s or M.notes(git.root())
+	if s and s.composer then
+		s.draft.text = table.concat(api.nvim_buf_get_lines(s.composer, 0, -1, false), "\n")
+	end
+	storage.changed(notes)
+	storage.save(notes)
+	notify("Review saved locally")
 end
 
 local function map(buf, mode, key, fn, description)
@@ -1434,7 +1448,7 @@ function M.save_composer()
 	retain(s.drafts, function(draft)
 		return draft ~= s.draft
 	end)
-	s.draft.text, s.draft.saved = text, true
+	s.draft.text = text
 	save()
 	if loaded then
 		vim.bo[s.composer].modified = false
@@ -1579,6 +1593,8 @@ function M.compose(visual, keys, comment)
 		buffer = composer,
 		callback = function()
 			-- Only explicit writes add/update comments; closing retains a draft.
+			s.draft.text = table.concat(api.nvim_buf_get_lines(composer, 0, -1, false), "\n")
+			storage.changed(s)
 			vim.bo[composer].modified = false
 		end,
 	})
@@ -1618,7 +1634,7 @@ function M.compose(visual, keys, comment)
 		callback = function()
 			if s.draft and s.composer then
 				s.draft.text = table.concat(api.nvim_buf_get_lines(composer, 0, -1, false), "\n")
-				s.draft.saved = not vim.bo[composer].modified
+				storage.changed(s)
 			end
 		end,
 	})
@@ -1645,6 +1661,7 @@ function M.clear_sent(root, path)
 			sent[comment.id] = comment
 		end
 	end
+	storage.clear_sent(s, sent)
 	retain(s.comments, function(comment)
 		if not vim.deep_equal(comment, sent[comment.id]) then
 			return true
@@ -1662,6 +1679,7 @@ function M.clear_sent(root, path)
 		end
 		return false
 	end)
+	storage.changed(s)
 	if M.state == s then
 		render_comments(false, s)
 	end
@@ -1701,6 +1719,7 @@ function M.submit(retry)
 			table.insert(warnings, vim.fn.strtrans(comment.file) .. ":" .. comment.line .. "–" .. comment.line_end)
 		end
 	end
+	storage.save(s)
 	local id, path = feedback.enqueue(s.root, s.comments, snapshots, argv, nil, snapshot_status)
 	if #warnings > 0 then
 		notify(
@@ -2042,6 +2061,7 @@ function M.open(root, comparison)
 		comments = pending.comments or {},
 		drafts = pending.drafts or {},
 		snapshots = pending.snapshots or {},
+		storage = pending.storage,
 		annotation_status = pending.annotation_status,
 		harness = target,
 		previous_tab = api.nvim_get_current_tabpage(),
@@ -2488,6 +2508,7 @@ function M.setup()
 	local commands = {
 		Review = M.open,
 		ReviewLeave = M.leave,
+		ReviewSave = M.save_review,
 		ReviewRefresh = M.refresh,
 		ReviewComments = M.list_comments,
 		ReviewRevertFlush = function()

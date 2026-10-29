@@ -12,7 +12,7 @@ HOW TO REVIEW                                                *rediff-workflow*
    Tab enters the diff. ]/[ moves between hunks; :fs/:fu switches Git groups.
 2. Read red deletions and green additions. :view toggles split/merged layout.
    Press i to add/edit a note, or select lines with V then a for a range note.
-3. Write the note, Esc then :w to save it locally. @ lists/searches saved notes.
+3. Write the note, Esc then :w to add it to the review. @ lists/searches notes.
 4. :harness use amp connects to your local agent (see |rediff-harness| for setup).
    :w from the tree/diff sends saved notes. :ho opens an agent terminal.
 5. As the agent edits, files refresh. Violet ◆ means changed/unseen; cyan ◇ means
@@ -49,6 +49,7 @@ REVIEW QUICK REFERENCE
   d                   Delete annotation here (source panes only)
   :w in annotation    Save note locally and close
   :w in diff/tree     Send saved annotations
+  :ReviewSave         Save the review for later without sending
   :ho                 Open/reopen a harness terminal
   :hC                 Hide harness terminal (:hc connects; case-sensitive)
   Space R             Refresh files and snapshots
@@ -136,7 +137,7 @@ file and exits annotation mode. It does not guess between multiple annotated
 files or use a file from a different harness checkout; focus the source first.
 Review always has annotation mode on; Space a does not turn it off there.
 
-:w in the note saves the note locally and closes it. Then :w or :write in the
+:w in the note adds it to the review and closes it. Then :w or :write in the
 annotated source sends saved notes through the selected harness, without writing
 source edits. :w in its harness pane also sends when a single annotated source
 is visible. :WriteFeedback is the explicit send command. Leave annotation mode
@@ -148,7 +149,7 @@ Notes retain the exact buffer text at annotation time, including unsaved edits.
 Later edits never move their anchors. Jumping to a note on another or older
 snapshot opens its protected Review view; it does not overwrite the file.
 If an external reload changes the buffer text, annotation mode turns off; use
-Space a again to annotate the new text. Notes/drafts remain in this process.
+Space a again to annotate the new text. See |rediff-drafts| for saving the review.
 
 Source panes are protected snapshots. Editing commands open a note instead of
 changing code. i edits the note under the cursor; overlapping notes open a picker.
@@ -159,7 +160,7 @@ and character/block columns, not just the cursor line.
 The note editor floats below the selected range without resizing the diff panes.
 Notes use normal Neovim editing. Esc while typing returns to Normal mode.
 Further Escape presses leave the note open. Use :q to close and retain its draft.
-  :w / :wq        Save locally and close
+  :w / :wq        Add the note to the review and close
   :q / :q!        Close and keep the draft
 Reopen the same line/range to resume its draft.
 
@@ -526,9 +527,9 @@ Amp after upgrading the editor. Launch identity distinguishes this terminal from
 other Amp processes in the same checkout. Explicit target changes cancel pending
 automatic binding. A configured/open but unconnected harness blocks :w with a
 "nothing sent" message and keeps the notes; it never silently falls back to the
-local outbox. Local-only review requires no configured/running harness. Keep the
-editor open while reconnecting: unsent notes remain process-local. Retry :w once
-the target is connected.
+local outbox. Local-only review requires no configured/running harness. Use
+:ReviewSave to keep unsent notes across restarts. Retry :w once the target is
+connected.
 
 Plugin installation asks for confirmation, preserves Home Manager symlinks, and
 does not install/authenticate the Amp CLI. With a live target, it also requests
@@ -735,6 +736,7 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
   :ReviewComments             Find annotations (same as :Annotations list)
   :Annotations list|next|prev  Find notes / jump to next/previous
   :Annotations new            Create a separate note at the cursor
+  :ReviewSave                 Save notes and unfinished drafts locally
   :WriteFeedback              Send saved annotations
   :ReviewHarness [name ID]    Show/select CLI or custom receiver
   :ReviewRetry                Retry last immutable delivery
@@ -760,16 +762,28 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
   :Worktree delete target     Delete by branch/path and stop owned harness jobs
 
 :help {topic} opens native/plugin help. :messages shows errors/notifications.
-:qa exits; :qa! also discards unsaved ordinary files. Both lose session-only drafts.
+See |rediff-drafts| for saving, sending, and quitting with pending notes.
 Shell commands (:!) can change files/index outside the editor's protections.
 
 ==============================================================================
 DRAFTS AND DELIVERY                                            *rediff-drafts*
 
-Accepted/completed delivery deletes sent notes but preserves newer edits.
-Failed, pending and local-only batches stay in this process. Leaving/re-entering
-Review retains drafts; exiting discards them without an unsent-note quit guard.
-Every fresh editor starts empty. Submitted payloads/receipts persist in the outbox.
+:ReviewSave saves the current worktree's notes, unfinished drafts, and original
+file snapshots locally. Reopening that worktree restores the saved review.
+Use :WriteFeedback (or :w in the tree/diff) to send ready annotations. Sending
+saves the review first. Unfinished drafts remain saved but are excluded from
+the feedback batch. Accepted/completed delivery removes sent notes from the
+saved review while preserving newer edits. Payloads/receipts remain in the outbox.
+
+Unsaved review changes participate in Vim's native quit checks, including reviews
+in other worktrees visited by this editor. :q when exiting, and :qa, refuse until
+you save or discard those changes. :confirm q / :confirm qa offer Yes (save
+locally), No (discard unsaved changes), or Cancel. :qa! discards all unsaved
+changes on exit. :q! only forces the current window closed and can still refuse
+to exit with unsaved reviews in hidden buffers. Previously saved notes survive,
+including saved-but-unsent notes.
+Closing a note or leaving Review retains its session state. Save the review to
+keep it across editor restarts. Ordinary file buffers retain their own quit checks.
 
 You can keep editing while the agent responds.
 One delivery per worktree may be in flight. Typing drafts does not write to disk.

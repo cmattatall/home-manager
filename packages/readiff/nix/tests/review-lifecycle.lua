@@ -1,6 +1,6 @@
 local tests = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h")
 
-return function(root, equal, fails)
+return function(root, equal, fails, keys)
 	local review = require("rediff.review")
 	local feedback = require("rediff.feedback")
 	local selection = require("rediff.selection")
@@ -60,11 +60,14 @@ return function(root, equal, fails)
 		local edited = add("Original text")
 		add("Send once")
 		local path = review.submit()
+		local notes_path = review.state.directory .. "/notes.json"
+		equal(2, #feedback.read(notes_path).comments, "Sending saves notes before delivery")
 		equal(2, #review.state.comments, "Pending submission keeps its annotations")
 		add("Edited during delivery", edited.id)
 		local newer = add("Added during delivery")
 		acknowledge("accepted")
 		equal({ edited, newer }, review.state.comments, "Late ACK clears sent notes, preserving edits and additions")
+		equal({}, feedback.read(notes_path).comments, "ACK removes sent notes from the saved review")
 		equal(1, markers(), "Late ACK keeps the tree marker for remaining notes")
 		equal("Original text", feedback.read(path).comments[1].text, "Outbox preserves the actual sent text")
 		vim.cmd("ReviewRetry")
@@ -88,6 +91,7 @@ return function(root, equal, fails)
 		require("rediff.harness").status()
 		equal(true, notice:find("Test failure", 1, true) ~= nil, "Harness status retains the original failure reason")
 		equal({ failed }, review.state.comments, "Failed delivery retains notes")
+		equal({ failed }, feedback.read(notes_path).comments, "Failed delivery keeps the saved review")
 		equal(1, markers(), "Failed delivery retains the tree marker")
 		vim.cmd("ReviewRetry")
 		acknowledge("accepted")
@@ -117,11 +121,26 @@ return function(root, equal, fails)
 		fails(review.submit, "Feedback not sent")
 		equal({ disconnected_note }, review.state.comments, "Disconnecting the configured harness retains notes")
 		review.archive()
+
+		review.select_harness("custom")
+		local saved_edit = add("Before delivery")
+		vim.api.nvim_set_current_win(review.state.new_win)
+		vim.api.nvim_win_set_cursor(0, { 17, 0 })
+		keys("iKeep drafting<Esc>:q<CR>")
+		local draft_submission = review.submit()
+		equal(1, #feedback.read(draft_submission).comments, "Unfinished drafts stay outside the feedback batch")
+		add("Saved during delivery", saved_edit.id)
+		review.save_review()
+		acknowledge("accepted")
+		equal({ saved_edit }, feedback.read(notes_path).comments, "ACK preserves edits saved during delivery")
+		equal("Keep drafting", feedback.read(notes_path).drafts[1].text, "Delivery preserves saved unfinished drafts")
+		review.archive()
+		review.select_harness("none")
 	end, debug.traceback)
 	vim.system, feedback.settings, vim.notify = system, settings, notify
 	assert(ok, err)
 
-	-- Separate OS processes sharing the same state directory must not restore notes.
+	-- Forced exit discards unsaved review changes while keeping the harness binding.
 	local restart_root = dofile(tests .. "/fixture.lua").create()
 	local directory = feedback.directory(restart_root)
 	feedback.write(directory .. "/draft.json", {
@@ -181,7 +200,7 @@ return function(root, equal, fails)
 			launch(true),
 			"Fresh launch ignores legacy notes and composer, preserving the harness"
 		)
-		equal(nil, feedback.read(directory .. "/draft.json").comments, "Quit does not persist annotations")
+		equal(nil, feedback.read(directory .. "/notes.json"), "Forced quit discards unsaved annotations")
 		equal(nil, feedback.read(directory .. "/draft.json").reviewed, "Legacy reviewed marks are not retained")
 		equal(
 			{ count = 0, draft = false, marked = false, session = "preserve-binding" },

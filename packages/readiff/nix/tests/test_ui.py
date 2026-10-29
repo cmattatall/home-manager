@@ -169,6 +169,152 @@ class EditorUI(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline, condition)
             pump(editor)
 
+    def quit_editor(self, editor, command, choice=None):
+        if command.split()[-1] in ("q", "q!"):
+            editor.command("only")
+        if choice:
+            self.keys(editor, f":{command}<CR>")
+            self.assertEqual("r?", editor.api.get_mode()["mode"])
+            editor.input(choice)
+            timeout = threading.Timer(5, lambda: editor.async_call(editor.stop_loop))
+            timeout.start()
+            try:
+                with self.assertRaises(EOFError):
+                    editor.run_loop(None, lambda *_: None)
+            finally:
+                timeout.cancel()
+        else:
+            with self.assertRaises(EOFError):
+                editor.command(command)
+        self.editors.remove(editor)
+        editor.close()
+
+    def test_review_save_restores_notes_and_drafts_without_sending(self):
+        editor = self.launch(self.root)
+        self.keys(editor, "<Tab>5GiSaved review note<Esc>:w<CR>")
+        self.wait_for(editor, "s.composer == nil")
+        self.keys(editor, "17GiUnfinished draft<Esc>:q<CR>")
+        self.assertEqual("Unfinished draft", self.lua(editor, "return s.drafts[1].text"))
+        note = self.lua(editor, "return s.comments[1]")
+        snapshot = self.lua(editor, "return s.snapshots[s.comments[1].snapshot_id]")
+        self.keys(editor, ":ReviewSave<CR>")
+        self.assertIsNone(self.lua(editor, "return s.last_submission"))
+        self.keys(editor, ":ReviewLeave<CR>")
+        self.quit_editor(editor, "qa")
+
+        Path(self.root, "auth.lua").write_text("agent replaced the file\n")
+        editor = self.launch(self.root)
+        self.assertEqual([note], self.lua(editor, "return s.comments"))
+        self.assertEqual(snapshot, self.lua(editor, "return s.snapshots[s.comments[1].snapshot_id]"))
+        self.assertEqual("Unfinished draft", self.lua(editor, "return s.drafts[1].text"))
+        self.assertIsNone(self.lua(editor, "return s.last_submission"))
+        self.keys(editor, "<Tab>1GiTemporary note<Esc>:w<CR>")
+        self.keys(editor, ":ReviewLeave<CR>")
+        editor.command("only")
+        for command in ("q", "q!", "qa"):
+            with self.assertRaisesRegex(Exception, "No write since last change"):
+                editor.command(command)
+        self.quit_editor(editor, "qa!")
+
+        editor = self.launch(self.root)
+        self.assertEqual([note], self.lua(editor, "return s.comments"))
+        self.assertEqual("Unfinished draft", self.lua(editor, "return s.drafts[1].text"))
+        self.quit_editor(editor, "qa")
+
+    def test_review_save_failure_keeps_unsaved_notes_and_previous_save(self):
+        editor = self.launch(self.root)
+        self.keys(editor, "<Tab>5GiSaved note<Esc>:w<CR>")
+        self.keys(editor, ":ReviewSave<CR>")
+        self.keys(editor, "17GiUnsaved note<Esc>:w<CR>")
+        self.lua(editor, """
+            local feedback = require('rediff.feedback')
+            local write = feedback.write
+            local path = s.directory .. '/notes.json'
+            feedback.write = function(destination, value)
+                if destination == path then error('Disk full') end
+                write(destination, value)
+            end
+        """)
+        self.keys(editor, ":ReviewSave<CR>")
+        self.assertIn("Disk full", editor.vars["startup_notice"])
+        self.assertEqual(2, self.lua(editor, "return #s.comments"))
+        with self.assertRaisesRegex(Exception, "No write since last change"):
+            editor.command("qa")
+        self.quit_editor(editor, "qa!")
+
+        editor = self.launch(self.root)
+        self.assertEqual(["Saved note"], self.lua(editor, """
+            return vim.tbl_map(function(note) return note.text end, s.comments)
+        """))
+        self.quit_editor(editor, "qa")
+
+    def test_review_save_preserves_ordinary_file_quit_checks(self):
+        editor = self.launch(self.root, file="auth.lua")
+        original = Path(self.root, "auth.lua").read_text()
+        self.keys(editor, "ggIUnsaved source edit<Esc> a5GiFile note<Esc>:w<CR>")
+        self.keys(editor, ":ReviewSave<CR><Esc>")
+        self.assertTrue(editor.current.buffer.options["modified"])
+        with self.assertRaisesRegex(Exception, "No write since last change"):
+            editor.command("qa")
+        self.quit_editor(editor, "qa!")
+        self.assertEqual(original, Path(self.root, "auth.lua").read_text())
+
+        editor = self.launch(self.root, file="auth.lua")
+        self.keys(editor, " a")
+        self.assertEqual("File note", self.lua(editor, """
+            return require('rediff.annotations').context().comments[1].text
+        """))
+        self.quit_editor(editor, "qa")
+
+    def test_review_confirm_quit_saves_discards_and_cancels(self):
+        for command in ("confirm q", "confirm qa"):
+            with self.subTest(command=command):
+                editor = self.launch(self.root)
+                self.keys(editor, "<Tab>5GiPersist this note<Esc>:w<CR>")
+                self.keys(editor, ":ReviewLeave<CR>")
+                editor.command("edit auth.lua")
+                editor.command("only")
+                self.keys(editor, f":{command}<CR>")
+                self.assertEqual("r?", editor.api.get_mode()["mode"])
+                self.keys(editor, "c")
+                self.assertFalse(editor.api.get_mode()["blocking"])
+                self.keys(editor, ":Review<CR>")
+                self.assertEqual("Persist this note", self.lua(editor, "return s.comments[1].text"))
+                self.keys(editor, ":ReviewLeave<CR>")
+                self.quit_editor(editor, command, "y")
+
+                editor = self.launch(self.root)
+                self.assertEqual("Persist this note", self.lua(editor, "return s.comments[1].text"))
+                self.keys(editor, "<Tab>5Gi<Esc>gg0cGDiscard this edit<Esc>:w<CR>")
+                self.keys(editor, ":ReviewLeave<CR>")
+                self.quit_editor(editor, command, "n")
+
+                editor = self.launch(self.root)
+                self.assertEqual("Persist this note", self.lua(editor, "return s.comments[1].text"))
+                self.keys(editor, "<Tab>5Gd:ReviewSave<CR>")
+                self.quit_editor(editor, "qa")
+
+    def test_review_quit_checks_unsaved_notes_in_other_worktrees(self):
+        target = Path(self.directory.name, "other-worktree")
+        subprocess.run(
+            ["git", "-C", self.root, "worktree", "add", "-b", "other", str(target)],
+            check=True,
+            capture_output=True,
+        )
+        editor = self.launch(self.root)
+        self.keys(editor, "<Tab>5GiMain note<Esc>:w<CR>")
+        self.keys(editor, ":worktree switch other<CR>")
+        self.keys(editor, ":ReviewSave<CR>")
+        with self.assertRaisesRegex(Exception, "No write since last change"):
+            editor.command("qa")
+        self.quit_editor(editor, "confirm qa", "y")
+
+        editor = self.launch(str(target))
+        self.assertEqual([], self.lua(editor, "return s.comments"))
+        self.keys(editor, ":worktree switch main<CR>")
+        self.assertEqual("Main note", self.lua(editor, "return s.comments[1].text"))
+        self.quit_editor(editor, "qa")
+
     def test_view_completion_is_preferred_in_review(self):
         editor = self.launch(self.root, file="auth.lua")
         self.keys(editor, ":v<Tab>")
@@ -4799,6 +4945,11 @@ func greeting() string {
                 self.keys(editor, "d<CR><Esc>")
                 self.keys(editor, opening)
                 self.assertEqual("No annotations", self.lua(editor, "return vim.g.startup_notice"))
+                self.quit_editor(editor, "qa")
+
+                editor = self.launch(self.root)
+                self.assertEqual([], self.lua(editor, "return s.comments"))
+                self.quit_editor(editor, "qa")
 
     def test_annotation_freshness_tracks_only_annotated_lines(self):
         editor = self.launch(self.root)

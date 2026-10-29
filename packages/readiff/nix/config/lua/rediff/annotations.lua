@@ -176,6 +176,7 @@ function M.toggle()
 		comments = notes.comments,
 		drafts = notes.drafts,
 		snapshots = notes.snapshots,
+		storage = notes.storage,
 		harness = notes.harness,
 		id = "file-" .. buf,
 		file_mode = true,
