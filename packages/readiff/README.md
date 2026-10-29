@@ -205,6 +205,12 @@ plugins. Alternatively, enable `programs.rediff.ampPlugin.enable` in Home Manage
 plugins, then run `:harness connect amp`. `:harness list` shows available and
 connected sessions, their worktrees, and activity.
 
+Run `readiff: pr-stack` in Amp's command palette to prepare the current work as
+a local stack of reviewable pull requests. Each slice has one coherent purpose
+and is validated on top of its parent. Reviewability determines the boundaries,
+without a line-count limit. The command requires an active thread, but works
+without an editor connection. Publishing the stack requires separate approval.
+
 The independent desloppify plugin supplies readable-code and plain-English guidance on every
 turn, including the first, without requiring an editor connection. Run
 `code: desloppify` in Amp's command palette to simplify the current work without

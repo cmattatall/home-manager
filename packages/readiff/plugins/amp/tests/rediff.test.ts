@@ -130,7 +130,7 @@ async function eventStream(descriptor: any) {
 
 test('connect posts editor instructions to its thread, reuses connections, and cleans up', async () => {
   const f = fakeAmp(); await plugin(f.amp)
-  assert.deepEqual([...f.commands.keys()], ['readiff-connect', 'readiff-disconnect'])
+  assert.deepEqual([...f.commands.keys()], ['readiff-connect', 'readiff-disconnect', 'readiff-pr-stack'])
   await Promise.all([
     f.commands.get('readiff-connect')!(f.context('T-a')),
     f.commands.get('readiff-connect')!(f.context('T-a')),
@@ -157,6 +157,31 @@ test('connect posts editor instructions to its thread, reuses connections, and c
   await assert.rejects(access(a.path)); assert.equal((await fetch(a.descriptor.url).catch(() => null)), null)
   await Promise.all(f.disposers.map((dispose) => dispose()))
   await assert.rejects(access(b.path))
+})
+
+test('pr-stack requests reviewable slicing in the current thread and requires an active thread', async () => {
+  const f = fakeAmp()
+  await plugin(f.amp)
+  const command = f.commands.get('readiff-pr-stack')!
+
+  await command(f.context('T-stack'))
+  assert.equal(f.messages.size, 1)
+  const messages = f.messages.get('T-stack')!
+  assert.equal(messages.length, 1)
+  const [message] = messages[0]
+  assert.equal(message.type, 'user-message')
+  assert.match(message.content, /human reviewability/)
+  assert.match(message.content, /parent/)
+  assert.match(message.content, /approval/)
+  assert.match(message.content, /remote is hosted on GitHub, use gh stack/)
+  assert.match(message.content, /every branch.*common task-specific prefix/)
+  assert.match(message.content, /Never mention that it is part of a PR stack.*how large the stack is/)
+  assert.doesNotMatch(message.content, /250/)
+
+  await command({ ui: f.context('T-stack').ui })
+  assert.deepEqual(f.notifications, ['Start or open a thread before running pr-stack.'])
+  assert.equal(messages.length, 1)
+  await Promise.all(f.disposers.map((dispose) => dispose()))
 })
 
 test('last started thread survives shutdown and is isolated by canonical worktree', async (t) => {
