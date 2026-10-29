@@ -1,6 +1,7 @@
 local M = {}
 local feedback = require("rediff.feedback")
 local entries = {}
+local active_key
 local watchers = {}
 local listeners = {}
 local deleted = {} -- Suppress deleted instances until explicit rediscovery or a new connection.
@@ -46,7 +47,12 @@ function M.key(target)
 end
 
 local function copy(entry)
-	return entry and vim.deepcopy(entry) or nil
+	if not entry then
+		return nil
+	end
+	local result = vim.deepcopy(entry)
+	result.connected = entry.key == active_key
+	return result
 end
 
 local function has_activity(entry)
@@ -87,7 +93,7 @@ local function stream_failed(key, watcher)
 end
 
 local function start(entry)
-	if closed or not entry.connected or not has_activity(entry) then
+	if closed or entry.key ~= active_key or not has_activity(entry) then
 		stop(entry.key)
 		return
 	end
@@ -193,17 +199,15 @@ local function start(entry)
 	watcher.child = child
 end
 
-local function merge(target, connect)
+local function merge(target)
 	local key = M.key(target)
 	local watcher = watchers[key]
 	local live_title = watcher and watcher.connection == target.connection and watcher.sequence >= 0
-	local entry = entries[key]
-		or {
-			key = key,
-			activity = { state = "unknown" },
-			connected = false,
-			online = false,
-		}
+	local entry = entries[key] or {
+		key = key,
+		activity = { state = "unknown" },
+		online = false,
+	}
 	for _, field in ipairs({ "name", "provider", "session", "root", "connection", "title", "capabilities" }) do
 		if target[field] ~= nil and not (field == "title" and live_title) then
 			entry[field] = vim.deepcopy(target[field])
@@ -211,9 +215,6 @@ local function merge(target, connect)
 	end
 	entry.provider = entry.provider or feedback.provider(entry)
 	entry.alias = aliases[key]
-	if connect ~= nil then
-		entry.connected = connect
-	end
 	entries[key] = entry
 	return entry
 end
@@ -232,9 +233,7 @@ function M.items()
 end
 
 function M.connected()
-	return vim.tbl_filter(function(entry)
-		return entry.connected
-	end, M.items())
+	return active_key and { copy(entries[active_key]) } or {}
 end
 
 function M.get(key)
@@ -242,7 +241,12 @@ function M.get(key)
 end
 
 function M.connect(target)
-	local entry = merge(target, true)
+	local key = M.key(target)
+	if active_key and active_key ~= key then
+		M.disconnect(active_key)
+	end
+	local entry = merge(target)
+	active_key = entry.key
 	deleted[entry.key] = nil
 	entry.online = true
 	if not feedback.is_live(entry) then
@@ -255,8 +259,11 @@ end
 
 function M.disconnect(key)
 	local entry = assert(entries[key], "Unknown connection: " .. tostring(key))
+	assert(not feedback.busy(entry.root), "Wait for the current feedback delivery before disconnecting")
 	stop(key)
-	entry.connected = false
+	if active_key == key then
+		active_key = nil
+	end
 	entry.activity = { state = "unknown" }
 	changed()
 	return copy(entry)
@@ -289,10 +296,10 @@ end
 
 function M.delete(key)
 	local entry = assert(entries[key], "Unknown connection: " .. tostring(key))
+	M.disconnect(key)
 	if entry.alias then
 		M.rename(key, "")
 	end
-	stop(key)
 	deleted[key] = entry.connection or true
 	entries[key] = nil
 	changed()
@@ -363,7 +370,7 @@ function M.discover(callback, restore_deleted)
 							entry.terminal = row.terminal
 							entry.online = true
 							seen[entry.key] = true
-							if entry.connected then
+							if entry.key == active_key then
 								start(entry)
 							end
 						end
@@ -372,7 +379,7 @@ function M.discover(callback, restore_deleted)
 				for key, entry in pairs(entries) do
 					if feedback.is_live(entry) and not seen[key] then
 						stop(key)
-						if entry.connected then
+						if key == active_key then
 							entry.online = false
 							entry.activity = { state = "unknown" }
 						else

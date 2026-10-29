@@ -858,7 +858,7 @@ class EditorUI(unittest.TestCase):
         self.assertEqual(["quiet", "quiet"], states("untracked", "fresh.lua"))
 
     def test_saved_amp_connection_is_rediscovered_before_feedback(self):
-        for outcome in ("renewed", "replacement", "gone", "superseded"):
+        for outcome in ("renewed", "replacement", "gone", "superseded", "other-worktree"):
             with self.subTest(outcome=outcome):
                 self.fixture.exec_lua(
                     """
@@ -911,6 +911,19 @@ class EditorUI(unittest.TestCase):
                 if outcome == "superseded":
                     editor.exec_lua(
                         "require('rediff.harness').select(saved_session.root,{name='none'})"
+                    )
+                elif outcome == "other-worktree":
+                    editor.exec_lua(
+                        """
+                        local harness = require('rediff.harness')
+                        local other_root = saved_session.root .. '/other'
+                        harness.select(other_root, {name='claude', session='other-session'})
+                        local feedback = require('rediff.feedback')
+                        feedback.write(feedback.directory(other_root .. '/saved') .. '/harness.json', {
+                            target={name='claude',session='inactive-saved-session'}, provider='claude',
+                        })
+                        harness.get(other_root .. '/saved')
+                        """
                     )
                 editor.exec_lua(
                     """
@@ -987,7 +1000,7 @@ class EditorUI(unittest.TestCase):
                             "for _,argv in ipairs(bridge_calls) do if argv[2]~='discover' then return false end end return true"
                         )
                     )
-                else:
+                elif outcome == "superseded":
                     self.assertEqual(
                         "none", editor.exec_lua("return saved_session.target.name")
                     )
@@ -996,6 +1009,24 @@ class EditorUI(unittest.TestCase):
                         editor.exec_lua(
                             "return #require('rediff.connections').connected()"
                         ),
+                    )
+                else:
+                    self.assertEqual(
+                        "none", editor.exec_lua("return saved_session.target.name")
+                    )
+                    self.assertEqual(
+                        ["other-session"],
+                        editor.exec_lua(
+                            """
+                            local connected = require('rediff.connections').connected()
+                            return vim.tbl_map(function(entry) return entry.session end, connected)
+                            """
+                        ),
+                    )
+                    self.assertFalse(
+                        editor.exec_lua(
+                            "return pcall(require('rediff.harness').command, saved_session.root)"
+                        )
                     )
 
     def test_harness_reconnects_after_disconnect_and_restart_without_spawning(self):
@@ -1147,8 +1178,8 @@ class EditorUI(unittest.TestCase):
             str(remote),
             threads,
         )
-        self.keys(editor, ":ho<CR>1<CR>")
-        self.assertIn(threads[0], editor.vars["resume_prompt"])
+        self.keys(editor, ":ho<CR>")
+        self.assertIn(threads[1], editor.vars["resume_prompt"])
         self.assertIn("Stop using its other terminal", editor.vars["resume_prompt"])
         self.assertFalse(log.exists(), "Cancelling must not resume the live session")
         self.lua(editor, "vim.g.resume_choice=1")
@@ -1190,9 +1221,9 @@ class EditorUI(unittest.TestCase):
         self.assertEqual(pane, editor.current.window.handle)
         self.assertEqual(self.root, self.lua(editor, "return s.root"))
         self.assertEqual(
-            threads[1],
-            self.lua(editor, "return s.harness.session"),
-            "Opening another repository must not redirect this review's feedback",
+            "none",
+            self.lua(editor, "return s.harness.name"),
+            "Opening another repository disconnects this review's harness",
         )
         self.wait_for(
             editor,
@@ -1626,7 +1657,7 @@ class EditorUI(unittest.TestCase):
         self.keys(editor, ":worktree switch other<CR>")
         self.assertEqual("T-local-1", self.lua(editor, "return s.harness.session"))
 
-    def test_multiple_harnesses_panel_routing_and_activity(self):
+    def test_exclusive_harness_panel_routing_and_activity(self):
         editor = self.launch(self.root)
         remote = str(Path(self.directory.name, "external-worktree"))
         Path(remote).mkdir()
@@ -1682,11 +1713,43 @@ class EditorUI(unittest.TestCase):
         self.assertIn("Enter connect", "\n".join(editor.current.buffer[:]))
         self.keys(editor, "<CR>")
         self.assertEqual("T-local", self.lua(editor, "return s.harness.session"))
+        self.lua(
+            editor,
+            """
+            r.add_comment({
+                file=s.current.path,
+                side='new',
+                snapshot_id=s.current.id,
+                selection=require('rediff.selection').line(s.new_buf,5),
+            }, 'Local annotation')
+            """,
+        )
         self.keys(editor, "/Remote<CR><CR>")
         self.assertEqual(
-            2, self.lua(editor, "return #require('rediff.connections').connected()")
+            ["T-remote"],
+            self.lua(
+                editor,
+                """
+                local connected = require('rediff.connections').connected()
+                return vim.tbl_map(function(entry) return entry.session end, connected)
+                """,
+            ),
         )
-        self.assertEqual("T-local", self.lua(editor, "return s.harness.session"))
+        self.assertEqual("none", self.lua(editor, "return s.harness.name"))
+        self.assertFalse(self.lua(editor, "return pcall(r.submit)"))
+        self.assertEqual("Local annotation", self.lua(editor, "return s.comments[1].text"))
+        self.assertEqual(0, self.lua(editor, "return #sent_feedback"))
+        self.assertEqual(
+            "none",
+            self.lua(
+                editor,
+                """
+                local session = require('rediff.harness').get(s.root)
+                local saved = require('rediff.feedback').read(session.directory .. '/harness.json')
+                return saved.target.name
+                """,
+            ),
+        )
         self.lua(editor, "vim.ui.input=function(_,callback) callback('backend') end")
         self.keys(editor, "r")
         self.assertEqual(
@@ -1704,21 +1767,29 @@ class EditorUI(unittest.TestCase):
         self.assertIn("external worktree", panel_text)
         self.assertIn("shell_command", panel_text)
         self.assertEqual(
-            "harness: amp-live · T-local",
+            "harness: amp · not connected",
             self.lua(editor, "return require('rediff.harness').statusline(s.root)"),
         )
         self.lua(editor, "emit_activity('T-local',s.root,1,'running','read_file')")
         pump(editor)
         self.assertIn(
-            "harness: amp-live · T-local",
+            "harness: amp · not connected",
             editor.api.eval_statusline(editor.options["statusline"], {})["str"],
         )
-        self.lua(editor, "emit_activity('T-local',s.root,2,'unknown')")
-        pump(editor)
         self.assertEqual(
-            "harness: amp-live · T-local",
-            self.lua(editor, "return require('rediff.harness').statusline(s.root)"),
+            [False, "unknown"],
+            self.lua(
+                editor,
+                """
+                for _, entry in ipairs(require('rediff.connections').items()) do
+                    if entry.session == 'T-local' then
+                        return {entry.connected, entry.activity.state}
+                    end
+                end
+                """,
+            ),
         )
+        self.keys(editor, "/<C-u>Local<CR><CR>")
         self.assertEqual("T-local", self.lua(editor, "return s.harness.session"))
         self.lua(editor, "emit_activity('T-local',s.root,3,'running')")
         frame = self.lua(editor, "return require('rediff.harness_panel').state.frame")
@@ -1736,16 +1807,24 @@ class EditorUI(unittest.TestCase):
             "emit_activity('T-remote',vim.g.external_root,1,'awaiting-approval')",
         )
         pump(editor)
-        self.assertIn("awaiting-approval", "\n".join(editor.current.buffer[:]))
+        self.assertEqual(
+            [False, "unknown"],
+            self.lua(
+                editor,
+                """
+                for _, entry in ipairs(require('rediff.connections').items()) do
+                    if entry.session == 'T-remote' then
+                        return {entry.connected, entry.activity.state}
+                    end
+                end
+                """,
+            ),
+        )
         self.keys(editor, "q")
         # An external CLI reload must update the sender as well as the registry,
         # even with the list closed and no terminal owned by this editor.
         self.lua(editor, "vim.g.local_connection='/fake/rotated'")
         self.wait_for(editor, "s.harness.connection == '/fake/rotated'")
-        self.lua(
-            editor,
-            "r.add_comment({file=s.current.path,side='new',snapshot_id=s.current.id,selection=require('rediff.selection').line(s.new_buf,5)},'Local annotation')",
-        )
         self.lua(editor, "vim.api.nvim_set_current_win(s.new_win)")
         self.keys(editor, ":w<CR>")
         self.wait_for(editor, "not require('rediff.feedback').busy(s.root)")
@@ -1768,6 +1847,8 @@ class EditorUI(unittest.TestCase):
                 "return pcall(require('rediff.harness').select,s.root,{name='omp-live',root=vim.g.external_root,session='T-remote',connection='/fake/remote'})",
             )
         )
+        self.keys(editor, ":hl<CR>/backend<CR><CR>")
+        self.assertEqual("none", self.lua(editor, "return s.harness.name"))
         self.lua(editor, "_G.harness_streams['T-remote'].exit({code=1})")
         pump(editor)
         self.assertTrue(
@@ -1776,12 +1857,11 @@ class EditorUI(unittest.TestCase):
                 "for _,e in ipairs(require('rediff.connections').connected()) do if e.session=='T-remote' then return not e.online and e.activity.state=='unknown' end end",
             )
         )
-        self.keys(editor, ":harness list<CR>")
-        self.keys(editor, "/backend<CR><CR>")
+        self.keys(editor, "<CR>")
         self.assertEqual(
-            1, self.lua(editor, "return #require('rediff.connections').connected()")
+            0, self.lua(editor, "return #require('rediff.connections').connected()")
         )
-        self.assertEqual("T-local", self.lua(editor, "return s.harness.session"))
+        self.assertEqual("none", self.lua(editor, "return s.harness.name"))
         self.assertIn("Enter connect", "\n".join(editor.current.buffer[:]))
         self.keys(editor, "<CR>q")
         self.assertTrue(
@@ -1790,7 +1870,7 @@ class EditorUI(unittest.TestCase):
                 "for _,e in ipairs(require('rediff.connections').connected()) do if e.alias=='backend' then return e.online end end",
             )
         )
-        self.assertEqual("T-local", self.lua(editor, "return s.harness.session"))
+        self.assertEqual("none", self.lua(editor, "return s.harness.name"))
         self.assertEqual(1, self.lua(editor, "return #_G.sent_feedback"))
 
         # Deleting is distinct from disconnecting: cancellation is safe, and a
@@ -1803,7 +1883,7 @@ class EditorUI(unittest.TestCase):
         self.assertEqual(
             0, self.lua(editor, "return #require('rediff.harness_panel').state.entries")
         )
-        self.assertEqual("T-local", self.lua(editor, "return s.harness.session"))
+        self.assertEqual("none", self.lua(editor, "return s.harness.name"))
         self.lua(editor, "emit_activity('T-remote',vim.g.external_root,2,'running')")
         self.keys(editor, "q:hl<CR>")
         time.sleep(1.2)
@@ -1833,6 +1913,7 @@ class EditorUI(unittest.TestCase):
         self.assertEqual(
             1, self.lua(editor, "return #require('rediff.harness_panel').state.entries")
         )
+        self.keys(editor, "<CR>")
         self.assertEqual("T-local", self.lua(editor, "return s.harness.session"))
 
         # The current target cannot be deleted mid-send. Once allowed, removal
@@ -7402,7 +7483,11 @@ func greeting() string {
                 return {kill=function() end}
             end
             local connections=require('rediff.connections')
-            for _,target in ipairs({{root=s.root,session='T-here'}, {root=s.root..'-other',session='T-other'}}) do
+            local targets = {
+                {root=s.root..'-other', session='T-other'},
+                {root=s.root, session='T-here'},
+            }
+            for _,target in ipairs(targets) do
                 connections.connect(vim.tbl_extend('force',target,
                     {name='amp-live',connection='/fake',capabilities={'activity'}}))
             end
@@ -7761,10 +7846,10 @@ func greeting() string {
         self.assertEqual("terminal", editor.current.buffer.options["buftype"])
         self.keys(editor, "<C-\\><C-n>:worktree switch main<CR>")
         self.assertEqual(
-            [self.root, "Parent note", "T-parent", True],
+            [self.root, "Parent note", "none", True],
             self.lua(
                 editor,
-                "return {s.root,s.comments[1].text,s.harness.session,vim.bo[edit_buf].modified}",
+                "return {s.root,s.comments[1].text,s.harness.name,vim.bo[edit_buf].modified}",
             ),
         )
         self.assertEqual(
@@ -8493,7 +8578,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         first = editor.current.buffer.vars["terminal_job_id"]
         self.assertEqual("none", self.lua(editor, "return s.harness.name"))
         self.assertEqual(
-            1, self.lua(editor, "return #require('rediff.connections').connected()")
+            0, self.lua(editor, "return #require('rediff.connections').connected()")
         )
         self.keys(editor, "<Esc>:harness close<CR>:hl<CR>n2<CR>")
         self.wait_for(editor, "#vim.fn.readfile(vim.env.HARNESS_TEST_LOG)==2")
@@ -8546,7 +8631,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         self.assertNotIn("[open]", "\n".join(editor.current.buffer[:]))
         self.assertEqual("session-b", self.lua(editor, "return s.harness.session"))
         self.assertEqual(
-            2, self.lua(editor, "return #require('rediff.connections').connected()")
+            1, self.lua(editor, "return #require('rediff.connections').connected()")
         )
         self.assertEqual([-1, -1], editor.funcs.jobwait([first, second], 0))
         self.keys(editor, "o")
@@ -8600,13 +8685,10 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         editor = self.launch(self.root)
         editor.exec_lua(
             """
-            local c=require('rediff.connections')
             local root=require('rediff.review').state.root
-            c.connect({name='claude',root=root,session='session-a'})
-            c.connect({name='claude',root=...,session='session-b'})
+            require('rediff.harness').select(root, {name='claude',session='session-a'})
             vim.fn.confirm=function() return 1 end
         """,
-            str(other),
         )
         self.keys(editor, ":ho<CR>")
         self.wait_for(editor, "vim.fn.filereadable(vim.env.HARNESS_TEST_LOG)==1")
@@ -8614,7 +8696,12 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         local_job = editor.current.buffer.vars["terminal_job_id"]
         self.assertEqual(self.root, editor.funcs.getcwd())
         self.assertEqual("session-a", self.lua(editor, "return s.harness.session"))
-        self.keys(editor, "<Esc>:worktree switch other<CR>:ho<CR>")
+        self.keys(editor, "<Esc>:worktree switch other<CR>")
+        self.lua(
+            editor,
+            "require('rediff.harness').select(s.root, {name='claude',session='session-b'})",
+        )
+        self.keys(editor, ":ho<CR>")
         self.wait_for(editor, "#vim.fn.readfile(vim.env.HARNESS_TEST_LOG)==2")
         self.assertEqual(str(other) + "|session-b", log.read_text().splitlines()[1])
         other_job = editor.current.buffer.vars["terminal_job_id"]
@@ -8634,13 +8721,13 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         self.keys(editor, "<Esc>")
         self.lua(
             editor,
-            "require('rediff.connections').connect({name='claude',root=s.root,session='session-c'})",
+            "require('rediff.harness').select(s.root, {name='claude',session='session-c'})",
         )
         pane = editor.current.window.handle
         self.keys(editor, ":ho<CR>")
         self.keys(editor, "<CR>")  # Cancel without launching anything.
         self.assertEqual(2, len(log.read_text().splitlines()))
-        self.assertEqual("session-b", self.lua(editor, "return s.harness.session"))
+        self.assertEqual("session-c", self.lua(editor, "return s.harness.session"))
         self.keys(editor, ":ho<CR>2<CR>")
         self.wait_for(editor, "#vim.fn.readfile(vim.env.HARNESS_TEST_LOG)==3")
         self.assertEqual(str(other) + "|session-c", log.read_text().splitlines()[2])
@@ -8650,7 +8737,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         self.assertEqual("session-c", self.lua(editor, "return s.harness.session"))
         self.keys(editor, "<Esc>:ho<CR>1<CR>")
         self.assertEqual(other_job, editor.current.buffer.vars["terminal_job_id"])
-        self.assertEqual("session-b", self.lua(editor, "return s.harness.session"))
+        self.assertEqual("session-c", self.lua(editor, "return s.harness.session"))
         # The list's o opens its highlighted row, rather than toggling connection
         # or reopening the currently selected default. Reuse the same pane/jobs.
         self.keys(editor, "<Esc>:hl<CR>")
@@ -8686,14 +8773,14 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         self.assertEqual(other_job, editor.current.buffer.vars["terminal_job_id"])
         self.assertEqual(pane, editor.current.window.handle)
         self.assertEqual(
-            3, self.lua(editor, "return #require('rediff.connections').connected()")
+            1, self.lua(editor, "return #require('rediff.connections').connected()")
         )
         self.assertEqual(3, len(log.read_text().splitlines()))
         self.keys(editor, "<Esc>:hl<CR>o")
         self.assertEqual(local_job, editor.current.buffer.vars["terminal_job_id"])
         self.assertEqual(pane, editor.current.window.handle)
         self.assertEqual(self.root, editor.funcs.getcwd())
-        self.assertEqual("session-b", self.lua(editor, "return s.harness.session"))
+        self.assertEqual("none", self.lua(editor, "return s.harness.name"))
         self.keys(editor, "<Esc>:hide<CR>:hl<CR>")
         self.assertEqual([], open_rows(), "A hidden terminal is not marked open")
         self.keys(editor, "q")

@@ -203,8 +203,7 @@ PATH precedence, and integration with an existing home configuration.
 For a live Amp session, `:harness install amp` installs the readiff and desloppify
 plugins. Alternatively, enable `programs.rediff.ampPlugin.enable` in Home Manager. Reload Amp's
 plugins, then run `:harness connect amp`. `:harness list` shows available and
-connected sessions, their worktrees, and activity. Multiple connections are
-supported; annotations stay associated with their originating worktree.
+connected sessions, their worktrees, and activity.
 
 The independent desloppify plugin supplies readable-code and plain-English guidance on every
 turn, including the first, without requiring an editor connection. Run
@@ -223,7 +222,6 @@ For **oh-my-pi**, enable `programs.harnesses.omp.enable` to install the CLI.
 Separately, enable `programs.rediff.ompPlugin.enable` or run
 `:harness install omp` to install the rediff extension. Start OMP (or run
 `/restart` in an existing session), then `:harness connect omp` in rediff.
-Amp and OMP sessions can share the panel and stay connected simultaneously.
 
 Amp, oh-my-pi, Claude Code, and custom feedback receivers are supported. Agent selection,
 authentication, and sending feedback are explicit actions, not installation steps.

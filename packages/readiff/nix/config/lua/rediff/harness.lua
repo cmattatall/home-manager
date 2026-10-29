@@ -123,17 +123,49 @@ local function delivery_status(s)
 	return status.status == "running" and "uncertain" or (status.status or "idle")
 end
 
+local function cancel_pending_connections()
+	for _, session in pairs(sessions) do
+		session.epoch = session.epoch + 1
+		if session.restoring then
+			session.restoring = nil
+			session.delivery = "disconnected"
+		end
+	end
+end
+
+local function set_target(s, target)
+	-- Review and annotation buffers share this object with the harness lifecycle.
+	for key in pairs(s.target) do
+		s.target[key] = nil
+	end
+	for key, value in pairs(target) do
+		s.target[key] = value
+	end
+	s.restoring, s.connection_error = nil, nil
+	s.delivery = delivery_status(s)
+	save(s)
+end
+
 function M.get(root)
 	if not sessions[root] then
 		local directory = feedback.directory(root)
 		local saved = feedback.read(directory .. "/harness.json") or {}
 		local draft = feedback.read(directory .. "/draft.json") or {}
 		local target = saved.target or draft.harness or { name = feedback.settings().harness or "none" }
+		local provider = saved.provider or feedback.provider(target)
+		local has_selection = #connections.connected() > 0
+		for _, session in pairs(sessions) do
+			has_selection = has_selection or session.target.name ~= "none"
+		end
+		-- Reading another worktree's settings must preserve the current connection.
+		if has_selection then
+			target = { name = "none" }
+		end
 		sessions[root] = {
 			root = root,
 			directory = directory,
 			target = target,
-			provider = saved.provider or feedback.provider(target),
+			provider = provider,
 			last = saved.last,
 			epoch = 0,
 		}
@@ -174,9 +206,7 @@ function M.get(root)
 							target.session, target.connection, target.title, target.capabilities =
 								selected.session, selected.connection, selected.title, selected.capabilities
 							target.root = root
-							connections.connect(target)
-							s.connection_error = nil
-							save(s)
+							M.select(root, target)
 						end
 					end
 					s.delivery = s.connection_error and "disconnected" or delivery_status(s)
@@ -192,7 +222,9 @@ function M.get(root)
 				restored({ code = 1 })
 			end
 		elseif target.session then
-			connections.connect(vim.tbl_extend("force", target, { root = root }))
+			M.select(root, target)
+		elseif target.name == "custom" then
+			cancel_pending_connections()
 		end
 	end
 	return sessions[root]
@@ -240,9 +272,11 @@ end
 
 function M.select(root, target)
 	local s = M.get(root)
-	assert(not feedback.busy(root), "Wait for the current feedback delivery before switching harnesses")
 	assert(not target.root or target.root == root, "Annotations must stay in their own worktree")
 	feedback.command(target)
+	for directory in pairs(sessions) do
+		assert(not feedback.busy(directory), "Wait for the current feedback delivery before switching harnesses")
+	end
 	target = {
 		name = target.name,
 		session = target.session,
@@ -251,23 +285,23 @@ function M.select(root, target)
 		title = target.title,
 		capabilities = target.capabilities,
 	}
-	-- Review holds this same target object; there is only one binding per root.
-	for key in pairs(s.target) do
-		s.target[key] = nil
+	if target.session then
+		connections.connect(vim.tbl_extend("force", target, { root = root }))
+	else
+		for _, entry in ipairs(connections.connected()) do
+			connections.disconnect(entry.key)
+		end
 	end
-	for key, value in pairs(target) do
-		s.target[key] = value
+	cancel_pending_connections()
+	for directory, session in pairs(sessions) do
+		if directory ~= root and (session.target.name ~= "none" or session.connection_error) then
+			set_target(session, { name = "none" })
+		end
 	end
 	if feedback.is_live(target) or target.name == "amp" or target.name == "claude" then
 		s.provider = feedback.provider(target)
 	end
-	s.epoch = s.epoch + 1
-	s.restoring, s.connection_error = nil, nil
-	s.delivery = delivery_status(s)
-	save(s)
-	if target.session then
-		connections.connect(vim.tbl_extend("force", target, { root = root }))
-	end
+	set_target(s, target)
 	notify("Harness: " .. target.name .. (target.session and (" · " .. target.session) or "") .. "; nothing sent")
 end
 
@@ -587,6 +621,7 @@ function M.launch(root, argv, target)
 	jobs[root][job] = owned
 	if owned.provider == "amp" then
 		local s = M.get(root)
+		cancel_pending_connections()
 		owned.pending_epoch = s.epoch
 		s.connection_error =
 			"Amp feedback is not connected yet. Start a thread in the harness; if it stays disconnected, use :harness install amp, reload its plugin, then :harness connect amp. Notes are kept; nothing sent."
@@ -599,8 +634,7 @@ end
 
 local function reconnect(root, target, fallback, connected, request)
 	local s = M.get(root)
-	s.epoch = s.epoch + 1
-	s.restoring = nil
+	cancel_pending_connections()
 	local epoch, win, tab = s.epoch, api.nvim_get_current_win(), api.nvim_get_current_tabpage()
 	local function valid()
 		local ok, context = pcall(current)
@@ -838,6 +872,7 @@ function M.startup(root, explicit, request)
 		finish_opening(request)
 		return
 	end
+	cancel_pending_connections()
 	local epoch, win, tab = s.epoch, api.nvim_get_current_win(), api.nvim_get_current_tabpage()
 	local function valid()
 		local ok, context = pcall(current)
@@ -905,11 +940,6 @@ function M.startup(root, explicit, request)
 					)
 					M.resume(nil, not explicit, request)
 				elseif decision.action == "new" then
-					for _, entry in ipairs(connections.connected()) do
-						if entry.root == root and feedback.provider(entry) == "amp" then
-							connections.disconnect(entry.key)
-						end
-					end
 					M.select(root, { name = "none" })
 					if decision.invalidated then
 						notify(
@@ -1035,6 +1065,10 @@ function M.command(root)
 	local s = M.get(root)
 	assert(not s.restoring, "Checking the saved harness session. Try again shortly.")
 	assert(not s.connection_error, s.connection_error)
+	if s.target.session then
+		local entry = connections.get(connections.key(vim.tbl_extend("force", s.target, { root = root })))
+		assert(entry and entry.connected, "Feedback not sent: harness disconnected. Select it with :harness connect.")
+	end
 	assert(
 		s.target.name ~= "none" or (s.provider == "none" and not next(jobs[root] or {})),
 		"Feedback not sent: no harness is connected. Use :harness connect to select the running session. Notes are kept."
@@ -1114,11 +1148,7 @@ function M.connect(provider, automatic)
 	if automatic and (s.target.session or (provider ~= "amp" and provider ~= "omp" and provider ~= "none")) then
 		return
 	end
-	if s.restoring then
-		s.restoring = nil
-		s.delivery = "disconnected"
-	end
-	s.epoch = s.epoch + 1
+	cancel_pending_connections()
 	local epoch = s.epoch
 	connections.discover(function(err)
 		local valid, context = pcall(current)
@@ -1230,7 +1260,7 @@ function M.panel(purpose, provider)
 			end), "Checkout changed; run :harness list again")
 			entry = assert(connections.get(entry.key), "Harness is no longer available")
 			if not entry.connected then
-				connections.connect(entry)
+				M.select(entry.root, entry)
 			end
 			panel.close()
 			api.nvim_set_current_win(win)
@@ -1243,18 +1273,9 @@ function M.panel(purpose, provider)
 			if entry.connected then
 				M.disconnect(entry)
 				epoch = source.epoch
-			elseif entry.root == root then
-				M.select(root, {
-					name = entry.name,
-					session = entry.session,
-					root = entry.root,
-					connection = entry.connection,
-					title = entry.title,
-					capabilities = entry.capabilities,
-				})
-				epoch = source.epoch
 			else
-				connections.connect(entry)
+				M.select(entry.root, entry)
+				epoch = source.epoch
 			end
 		end,
 		on_disconnect = M.disconnect,
@@ -1451,8 +1472,6 @@ function M.setup()
 				local connected = connections.connected()
 				if args[2] then
 					M.disconnect(find_connection(args[2]))
-				elseif #connected > 1 then
-					M.panel("manage")
 				elseif #connected == 1 then
 					M.disconnect(connected[1])
 				else

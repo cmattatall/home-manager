@@ -379,7 +379,7 @@ Amp may run in another terminal emulator or tmux session on this machine under
 the same user account. Load the readiff plugin in each Amp instance. Remote
 machines and orbs are not discoverable through this local connection.
   /           Filter by alias, provider, title, ID, worktree, or activity
-  Enter       Connect/disconnect; connecting locally selects the annotation target
+  Enter       Connect/disconnect the selected harness
   o           Open highlighted harness in the harness pane
   C           Hide highlighted harness's terminal without stopping it
   n           Start a fresh harness in this worktree (prompts for type)
@@ -397,8 +397,7 @@ feedback is being sent from the current or selected worktree.
 
 The [open] badge marks the terminal visible in this tab, not the highlighted row
 or annotation target. Hidden terminals have no badge. Opening reuses an existing
-editor terminal and keeps other connections. A session from another worktree
-opens in its own directory without changing this review's annotation target.
+editor terminal. A session from another worktree opens in its own directory.
 
 :harness close hides this worktree's terminal pane in the current tab, keeping its
 process and feedback connection alive. C in the list hides only the selected
@@ -408,13 +407,16 @@ harness. Reopen it with :harness open or o in the list.
 resumed session. Omitted type prompts, even when a launch type is already saved.
 The list's n opens the same prompt, including with no entries. Cancellation
 changes nothing. The CLI must be installed/authenticated separately. Other
-terminals and connections stay alive; the previous feedback target is cleared.
+terminals stay alive. The previous feedback connection is cleared.
 Connect the new session before sending notes. The chosen type is saved locally.
 
-Multiple harnesses can stay connected. Annotations only go to this worktree's
-selected harness; :w from the tree/diff sends them. To type to an editor-owned
-agent, use :harness open (below); external Amp/Claude sessions ask before resuming
-in the editor. Connecting for feedback alone leaves their original terminal alone.
+Each editor connects to one harness for annotations and activity. Connecting or
+opening another listed harness replaces the previous connection across all
+worktrees. Finish any feedback delivery before switching. Annotations stay in
+their own worktree: connect a harness there, then :w from the tree/diff to send.
+To type to an editor-owned agent, use :harness open (below). External Amp/Claude
+sessions ask before resuming in the editor. Connecting for feedback alone leaves
+their original terminal alone.
 Separate editors can watch the same agent.
 Amp streams running/idle/approval/error state and active tool names to the panel.
 Offline or unsupported activity is shown as such, never inferred from an ACK.

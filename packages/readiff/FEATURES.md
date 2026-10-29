@@ -174,8 +174,8 @@ Use `/` to filter, Enter to connect/disconnect, `r` to give a local alias, `d` t
 and `c` to show only connected harnesses. Amp streams state and active tool names;
 running agents show a spinner. Other providers show unknown activity.
 
-Multiple harnesses may stay connected. Annotations stay bound to a harness in
-their own worktree. `:Harness open` / `:ho` opens an embedded terminal for
+Annotations stay bound to a harness in their own worktree.
+`:Harness open` / `:ho` opens an embedded terminal for
 typing to an agent directly.
 Claude has no live discovery adapter; use `:ReviewHarness claude SESSION_ID`.
 Connecting never launches an agent or sends feedback. `:Harness status` and

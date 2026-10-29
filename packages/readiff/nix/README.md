@@ -694,15 +694,17 @@ machine and user account. Each Amp instance must load the readiff plugin; discov
 uses `~/.cache/rediff/amp`, not terminal environment variables. Remote machines
 and orbs do not share this local registry or loopback connection.
 
-Multiple harnesses can remain connected. Selecting a local harness also sets
-the worktree's annotation target; selecting an external harness never does.
-Annotations cannot be sent across worktrees. To type to an agent directly, use
-`:harness open` / `:ho` and its embedded terminal.
+Each editor connects to one harness at a time for annotations and activity.
+Connecting another session replaces the previous connection, including across
+worktrees. Finish any feedback delivery before switching. Notes stay in
+their original worktree and can be sent only to a connected harness in that
+worktree. To type to an agent directly, use `:harness open` / `:ho`.
 In `:harness list`, **o** opens the highlighted harness in the existing pane,
-without disconnecting other sessions. Editor-owned terminals are reused; external
+selecting it as the connection. Editor-owned terminals are reused. External
 Amp/Claude sessions ask for confirmation before resuming in a new terminal.
 You can open a session from another worktree: its CLI runs in that session's
-directory, and the current review's annotation target stays unchanged.
+directory, and annotations in the previous worktree stay saved until you reconnect
+a harness there.
 OMP remains activity-only because resuming an OMP session is not supported.
 The **[open]** badge identifies the terminal visible in the current tab, independently
 of the highlighted row or connection status; hidden terminals have no badge.
@@ -717,8 +719,8 @@ It does not delete the agent thread or stop its terminal. **R** rediscovers it.
 `:harness new [amp|omp|claude]` starts a fresh CLI in the current worktree, even
 when another harness is running. Omitting the type prompts for it; **n** in the
 list opens the same prompt, including when the list is empty. Cancelling changes
-nothing. Existing terminals and connections stay alive, but the worktree's feedback
-target is cleared so notes are not accidentally sent to the previous session.
+nothing. Existing terminals stay alive. The feedback connection is cleared so
+notes are kept until the new session is ready.
 Connect the new session before sending feedback. The CLI must be installed and
 authenticated separately.
 
