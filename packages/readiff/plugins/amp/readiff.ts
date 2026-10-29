@@ -29,7 +29,7 @@ import { createServer, type Server, type ServerResponse } from 'node:http'
 import { homedir } from 'node:os'
 import { isAbsolute, join, relative } from 'node:path'
 
-export const description = 'Readiff: receive editor review feedback and prepare human-reviewable PR stacks in the current Amp thread.'
+export const description = 'Readiff: receive editor review feedback, propose branch splits, and prepare and publish reviewable branches in the current Amp thread.'
 
 const MAX_BODY = 1024 * 1024
 const MAX_ID = 256
@@ -55,29 +55,47 @@ type Outcome = { content: string; result: Promise<Set<ThreadMessageID>>; confirm
 const HEARTBEAT_MS = 15_000
 const MAX_STREAM_BUFFER = 64 * 1024
 
-const prStackRequest = `Turn the current work into a reviewable local PR stack. Optimize for human reviewability, not diff size. There is no line-count cap.
+const branchSplitGuidance = `Optimize for human reviewability, not diff size. There is no line-count cap.
 
 Use any explicitly named scope. Otherwise identify this thread's work, including relevant uncommitted changes and commits relative to the appropriate base. Inspect repository guidance, Git state, and publication status. Do not assume all changes in a shared checkout belong to this task. Ask if ownership or the base is ambiguous.
 
-Build a linear stack: the first branch is based on the target branch, and each subsequent branch is based on its immediate predecessor. Each PR must be valid with its ancestors, without requiring descendants. Review its incremental diff against its parent, not the cumulative diff against the target branch.
+Shape the stack around actual dependencies. Orthogonal changes may form independent branches based on the target branch or a shared prerequisite. Use a linear chain when each PR depends on the preceding PR. Each PR must be valid with its ancestors, without requiring descendants or sibling branches. Review its incremental diff against its parent, not the cumulative diff against the target branch.
 
-When the repository remote is hosted on GitHub, use gh stack to create and manage the stack. Inspect gh stack --help and the relevant subcommand help before use. If it is unavailable, report the blocker rather than substituting a manual GitHub PR workflow. Local stack preparation remains local. Commands that push or create/update remote PRs, including gh stack submit, require explicit approval.
+Give every branch in the stack, including all branches based directly on the target, a common task-specific prefix so the branches are easy to search and filter. For example: auth-refresh/foundation, auth-refresh/api, and auth-refresh/ui. Keep the target branch's existing name, such as main.
 
-Give every branch in the stack, including its bottom/base branch, a common task-specific prefix so the branches are easy to search and filter. For example: auth-refresh/foundation, auth-refresh/api, and auth-refresh/ui. Keep the target branch's existing name, such as main.
+PR descriptions must explain that PR's purpose, approach, and validation. They may describe the overarching goal and how this PR contributes to it, while distinguishing what this PR delivers from future work. Never mention that it is part of a PR stack, its position in the stack, or how large the stack is. Let gh stack supply the stack relationships in GitHub's UI.
 
-PR descriptions must explain only that PR's purpose, approach, and validation. Never mention that it is part of a PR stack, its position in the stack, or how large the stack is. Let gh stack supply the stack relationships in GitHub's UI.
+Each PR should have one coherent purpose. Order by actual dependencies, not mandatory architectural layers. Put necessary, behavior-preserving preparatory refactors before the changes they enable and keep them separate from behavior changes. Do not add unrelated cleanup or force a split that makes the work harder to understand. One PR is acceptable when further splitting would be artificial.
 
-Give each PR one logical responsibility and one coherent question for its reviewer to answer. Order by actual dependencies, not mandatory architectural layers. Put necessary, behavior-preserving preparatory refactors before the changes they enable and keep them separate from behavior changes. Do not add unrelated cleanup or force a split that makes the work harder to understand. One PR is acceptable when further splitting would be artificial.
-
-Split interleaved hunks and reconstruct intermediate versions when needed. File boundaries and existing commits are not mandatory PR boundaries. Keep tests, fixtures, documentation, and configuration with the behavior or contract they establish. Do not defer required tests to a final testing PR.
+Plan splits at the hunk level and identify intermediate versions when needed. File boundaries and existing commits are not mandatory PR boundaries. Keep tests, fixtures, documentation, and configuration with the behavior or contract they establish. Do not defer required tests to a final testing PR.
 
 Early PRs may contain unused preparatory code when a later PR in this stack needs it, it can be meaningfully reviewed and tested now, and it has no unintended runtime effects or premature public exposure. Do not weaken checks, add dummy callers, or introduce speculative abstractions to make a boundary pass.
 
-Preserve the intended final behavior and public contracts of the original work. Capture a recoverable reference to the starting state, including in-scope uncommitted and untracked files, before restructuring. Keep unrelated files, staging, and existing published refs untouched. This command authorizes creating local branches and commits and restructuring only in-scope unpublished work. Pushing, opening PRs, rewriting published history, deploying, or discarding work require separate explicit approval. If safe restructuring is blocked, return the proposed stack and the specific blocker.
+Show a table in dependency order with branch names, parent bases, proposed PR titles, and incremental diff sizes as +added / -deleted lines for every branch. Measure each slice against its own parent, including in-scope uncommitted and untracked content. Use Git diff statistics where measurable, label estimates explicitly, and report binary changes separately from line counts. Show the sum of incremental additions and deletions, counting each branch once rather than summing cumulative ancestor diffs. These counts describe review size, not a splitting limit.`
 
-At every proposed PR tip, run the applicable build/type checks, formatting checks, lint, and tests without relying on descendant changes. Repair invalid boundaries by moving related changes together or merging PRs, not by disabling checks. Report pre-existing failures and unavailable checks accurately. Compare the final combined change with the captured original, explain any differences, and verify preserved behavior.
+const branchSplitProposeRequest = `Propose how to split the current work into reviewable branches and PRs. This is a read-only planning request. Leave files, staging, branches, worktrees, and remote state unchanged. Do not create commits, register branches, push, or open PRs.
 
-Finish with the local stack in dependency order, branch names and parent bases, a proposed PR title and reviewer question for each, validation results at each boundary, and any blockers. Distinguish local branches from published PRs.`
+${branchSplitGuidance}
+
+Explain the proposed boundaries and validation needed for each branch. Report assumptions, ownership ambiguities, and blockers. Distinguish planned checks from checks already run. Finish with the proposal only and wait for an execution request.`
+
+const branchSplitPushRequest = `Split the current work into reviewable branches and publish the resulting PRs after explicit publication approval. Reuse a proposal already agreed in this thread, adjusting it only when the current work or validation requires it.
+
+${branchSplitGuidance}
+
+When the repository remote is hosted on GitHub, use gh stack to create and manage the stack. Inspect gh stack --help and the relevant subcommand help before use. If it is unavailable, report the blocker rather than substituting a manual GitHub PR workflow.
+
+Split interleaved hunks and reconstruct intermediate versions as needed to implement the boundaries.
+
+Preserve the intended final behavior and public contracts of the original work. Before restructuring, capture a recoverable snapshot of both content and staging, including staged, unstaged, and untracked changes. Preserve unrelated changes and their staging and keep existing published refs untouched. This command authorizes creating local branches and commits and restructuring only in-scope unpublished work. Pushing, creating or updating remote PRs, rewriting published history, deploying, or discarding work require separate explicit approval. If safe restructuring is blocked, return the proposed stack and the specific blocker.
+
+At every proposed PR tip, run the applicable build/type checks, formatting checks, lint, and tests using only that PR and its ancestors. Repair invalid boundaries by moving related changes together or merging PRs, not by disabling checks. Report pre-existing failures and unavailable checks accurately. Compare the final combined change across all tips with the captured original, explain any differences, and verify preserved behavior.
+
+Finish stack preparation in the user's active checkout. Temporary worktrees may be used for reconstruction and validation, but the final handoff must leave the active checkout on a stack tip with no duplicate in-scope changes. For a linear stack, use its top branch. For a branched stack, select one tip and report which in-scope work is on the other tips. Before switching, verify that every in-scope staged, unstaged, and untracked change is represented across the final stack branches. If preserving unrelated changes and their staging prevents switching safely, report the specific blocker.
+
+Separate local preparation from publication. Local completion requires registered gh stack branches for GitHub repositories, validated incremental boundaries, and a reconciled active checkout. If publication approval is missing, finish local preparation and ask for approval to publish to the specific remote. Open PRs as ready for review unless the user explicitly requests draft PRs. Select submission options accordingly rather than relying on tool defaults. After publication approval, submit with gh stack and verify the remote PR bases, descriptions, and draft status. Correct any newly opened PR whose draft status differs from the requested state.
+
+Report measured diff sizes for the completed branches in the table, validation results at each boundary, any blockers, and published PR links when available. Include the active branch, remaining staged, unstaged, and untracked changes and their ownership, and whether the stack is local or published.`
 
 async function containsFeedback(thread: PluginThread, content: string, before: Set<ThreadMessageID>): Promise<boolean> {
   // Read full history so compaction and later tool results cannot hide delivery.
@@ -481,15 +499,28 @@ export default async function readiffPlugin(amp: PluginAPI): Promise<void> {
     const removed = await disconnect(ctx.thread.id)
     await ctx.ui.notify(removed ? 'Readiff disconnected.' : 'Readiff is not connected to this thread.')
   })
-  amp.registerCommand('readiff-pr-stack', {
-    category: 'readiff', title: 'pr-stack', description: 'Turn current work into a human-reviewable local branch stack without publishing.',
-  }, async (ctx) => {
-    if (!ctx.thread) {
-      await ctx.ui.notify('Start or open a thread before running pr-stack.')
-      return
-    }
-    await ctx.thread.appendUserMessage({ type: 'user-message', content: prStackRequest })
-  })
+  for (const command of [
+    {
+      name: 'branch-split-propose',
+      description: 'Propose reviewable branches with per-branch diff sizes without changing the repository.',
+      request: branchSplitProposeRequest,
+    },
+    {
+      name: 'branch-split-push',
+      description: 'Split and validate reviewable branches with diff sizes, then publish after explicit approval.',
+      request: branchSplitPushRequest,
+    },
+  ]) {
+    amp.registerCommand(`readiff-${command.name}`, {
+      category: 'readiff', title: command.name, description: command.description,
+    }, async (ctx) => {
+      if (!ctx.thread) {
+        await ctx.ui.notify(`Start or open a thread before running ${command.name}.`)
+        return
+      }
+      await ctx.thread.appendUserMessage({ type: 'user-message', content: command.request })
+    })
+  }
   amp.onDispose(async () => {
     await Promise.allSettled(connecting.values())
     await Promise.all([...connections.keys()].map(disconnect))

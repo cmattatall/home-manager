@@ -205,11 +205,18 @@ plugins. Alternatively, enable `programs.rediff.ampPlugin.enable` in Home Manage
 plugins, then run `:harness connect amp`. `:harness list` shows available and
 connected sessions, their worktrees, and activity.
 
-Run `readiff: pr-stack` in Amp's command palette to prepare the current work as
-a local stack of reviewable pull requests. Each slice has one coherent purpose
-and is validated on top of its parent. Reviewability determines the boundaries,
-without a line-count limit. The command requires an active thread, but works
-without an editor connection. Publishing the stack requires separate approval.
+Amp's command palette provides two branch-splitting commands:
+
+- `readiff: branch-split-propose` proposes reviewable branches and PRs without
+  changing files, staging, branches, or remote state.
+- `readiff: branch-split-push` creates and validates the branches, then publishes
+  through `gh stack` on GitHub after separate explicit approval.
+
+Both show each branch's parent and incremental `+added / -deleted` line counts,
+with estimates labeled, plus totals across the proposed branches. Independent
+changes can branch from the target or a shared prerequisite. Reviewability
+determines the boundaries, without a line-count limit. Both commands require an
+active thread and work without an editor connection.
 
 The independent desloppify plugin supplies readable-code and plain-English guidance on every
 turn, including the first, without requiring an editor connection. Run

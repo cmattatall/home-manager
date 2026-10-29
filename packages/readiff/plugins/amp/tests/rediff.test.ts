@@ -130,7 +130,9 @@ async function eventStream(descriptor: any) {
 
 test('connect posts editor instructions to its thread, reuses connections, and cleans up', async () => {
   const f = fakeAmp(); await plugin(f.amp)
-  assert.deepEqual([...f.commands.keys()], ['readiff-connect', 'readiff-disconnect', 'readiff-pr-stack'])
+  assert.deepEqual([...f.commands.keys()], [
+    'readiff-connect', 'readiff-disconnect', 'readiff-branch-split-propose', 'readiff-branch-split-push',
+  ])
   await Promise.all([
     f.commands.get('readiff-connect')!(f.context('T-a')),
     f.commands.get('readiff-connect')!(f.context('T-a')),
@@ -159,30 +161,57 @@ test('connect posts editor instructions to its thread, reuses connections, and c
   await assert.rejects(access(b.path))
 })
 
-test('pr-stack requests reviewable slicing in the current thread and requires an active thread', async () => {
-  const f = fakeAmp()
-  await plugin(f.amp)
-  const command = f.commands.get('readiff-pr-stack')!
+for (const name of ['branch-split-propose', 'branch-split-push']) {
+  test(`${name} delivers scoped guidance with incremental sizes and requires an active thread`, async (t) => {
+    const f = fakeAmp()
+    await plugin(f.amp)
+    t.after(() => Promise.all(f.disposers.map((dispose) => dispose())))
+    const command = f.commands.get(`readiff-${name}`)!
 
-  await command(f.context('T-stack'))
-  assert.equal(f.messages.size, 1)
-  const messages = f.messages.get('T-stack')!
-  assert.equal(messages.length, 1)
-  const [message] = messages[0]
-  assert.equal(message.type, 'user-message')
-  assert.match(message.content, /human reviewability/)
-  assert.match(message.content, /parent/)
-  assert.match(message.content, /approval/)
-  assert.match(message.content, /remote is hosted on GitHub, use gh stack/)
-  assert.match(message.content, /every branch.*common task-specific prefix/)
-  assert.match(message.content, /Never mention that it is part of a PR stack.*how large the stack is/)
-  assert.doesNotMatch(message.content, /250/)
+    await command(f.context('T-stack'))
+    assert.equal(f.messages.size, 1)
+    const messages = f.messages.get('T-stack')!
+    assert.equal(messages.length, 1)
+    const [message] = messages[0]
+    assert.equal(message.type, 'user-message')
+    assert.match(message.content, /human reviewability/)
+    assert.match(message.content, /Orthogonal changes may form independent branches based on the target branch or a shared prerequisite/)
+    assert.match(message.content, /every branch.*common task-specific prefix/)
+    assert.match(message.content, /may describe the overarching goal and how this PR contributes to it/)
+    assert.match(message.content, /Never mention that it is part of a PR stack.*how large the stack is/)
+    assert.match(message.content, /incremental diff sizes as \+added \/ -deleted lines for every branch/)
+    assert.match(message.content, /Measure each slice against its own parent, including in-scope uncommitted and untracked content/)
+    assert.match(message.content, /label estimates explicitly, and report binary changes separately/)
+    assert.match(message.content, /sum of incremental additions and deletions, counting each branch once/)
+    assert.doesNotMatch(message.content, /250/)
 
-  await command({ ui: f.context('T-stack').ui })
-  assert.deepEqual(f.notifications, ['Start or open a thread before running pr-stack.'])
-  assert.equal(messages.length, 1)
-  await Promise.all(f.disposers.map((dispose) => dispose()))
-})
+    if (name === 'branch-split-propose') {
+      assert.match(message.content, /read-only planning request/)
+      assert.match(message.content, /Leave files, staging, branches, worktrees, and remote state unchanged/)
+      assert.match(message.content, /Do not create commits, register branches, push, or open PRs/)
+      assert.match(message.content, /Finish with the proposal only and wait for an execution request/)
+      assert.doesNotMatch(message.content, /This command authorizes creating local branches|submit with gh stack/)
+    } else {
+      assert.match(message.content, /Reuse a proposal already agreed in this thread/)
+      assert.match(message.content, /checks, lint, and tests using only that PR and its ancestors/)
+      assert.match(message.content, /remote is hosted on GitHub, use gh stack/)
+      assert.match(message.content, /recoverable snapshot of both content and staging/)
+      assert.match(message.content, /active checkout on a stack tip with no duplicate in-scope changes/)
+      assert.match(message.content, /For a branched stack, select one tip and report which in-scope work is on the other tips/)
+      assert.match(message.content, /Before switching, verify that every in-scope staged, unstaged, and untracked change is represented/)
+      assert.match(message.content, /Local completion requires registered gh stack branches/)
+      assert.match(message.content, /If publication approval is missing, finish local preparation and ask for approval/)
+      assert.match(message.content, /Open PRs as ready for review unless the user explicitly requests draft PRs/)
+      assert.match(message.content, /After publication approval, submit with gh stack and verify the remote PR bases, descriptions, and draft status/)
+      assert.match(message.content, /Report measured diff sizes for the completed branches/)
+      assert.match(message.content, /Include the active branch, remaining staged, unstaged, and untracked changes and their ownership/)
+    }
+
+    await command({ ui: f.context('T-stack').ui })
+    assert.deepEqual(f.notifications, [`Start or open a thread before running ${name}.`])
+    assert.equal(messages.length, 1)
+  })
+}
 
 test('last started thread survives shutdown and is isolated by canonical worktree', async (t) => {
   const root = await realpath(await mkdtemp(join(home, 'history-')))
