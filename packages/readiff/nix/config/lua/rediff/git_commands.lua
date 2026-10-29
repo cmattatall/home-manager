@@ -19,37 +19,44 @@ end
 local function compare(args)
 	local action = args[1]
 	local directory = root()
+	local function open(base, head)
+		guarded(function()
+			assert(root() == directory, "Worktree changed. Choose the comparison again")
+			if action == "branch-stack" then
+				require("rediff.branch_stack").discover(directory, base, head or "HEAD")
+			else
+				stack.set(directory, { git.comparison(directory, base, head) })
+			end
+		end)
+	end
 	if #args == 1 then
 		vim.ui.input({ prompt = "Base ref (OLD): ", completion = "customlist,v:lua.RediffGitRefs" }, function(base)
 			if not base or base == "" then
 				return
 			end
-			local function open(head)
-				guarded(function()
-					assert(root() == directory, "Worktree changed. Choose the comparison again")
-					stack.set(directory, { git.comparison(directory, base, head) })
-				end)
-			end
 			if action == "base" then
-				open()
+				open(base)
 			else
-				vim.ui.input(
-					{ prompt = "Target ref (NEW): ", completion = "customlist,v:lua.RediffGitRefs" },
-					function(head)
-						if head and head ~= "" then
-							open(head)
-						end
+				vim.ui.input({
+					prompt = "Target ref (NEW): ",
+					completion = "customlist,v:lua.RediffGitRefs",
+					default = action == "branch-stack" and "HEAD" or nil,
+				}, function(head)
+					if head and head ~= "" then
+						open(base, head)
 					end
-				)
+				end)
 			end
 		end)
 		return
 	end
 	assert(
-		(action == "diff" and #args == 3) or (action == "base" and #args == 2),
-		"Usage: git diff BASE TARGET | git base BASE (commit SHAs, branches, or tags)"
+		(action == "diff" and #args == 3)
+			or (action == "base" and #args == 2)
+			or (action == "branch-stack" and (#args == 2 or #args == 3)),
+		"Usage: git diff BASE TARGET | git base BASE | git branch-stack BASE [TIP]"
 	)
-	stack.set(directory, { git.comparison(directory, args[2], args[3]) })
+	open(args[2], args[3])
 end
 
 local function comparisons(args)
@@ -140,6 +147,12 @@ local actions = {
 		end,
 		description = "Discover GitHub PR stacks",
 		key = "gS",
+	},
+	["branch-stack"] = {
+		run = compare,
+		arguments = true,
+		usage = "branch-stack [BASE [TIP]]",
+		description = "Discover stacked branches using Git ancestry",
 	},
 	up = {
 		run = function()
@@ -289,7 +302,7 @@ function M.setup()
 				end, vim.fn.sort(vim.tbl_keys(actions)))
 			end
 			local action = line:match("^%s*Git%s+(%S+)%s")
-			if action == "diff" or action == "base" or action == "stack" then
+			if action == "diff" or action == "base" or action == "stack" or action == "branch-stack" then
 				return _G.RediffGitRefs(lead)
 			end
 			return {}

@@ -201,7 +201,10 @@ PATH precedence, and integration with an existing home configuration.
    files with unstaged edits must be unstaged first.
 
 Use **Space gS** or `:git pr-stack` to discover published GitHub PR stacks.
-To review a local sequence of refs, use `:git stack v1.0 origin/topic HEAD~1 HEAD`.
+For manually stacked branches, use `:git branch-stack main HEAD` to discover
+their order from Git ancestry, without GitHub. Choose a parent when merge
+ancestry is ambiguous. To supply every endpoint yourself, use
+`:git stack v1.0 origin/topic HEAD~1 HEAD`.
 **Space gu/gd** moves up/down its adjacent comparisons without checking out code.
 **Space gs** chooses a comparison, **Space gc** shows its endpoints, and
 **Space gD** prompts for a new pair. Find these actions in **Space p**.

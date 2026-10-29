@@ -119,6 +119,25 @@ a new stack or opening :git diff/:git base replaces that worktree's stack.
 Returning to :Review leaves the stack available through Space gs.
 Notes and feedback remain shared within the worktree across comparisons.
 
+MANUALLY STACKED BRANCHES
+
+:git branch-stack main HEAD discovers branch tips between a base and a tip using
+Git ancestry. The tip defaults to HEAD. With no arguments, it prompts for both
+endpoints. Local and remote-tracking branches already present in this repository
+are included. GitHub access, PRs, and stack metadata are optional.
+
+Discovery opens adjacent comparisons from base to tip. Branches at the same commit
+share one endpoint. At a merge with multiple possible parent branches, choose a
+parent in the picker. Escape keeps the current comparison stack unchanged.
+The base must be an ancestor of the tip. To choose every endpoint yourself, use
+:git stack REF REF ... instead. This also works for rebased or divergent branches
+whose intended order cannot be inferred from ancestry.
+
+Use Space gu/gd and Space gs to navigate the discovered comparisons. Discovery
+preserves your checkout, refs, index, and working files. It uses locally available
+refs without fetching. Rerun :git branch-stack after branch tips change to
+rediscover the whole sequence.
+
 GITHUB PR STACKS
 
 Space gS or :git pr-stack discovers published, open GitHub stacks in the current
@@ -129,7 +148,8 @@ also available in Space p.
 
 Authenticate with gh auth login on the machine running readiff. Discovery uses
 the repository selected by gh repo view and requires GitHub's stacks API.
-Unpublished local stacks can be opened with :git stack REF REF ... instead.
+Press b in the lookup popup to use :git branch-stack instead, including when
+GitHub reports an error or the repository has no published stacks.
 
 Each comparison uses the PR's exact base and head commits reported by GitHub,
 including when local branches differ. Missing commit objects are fetched into
@@ -769,6 +789,7 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
   :Git base [BASE]            Compare a ref against saved working files, or prompt
   :Git comparison            Show refs, commit IDs, checkout, and harness
   :Git stack [REF REF ...]    Choose or define adjacent comparisons
+  :Git branch-stack [BASE [TIP]] Discover branch tips by Git ancestry, or prompt
   :Git pr-stack              Discover published GitHub PR stacks
   :Git up / :Git down         Move toward the tip / base of the comparison stack
   :Git refresh-refs           Resolve the current comparison's refs again

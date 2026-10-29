@@ -10,12 +10,21 @@ function M.discover(root)
 	end
 	local initial_review = review.state
 	local initial_directory = vim.fn.getcwd()
-	local popup = require("rediff.git_popup").open("GitHub PR stacks", "q/Esc cancel")
+	local popup = require("rediff.git_popup").open("GitHub PR stacks", "b local branches · q/Esc cancel")
 	pending = popup
 
 	local function current()
 		return review.state == initial_review and vim.fn.getcwd() == initial_directory
 	end
+
+	popup.map("b", function()
+		if not current() then
+			popup.show({ "Review changed. Run :git pr-stack again." })
+			return
+		end
+		popup.close()
+		vim.cmd("Git branch-stack")
+	end, "Discover local branch stack")
 
 	local function fail(message)
 		if popup.alive() then
@@ -141,7 +150,7 @@ function M.discover(root)
 			if #rows == 0 then
 				popup.show({
 					"No open GitHub PR stacks in " .. repository.nameWithOwner .. ".",
-					"Use :git stack for local refs.",
+					"Press b or use :git branch-stack to discover locally available branches.",
 				})
 				return
 			end

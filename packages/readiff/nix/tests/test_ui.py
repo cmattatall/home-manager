@@ -498,6 +498,132 @@ class EditorUI(unittest.TestCase):
         self.keys(editor, "q")
         self.assertEqual(original, checkout_state(self.root))
 
+    def test_branch_stack_discovers_local_and_remote_refs_without_github(self):
+        def git(*args):
+            return subprocess.check_output(
+                ["git", "-C", self.root, *args], text=True
+            ).strip()
+
+        git("branch", "older-than-base")
+        git("add", "-A")
+        git("commit", "-qm", "Base")
+        base = git("rev-parse", "HEAD")
+        git("checkout", "-qb", "z-foundation")
+        Path(self.root, "first.txt").write_text("foundation\n")
+        git("add", "first.txt")
+        git("commit", "-qm", "Foundation")
+        foundation = git("rev-parse", "HEAD")
+        git("update-ref", "refs/remotes/origin/z-foundation", foundation)
+        git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/z-foundation")
+        git("checkout", "-qb", "feature")
+        Path(self.root, "second.txt").write_text("middle\n")
+        git("add", "second.txt")
+        git("commit", "-qm", "Middle")
+        middle = git("rev-parse", "HEAD")
+        git("update-ref", "refs/remotes/origin/a-middle", middle)
+        Path(self.root, "third.txt").write_text("tip\n")
+        git("add", "third.txt")
+        git("commit", "-qm", "Tip")
+        tip = git("rev-parse", "HEAD")
+        git("checkout", "-qb", "sibling", "main")
+        Path(self.root, "sibling.txt").write_text("different ancestry\n")
+        git("add", "sibling.txt")
+        git("commit", "-qm", "Sibling")
+        git("checkout", "-q", "feature")
+        Path(self.root, "first.txt").write_text("uncommitted\n")
+        git("add", "first.txt")
+        Path(self.root, "untracked.txt").write_text("keep this\n")
+        original = checkout_state(self.root)
+        refs = git("show-ref")
+        editor = self.launch(self.root)
+        editor.exec_lua("vim.env.GH_HOST = 'unavailable.invalid'")
+
+        self.keys(editor, ":git branch-stack main<CR>")
+        for index, (old, new, old_ref, new_ref, filename) in enumerate((
+            (base, foundation, "main", "z-foundation", "first.txt"),
+            (foundation, middle, "z-foundation", "origin/a-middle", "second.txt"),
+            (middle, tip, "origin/a-middle", "HEAD", "third.txt"),
+        ), start=1):
+            self.assertEqual(
+                [old, new, old_ref, new_ref],
+                self.lua(editor, """
+                    return {s.comparison.base, s.comparison.head,
+                        s.comparison.base_ref, s.comparison.head_ref}
+                """),
+            )
+            self.assertIn(f"{index}/3", self.lua(editor, "return s.reference"))
+            self.assertEqual([filename], self.lua(editor, """
+                return vim.tbl_map(function(entry) return entry.path end, s.entries)
+            """))
+            if index < 3:
+                self.keys(editor, " gu")
+
+        selected = self.lua(editor, "return s.comparison")
+        for arguments in ("main missing", "sibling feature", "feature main", "main HEAD extra"):
+            self.keys(editor, f":git branch-stack {arguments}<CR>")
+            self.assertEqual(selected, self.lua(editor, "return s.comparison"))
+        for answer in ("<Esc>", "main<CR><Esc>"):
+            self.keys(editor, ":git branch-stack<CR>" + answer)
+            self.assertEqual(selected, self.lua(editor, "return s.comparison"))
+        self.keys(editor, ":git branch-stack<CR>main<CR><CR>")
+        self.assertEqual(foundation, self.lua(editor, "return s.comparison.head"))
+        self.assertIn(
+            "origin/a-middle",
+            editor.funcs.getcompletion("Git branch-stack main origin/", "cmdline"),
+        )
+        self.keys(editor, ":git branch-stack HEAD HEAD<CR>")
+        self.assertEqual([], self.lua(editor, "return s.entries"))
+        self.assertIn("1/1", self.lua(editor, "return s.reference"))
+        self.assertEqual(original, checkout_state(self.root))
+        self.assertEqual(refs, git("show-ref"))
+
+    def test_branch_stack_requires_a_parent_choice_at_merges(self):
+        def git(*args):
+            return subprocess.check_output(
+                ["git", "-C", self.root, *args], text=True
+            ).strip()
+
+        git("add", "-A")
+        git("commit", "-qm", "Base")
+        base = git("rev-parse", "HEAD")
+        commits = {}
+        for branch in ("left", "right"):
+            git("checkout", "-qb", branch, "main")
+            Path(self.root, branch + ".txt").write_text(branch + "\n")
+            git("add", branch + ".txt")
+            git("commit", "-qm", branch)
+            commits[branch] = git("rev-parse", "HEAD")
+        git("checkout", "-qb", "tip")
+        git("merge", "--no-ff", "-qm", "Merge left", "left")
+        tip = git("rev-parse", "HEAD")
+        original = checkout_state(self.root)
+        editor = self.launch(self.root)
+        self.keys(editor, ":git diff main tip<CR>")
+        selected = self.lua(editor, "return s.comparison")
+        self.keys(editor, ":git branch-stack main tip<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "<Esc>")
+        self.assertEqual(selected, self.lua(editor, "return s.comparison"))
+
+        for branch, other in (("left", "right"), ("right", "left")):
+            self.keys(editor, ":git branch-stack main tip<CR>")
+            self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+            self.keys(editor, branch)
+            self.keys(editor, "<CR>")
+            self.wait_for(editor, f"s.comparison.head_ref == '{branch}'")
+            self.assertEqual(
+                [base, commits[branch]],
+                self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+            )
+            self.assertIn("1/2", self.lua(editor, "return s.reference"))
+            self.keys(editor, " gu")
+            self.assertEqual(
+                [commits[branch], tip, other + ".txt"],
+                self.lua(editor, "return {s.comparison.base, s.comparison.head, s.current.path}"),
+            )
+            self.assertIn("2/2", self.lua(editor, "return s.reference"))
+        self.assertEqual(original, checkout_state(self.root))
+
     def test_pr_stack_discovery_fetches_exact_endpoints_and_preserves_checkout(self):
         remote = Path(self.directory.name, "published")
         subprocess.run(["git", "clone", "-q", self.root, str(remote)], check=True)
@@ -623,7 +749,9 @@ class EditorUI(unittest.TestCase):
             table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\\n')
                 :find('No open GitHub PR stacks', 1, true) ~= nil
         """)
-        self.keys(editor, "q")
+        self.keys(editor, "b")
+        self.assertEqual("@", editor.funcs.getcmdtype())
+        self.keys(editor, "<Esc>")
         self.assertEqual(selected, self.lua(editor, "return s.comparison"))
 
         mode_file.write_text("error")
@@ -632,8 +760,10 @@ class EditorUI(unittest.TestCase):
             table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\\n')
                 :find('GitHub authentication required', 1, true) ~= nil
         """)
-        self.keys(editor, "q")
-        self.assertEqual(selected, self.lua(editor, "return s.comparison"))
+        self.keys(editor, "bHEAD<CR><CR>")
+        self.wait_for(editor, "s.comparison and s.comparison.pr == nil")
+        self.assertEqual([base, base], self.lua(editor, "return {s.comparison.base, s.comparison.head}"))
+        selected = self.lua(editor, "return s.comparison")
         mode_file.write_text("delay")
         self.keys(editor, " gSq")
         time.sleep(1.2)
@@ -2947,7 +3077,7 @@ class EditorUI(unittest.TestCase):
         source = editor.current.buffer.number
         window = editor.current.window.handle
         actions = [
-            "base", "blame", "blame-line", "blame-toggle", "comparison", "copy-link",
+            "base", "blame", "blame-line", "blame-toggle", "branch-stack", "comparison", "copy-link",
             "diff", "down", "help", "pr", "pr-stack", "refresh-refs", "stack", "toggle", "up",
         ]
 
