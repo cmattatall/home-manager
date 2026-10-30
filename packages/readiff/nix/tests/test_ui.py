@@ -587,62 +587,6 @@ class EditorUI(unittest.TestCase):
         self.assertEqual(original, checkout_state(self.root))
         self.assertEqual(refs, git("show-ref"))
 
-        self.keys(editor, " gs")
-        self.assertEqual("rediff-stacks", editor.current.buffer.options["filetype"])
-        panel = editor.current.window
-        text = "\n".join(editor.current.buffer[:])
-        for name in ("main", "z-foundation", "origin/a-middle", "sibling", "feature", "Checkout"):
-            self.assertIn(name, text)
-        self.assertNotIn("GitHub optional", text)
-        self.assertNotIn("origin/HEAD", text)
-        self.assertEqual(1, sum("z-foundation" in line for line in editor.current.buffer[:]))
-        tree = self.lua(editor, "return s.tree_win")
-        self.assertLess(panel.row, editor.api.win_get_position(tree)[0])
-        selected = self.lua(editor, "return s.comparison")
-
-        self.keys(editor, "/sibling<CR>")
-        self.assertNotIn("z-foundation", "\n".join(editor.current.buffer[:]))
-        self.assertIn("sibling", "\n".join(editor.current.buffer[:]))
-        self.assertEqual(selected, self.lua(editor, "return s.comparison"))
-        self.keys(editor, "/<C-u>missing-branch<CR>")
-        self.assertIn("No matching branches", editor.current.buffer[:])
-        self.keys(editor, "<Esc> gs")
-        self.keys(editor, "ggh")
-        self.assertNotIn("z-foundation", "\n".join(editor.current.buffer[:]))
-        self.keys(editor, "l")
-        self.assertIn("z-foundation", "\n".join(editor.current.buffer[:]))
-
-        def choose_branch(name):
-            for row, line in enumerate(editor.current.buffer[:], start=1):
-                if name in line:
-                    editor.current.window.cursor = (row, 0)
-                    self.keys(editor, "<CR>")
-                    return
-            self.fail(f"Missing branch: {name}")
-
-        choose_branch("z-foundation")
-        self.assertEqual(
-            [base, foundation],
-            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
-        )
-        self.assertEqual("rediff-stacks", editor.current.buffer.options["filetype"])
-        self.assertIn("TARGET", "\n".join(editor.current.buffer[:]))
-        choose_branch("origin/a-middle")
-        self.assertEqual(middle, self.lua(editor, "return s.comparison.head"))
-        self.keys(editor, " gu gs")
-        self.assertEqual(tip, self.lua(editor, "return s.comparison.head"))
-        git("branch", "new-alias", "feature")
-        self.keys(editor, "r")
-        self.assertIn("new-alias", "\n".join(editor.current.buffer[:]))
-        git("branch", "-D", "new-alias")
-        self.keys(editor, "q")
-        self.assertTrue(self.lua(editor, "return s ~= nil"))
-        self.keys(editor, ":git stacks<CR>")
-        self.assertEqual("rediff-stacks", editor.current.buffer.options["filetype"])
-        self.assertNotIn("new-alias", "\n".join(editor.current.buffer[:]))
-        self.assertEqual(original, checkout_state(self.root))
-        self.assertEqual(refs, git("show-ref"))
-
     def test_branch_stack_requires_a_parent_choice_at_merges(self):
         def git(*args):
             return subprocess.check_output(
@@ -664,11 +608,7 @@ class EditorUI(unittest.TestCase):
         tip = git("rev-parse", "HEAD")
         original = checkout_state(self.root)
         editor = self.launch(self.root)
-        self.keys(editor, " gs")
-        self.assertEqual("rediff-stacks", editor.current.buffer.options["filetype"])
-        self.assertIn("tip ? parent unclear", "\n".join(editor.current.buffer[:]))
         self.assertTrue(self.lua(editor, "return s.comparison == nil"))
-        self.keys(editor, "q")
         self.keys(editor, ":git diff main tip<CR>")
         selected = self.lua(editor, "return s.comparison")
         self.keys(editor, ":git branch-stack main tip<CR>")
@@ -694,29 +634,6 @@ class EditorUI(unittest.TestCase):
             )
             self.assertIn("2/2", self.lua(editor, "return s.reference"))
 
-        self.keys(editor, " gs")
-        for row, line in enumerate(editor.current.buffer[:], start=1):
-            if "tip ? parent unclear" in line:
-                editor.current.window.cursor = (row, 0)
-                break
-        selected = self.lua(editor, "return s.comparison")
-        self.keys(editor, "<CR>")
-        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
-        self.keys(editor, "<Esc>")
-        self.assertEqual(selected, self.lua(editor, "return s.comparison"))
-        self.keys(editor, "<CR>")
-        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
-        self.keys(editor, "left")
-        self.keys(editor, "<CR>")
-        self.wait_for(editor, "s.comparison.base_ref == 'left'")
-        self.assertEqual("rediff-stacks", editor.current.buffer.options["filetype"])
-        self.assertEqual([commits["left"], tip], self.lua(editor, "return {s.comparison.base, s.comparison.head}"))
-        self.keys(editor, "<Tab>")
-        self.assertEqual(self.lua(editor, "return s.tree_win"), editor.current.window.handle)
-        self.keys(editor, "q")
-        self.assertTrue(editor.exec_lua("return require('rediff.review').state == nil"))
-        self.keys(editor, ":git stacks<CR>")
-        self.assertEqual("rediff-stacks", editor.current.buffer.options["filetype"])
         self.assertEqual(original, checkout_state(self.root))
 
     def test_pr_stack_discovery_fetches_exact_endpoints_and_preserves_checkout(self):
@@ -869,75 +786,69 @@ class EditorUI(unittest.TestCase):
         self.assertEqual(refs, subprocess.check_output(["git", "-C", self.root, "show-ref"]))
         self.assertEqual("preserve previous fetch\n", fetch_head.read_text())
 
-    def test_stack_graph_keeps_pinned_endpoints_when_head_moves(self):
+    def test_scope_selects_local_changes_or_explicit_endpoints(self):
         def git(*args):
             return subprocess.check_output(
                 ["git", "-C", self.root, *args], text=True
             ).strip()
 
-        git("add", "-A")
-        git("commit", "-qm", "Baseline")
         base = git("rev-parse", "HEAD")
-        git("tag", "baseline")
+        git("add", "-A")
+        git("commit", "-qm", "Changes to compare")
+        tip = git("rev-parse", "HEAD")
+        Path(self.root, "local.txt").write_text("staged\n")
+        git("add", "local.txt")
+        Path(self.root, "local.txt").write_text("unstaged\n")
+        original = checkout_state(self.root)
         editor = self.launch(self.root)
 
-        def panel():
-            lines = self.lua(editor, """
-                local buffer = vim.api.nvim_win_get_buf(s.stack_win)
-                return vim.api.nvim_buf_get_lines(buffer, 0, -1, false)
-            """)
-            return "\n".join(lines)
+        def sidebar():
+            return self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false)")
 
-        for ref in ("HEAD", "main", "baseline", base):
-            self.keys(editor, f":git base {ref}<CR>")
-            self.assertRegex(panel(), r"main .*Checkout.*BASE")
-            self.assertRegex(panel(), r"Working files .*TARGET")
-            self.assertNotIn("BASE ≠ HEAD", panel())
-            self.assertEqual("", self.lua(editor, "return vim.wo[s.summary_win].winbar"))
+        self.assertEqual(" Local changes", sidebar()[0])
+        self.assertIn(" ▾ STAGED (1)", sidebar())
+        self.assertIn(" ▾ UNSTAGED (1)", sidebar())
+        self.assertEqual(4, split_count(editor))
+        self.keys(editor, " gs")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "two commits")
+        self.keys(editor, "<CR>")
+        self.keys(editor, "HEAD~1<CR>HEAD<CR>")
+        self.assertEqual([base, tip], self.lua(editor, "return {s.comparison.base, s.comparison.head}"))
+        self.assertIn(" Base: " + base[:12], sidebar())
+        self.assertIn(" Target: " + tip[:12], sidebar())
+        self.assertIn("checkout: main", self.lua(editor, "return r.statusline()"))
 
-        self.keys(editor, ":git base HEAD<CR>")
-        git("commit", "--allow-empty", "-qm", "Advance HEAD with identical files")
-        original = checkout_state(self.root)
-        pinned_base_visible = (
-            "table.concat(vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(s.stack_win), 0, -1, false), '\\n')"
-            f":find('{base[:12]}', 1, true) ~= nil"
-        )
-        self.wait_for(editor, pinned_base_visible)
-        self.assertEqual([], self.lua(editor, "return s.entries"))
-        self.assertEqual(base, self.lua(editor, "return s.comparison.base"))
-        self.assertRegex(panel(), base[:12] + r".*BASE")
-        self.assertNotRegex(panel(), r"main .*BASE")
-        self.assertRegex(panel(), r"Working files .*TARGET")
-        self.assertTrue(self.lua(editor, """
-            local buffer = vim.api.nvim_win_get_buf(s.stack_win)
-            local last_row = vim.api.nvim_buf_line_count(buffer)
-            return vim.fn.getwininfo(s.stack_win)[1].botline == last_row
-        """), "The graph keeps Local changes visible after adding a pinned base row")
-        self.keys(editor, ":View merged<CR>")
-        self.assertIn(base[:12], panel())
-        editor.command("colorscheme rose-pine")
-        self.assertIn(base[:12], panel())
+        selected = self.lua(editor, "return s.comparison")
+        for query, answer in (("", "<Esc>"), ("two commits", "HEAD<CR><Esc>")):
+            self.keys(editor, ":git scope<CR>")
+            self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+            if query:
+                self.keys(editor, query)
+                self.keys(editor, "<CR>")
+            self.keys(editor, answer)
+            self.assertEqual(selected, self.lua(editor, "return s.comparison"))
+
+        self.keys(editor, " gs")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "working files")
+        self.keys(editor, "<CR>")
+        self.keys(editor, "HEAD<CR>")
+        self.assertEqual(tip, self.lua(editor, "return s.comparison.base"))
+        self.assertIsNone(self.lua(editor, "return s.comparison.head"))
+        self.assertIn(" Target: Working files", sidebar())
+
+        self.keys(editor, " gs")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "Local changes")
+        self.keys(editor, "<CR>")
+        self.assertIsNone(self.lua(editor, "return s.comparison"))
+        self.assertEqual(" Local changes", sidebar()[0])
+        self.assertIn(" ▾ STAGED (1)", sidebar())
+        self.assertIn(" ▾ UNSTAGED (1)", sidebar())
         self.assertEqual(original, checkout_state(self.root))
 
-        self.keys(editor, ":git base HEAD<CR>")
-        self.assertRegex(panel(), r"main .*Checkout.*BASE")
-        self.assertNotIn(base[:12], panel())
-        self.assertEqual([], self.lua(editor, "return s.entries"))
-        self.keys(editor, ":git base baseline<CR>")
-        self.assertRegex(panel(), base[:12] + r".*BASE")
-        self.keys(editor, ":git diff baseline HEAD<CR>")
-        self.assertRegex(panel(), r"main .*Checkout.*TARGET")
-        self.assertNotRegex(panel(), r"Working files .*TARGET")
-        self.assertEqual(original, checkout_state(self.root))
-
-        self.keys(editor, ":git base baseline<CR>")
-        git("reset", "--soft", "baseline")
-        self.wait_for(editor, "not (" + pinned_base_visible + ")")
-        self.assertRegex(panel(), r"main .*Checkout.*BASE")
-        self.keys(editor, ":Review<CR>")
-        self.assertNotIn("BASE ≠ HEAD", panel())
-
-    def test_stack_actions_select_endpoints_without_changing_checkout(self):
+    def test_history_selects_pinned_endpoints_without_changing_checkout(self):
         def git(*args):
             return subprocess.check_output(
                 ["git", "-C", self.root, *args], text=True
@@ -957,49 +868,20 @@ class EditorUI(unittest.TestCase):
         original = checkout_state(self.root)
         editor = self.launch(self.root)
 
-        def focus_row(name):
-            self.keys(editor, " gs")
-            for row, text in enumerate(editor.current.buffer[:], start=1):
-                if name in text:
-                    editor.current.window.cursor = (row, 0)
-                    return
-            self.fail(f"Missing stack row: {name}")
-
-        def choose_action(name, action, mouse=False):
-            focus_row(name)
-            window, row = editor.current.window, editor.current.window.cursor[0]
-
-            def open_menu():
-                if mouse:
-                    position = editor.funcs.screenpos(window, row, 1)
-                    editor.options["mousetime"] = 0
-                    editor.api.input_mouse(
-                        "right", "press", "", 0,
-                        position["row"] - 1, position["col"] - 1,
-                    )
-                    pump(editor)
-                else:
-                    self.keys(editor, "a")
-
-            open_menu()
-            self.keys(editor, "<Esc>")
-            names = editor.funcs.menu_info("RediffStack", "n")["submenus"]
-            enabled = []
-            for name in names:
-                menu = editor.funcs.menu_info("RediffStack." + name, "n")
-                if menu["enabled"]:
-                    enabled.append(name)
-            self.assertIn(action, enabled)
-            open_menu()
-            self.keys(editor, "<Down>" * (enabled.index(action) + 1) + "<CR>")
-
-        focus_row("feature/api")
-        self.keys(editor, "ja<Down><Esc>")
+        self.keys(editor, " gh")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "feature/api<Esc>")
         self.assertIsNone(self.lua(editor, "return s.comparison"))
-        choose_action("feature/api", "Use as base")
+        self.keys(editor, ":git history<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "feature/api")
+        self.keys(editor, "<CR>")
         self.assertEqual(api_commit, self.lua(editor, "return s.comparison.base"))
         self.assertIsNone(self.lua(editor, "return s.comparison.head"))
-        choose_action("feature/ui", "Use as target", mouse=True)
+        self.keys(editor, " gh")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "feature/ui")
+        self.keys(editor, "<C-t>")
         self.assertEqual(
             [api_commit, tip],
             self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
@@ -1007,25 +889,24 @@ class EditorUI(unittest.TestCase):
         self.assertEqual(["ui.txt"], self.lua(editor, """
             return vim.tbl_map(function(entry) return entry.path end, s.entries)
         """))
-        self.keys(editor, "<Esc>")
-        self.assertTrue(self.lua(editor, "return vim.api.nvim_get_current_win() == s.tree_win"))
-        focus_row("main")
-        self.keys(editor, "a<Down><Esc>")
+        git("update-ref", "refs/heads/feature/api", base)
+        self.keys(editor, " gh")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "UI change")
+        self.keys(editor, "<C-t>")
         self.assertEqual(
             [api_commit, tip],
             self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
         )
-
-        git("update-ref", "refs/heads/feature/api", base)
-        choose_action("Working files", "Use as target")
-        self.assertEqual(api_commit, self.lua(editor, "return s.comparison.base"))
-        self.assertIn(api_commit[:12], "\n".join(editor.current.buffer[:]))
-        choose_action("main", "Use as base")
-        self.assertEqual(base, self.lua(editor, "return s.comparison.base"))
-        self.assertIsNone(self.lua(editor, "return s.comparison.head"))
-        focus_row("Local changes")
+        self.keys(editor, " gh")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "main")
         self.keys(editor, "<CR>")
+        self.assertEqual(base, self.lua(editor, "return s.comparison.base"))
+        self.assertEqual(tip, self.lua(editor, "return s.comparison.head"))
+        self.keys(editor, ":git base reset<CR>")
         self.assertIsNone(self.lua(editor, "return s.comparison"))
+        self.assertEqual(4, split_count(editor))
         self.assertEqual(original, checkout_state(self.root))
 
     def test_base_compares_commits_to_live_worktree_including_staged_and_untracked(self):
@@ -1256,9 +1137,9 @@ class EditorUI(unittest.TestCase):
             ),
         )
         self.assertIn("COMPARE", self.lua(editor, "return r.statusline()"))
-        self.assertEqual(
+        self.assertIn(
             " Total  +4  −4",
-            self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_buf, 1, 2, false)[1]"),
+            self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false)"),
         )
         for layout in ("merged", "split"):
             self.keys(editor, f":View {layout}<CR>")
@@ -3345,7 +3226,7 @@ class EditorUI(unittest.TestCase):
         window = editor.current.window.handle
         actions = [
             "base", "blame", "blame-line", "blame-toggle", "branch-stack", "comparison", "copy-link",
-            "diff", "down", "help", "pr", "pr-stack", "refresh-refs", "stack", "stacks", "toggle", "up",
+            "diff", "down", "help", "history", "pr", "pr-stack", "refresh-refs", "scope", "stack", "toggle", "up",
         ]
 
         for command, close in (
@@ -6499,10 +6380,10 @@ func greeting() string {
         self.wait_for(editor, "vim.fn.filereadable(vim.env.HARNESS_TEST_LOG) == 1")
         self.assertEqual([self.root], log.read_text().splitlines())
         self.assertEqual("t", editor.api.get_mode()["mode"])
-        self.assertEqual(6, split_count(editor))
+        self.assertEqual(5, split_count(editor))
         job = editor.current.buffer.vars["terminal_job_id"]
         self.keys(editor, "<Esc>:hide<CR><Space>r<Space>r")
-        self.assertEqual(5, split_count(editor))
+        self.assertEqual(4, split_count(editor))
         self.keys(editor, ":ho<CR>")
         self.assertEqual(job, editor.current.buffer.vars["terminal_job_id"])
         self.assertEqual([self.root], log.read_text().splitlines())
@@ -6641,7 +6522,7 @@ func greeting() string {
                 editor, "return vim.api.nvim_buf_get_lines(s.new_buf, 0, -1, false)"
             ),
         )
-        self.assertEqual(5, split_count(editor))
+        self.assertEqual(4, split_count(editor))
         self.assertTrue(
             self.lua(editor, 'return require("rediff.harness").get(s.root).last == nil')
         )
@@ -7145,7 +7026,7 @@ func greeting() string {
         self.keys(editor, "]")
         snapshot = self.lua(editor, "return s.current.id")
 
-        def balanced():
+        def balanced(tree_width):
             old, new, tree = self.lua(
                 editor,
                 "return {vim.api.nvim_win_get_width(s.old_win), vim.api.nvim_win_get_width(s.new_win), vim.api.nvim_win_get_width(s.tree_win)}",
@@ -7153,13 +7034,13 @@ func greeting() string {
             self.assertLessEqual(
                 abs(old - new), 1, "Diff panes must share the available width equally"
             )
-            self.assertEqual(min(44, editor.options["columns"] // 3), tree)
+            self.assertEqual(tree_width, tree)
             self.assertEqual(snapshot, self.lua(editor, "return s.current.id"))
 
-        for width in (181, 79, 132):
+        for width, tree_width in ((181, 28), (79, 15), (132, 26)):
             editor.ui_try_resize(width, 32)
             pump(editor)
-            balanced()
+            balanced(tree_width)
             self.assertEqual(
                 [True, 2],
                 self.lua(
@@ -7172,7 +7053,7 @@ func greeting() string {
         height = editor.current.window.height
         editor.ui_try_resize(201, 32)
         pump(editor)
-        balanced()
+        balanced(28)
         self.assertTrue(
             self.lua(editor, "return vim.api.nvim_get_current_win() == s.composer_win")
         )
@@ -7185,12 +7066,12 @@ func greeting() string {
         self.assertEqual("merged", self.lua(editor, "return s.layout"))
         self.assertEqual("", editor.eval("v:errmsg"))
         self.keys(editor, ":view split<CR>")
-        balanced()
+        balanced(20)
         # Resizing another tab must not steal focus back to Review.
         self.lua(editor, "vim.api.nvim_set_current_tabpage(s.previous_tab)")
         editor.ui_try_resize(180, 32)
         pump(editor)
-        balanced()
+        balanced(28)
         self.assertTrue(
             self.lua(
                 editor, "return vim.api.nvim_get_current_tabpage() == s.previous_tab"
@@ -7351,23 +7232,22 @@ func greeting() string {
 
         def assert_area(mode):
             cells = screen()
-            tree, stack, old, new = self.lua(
-                editor, "return {s.tree_win, s.stack_win, s.old_win or false, s.new_win}"
+            tree, old, new = self.lua(
+                editor, "return {s.tree_win, s.old_win or false, s.new_win}"
             )
             tree_row, _ = editor.api.win_get_position(tree)
             edge = editor.api.win_get_width(tree)
-            stack_row, _ = editor.api.win_get_position(stack)
             diff_row, diff_col = editor.api.win_get_position(old or new)
 
             def foreground(row, col):
                 return cells[row, col][1].get("foreground")
 
             if mode == "tree":
-                self.assertEqual(0x9CCFD8, foreground(stack_row, edge))
+                self.assertEqual(0x9CCFD8, foreground(tree_row, edge))
                 self.assertEqual(0x9CCFD8, foreground(tree_row + 1, edge))
                 self.assertNotEqual(0x9CCFD8, foreground(diff_row - 1, diff_col + 2))
             else:
-                self.assertNotEqual(0x9CCFD8, foreground(stack_row, edge))
+                self.assertNotEqual(0x9CCFD8, foreground(tree_row, edge))
                 self.assertEqual(0x9CCFD8, foreground(diff_row + 1, edge))
                 for pane in (old, new) if old else (new,):
                     row, col = editor.api.win_get_position(pane)
@@ -7375,12 +7255,12 @@ func greeting() string {
             if old:
                 row, col = editor.api.win_get_position(new)
                 self.assertNotEqual(0x9CCFD8, foreground(row + 1, col - 1))
-            self.assertNotEqual(0x9CCFD8, foreground(tree_row - 1, 2))
+            self.assertNotEqual(0x9CCFD8, foreground(tree_row, 2))
             self.assertNotEqual(0x9CCFD8, cells[tree_row, 2][1].get("background"))
 
         tree = self.lua(editor, "return s.tree_win")
         assert_area("tree")
-        for pane in ("new_win", "old_win", "stack_win", "tree_win"):
+        for pane in ("new_win", "old_win", "tree_win"):
             with self.subTest(pane=pane):
                 win = self.lua(editor, f"return s.{pane}")
                 position = editor.funcs.screenpos(win, 1, 1)
@@ -8595,7 +8475,7 @@ func greeting() string {
         path.write_text(path.read_text() + "-- newer worktree edit, not refreshed\n")
         index = subprocess.check_output(["git", "-C", self.root, "write-tree"])
         self.keys(editor, ":view merged<CR>")
-        self.assertEqual(4, split_count(editor))
+        self.assertEqual(3, split_count(editor))
         self.assertEqual(
             ["merged", 2],
             self.lua(
@@ -8619,7 +8499,7 @@ func greeting() string {
             "Keep this note", self.lua(editor, "return s.comments[1].text")
         )
         self.keys(editor, ":view<CR>")
-        self.assertEqual(5, split_count(editor))
+        self.assertEqual(4, split_count(editor))
         self.assertEqual(
             ["split", 1],
             self.lua(
@@ -9732,7 +9612,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         self.assertEqual("terminal", editor.current.buffer.options["buftype"])
         self.assertEqual("hide", editor.current.buffer.options["bufhidden"])
         self.assertEqual(tabs, len(editor.api.list_tabpages()))
-        self.assertEqual(6, split_count(editor))
+        self.assertEqual(5, split_count(editor))
         self.assertEqual(self.root, log.read_text().split("|")[0])
         self.keys(editor, "hello pane<CR>")
         self.wait_for(
@@ -9761,8 +9641,8 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         self.assertEqual("n", editor.api.get_mode()["mode"])
         self.keys(editor, ":ho<CR>")
         self.assertEqual(buf, editor.current.buffer.number)
-        self.assertEqual(6, split_count(editor))
-        for layout, count in (("merged", 5), ("split", 6)):
+        self.assertEqual(5, split_count(editor))
+        for layout, count in (("merged", 4), ("split", 5)):
             self.keys(
                 editor, f"<C-\\><C-n>:hide<CR>:view {layout}<CR>:harness open<CR>"
             )
@@ -9811,7 +9691,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
                 "Entering Review keeps the harness visible without :ho",
             )
             self.assertEqual(1, len(editor.funcs.win_findbuf(buf)))
-            self.assertEqual(6, split_count(editor))
+            self.assertEqual(5, split_count(editor))
             self.keys(editor, ":ho<CR>")
             self.assertEqual(job, editor.current.buffer.vars["terminal_job_id"])
         # Hiding in Review carries through both directions of the toggle.
@@ -10086,7 +9966,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         self.assertEqual(str(other) + "|session-b", log.read_text().splitlines()[1])
         other_job = editor.current.buffer.vars["terminal_job_id"]
         self.assertNotEqual(other_job, local_job)
-        self.assertEqual(6, split_count(editor))
+        self.assertEqual(5, split_count(editor))
         self.keys(editor, "<Esc>:worktree switch main<CR>:ho<CR>")
         self.assertEqual(local_job, editor.current.buffer.vars["terminal_job_id"])
         self.keys(editor, "<Esc>:worktree switch other<CR>:ho<CR>")
@@ -10430,9 +10310,9 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
             self.lua(editor, "return vim.api.nvim_get_current_win() == s.tree_win")
         )
         self.keys(editor, ":view merged<CR>")
-        self.assertEqual(4, split_count(editor))
+        self.assertEqual(3, split_count(editor))
         self.keys(editor, ":view split<CR>")
-        self.assertEqual(5, split_count(editor))
+        self.assertEqual(4, split_count(editor))
 
     def test_tree_staging_advances_and_combines_untracked(self):
         editor = self.launch(self.root)

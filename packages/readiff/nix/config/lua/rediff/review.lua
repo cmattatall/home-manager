@@ -769,15 +769,23 @@ function M.refresh(preferred, changes)
 	s.line_totals = changes.line_totals
 	local additions = "+" .. s.line_totals.added
 	local deletions = "−" .. s.line_totals.deleted
-	local title = " REVIEW · Git changes"
+	local lines = { " Local changes" }
 	if s.comparison then
 		local index, count = require("rediff.comparison_stack").position(s.root, s.comparison)
-		title = " COMPARE" .. (index and (" " .. index .. "/" .. count) or "")
+		lines[1] = " COMPARE" .. (index and (" " .. index .. "/" .. count) or "")
+		for _, endpoint in ipairs({
+			{ label = "Base", commit = s.comparison.base, ref = s.comparison.base_ref },
+			{ label = "Target", commit = s.comparison.head, ref = s.comparison.head_ref },
+		}) do
+			local label = endpoint.commit and endpoint.commit:sub(1, 12) or "Working files"
+			table.insert(lines, " " .. endpoint.label .. ": " .. label)
+			if endpoint.ref and not vim.startswith(endpoint.commit, endpoint.ref) then
+				table.insert(lines, "   " .. vim.fn.strtrans(endpoint.ref))
+			end
+		end
 	end
-	local lines = {
-		title,
-		" Total  " .. additions .. "  " .. deletions,
-	}
+	table.insert(lines, " Total  " .. additions .. "  " .. deletions)
+	local totals_row = #lines
 	if s.file_filter and s.file_filter ~= "" then
 		vim.wo[s.tree_win].winbar = " / %<"
 			.. vim.fn.strtrans(s.file_filter):gsub("%%", "%%%%")
@@ -821,8 +829,8 @@ function M.refresh(preferred, changes)
 		{ additions, "ReviewAdded" },
 		{ deletions, "ReviewDeleted" },
 	}) do
-		local first, last = lines[2]:find(chunk[1], 1, true)
-		api.nvim_buf_set_extmark(s.tree_buf, tree_ns, 1, first - 1, {
+		local first, last = lines[totals_row]:find(chunk[1], 1, true)
+		api.nvim_buf_set_extmark(s.tree_buf, tree_ns, totals_row - 1, first - 1, {
 			id = id,
 			end_col = last,
 			hl_group = chunk[2],
@@ -917,7 +925,6 @@ function M.refresh(preferred, changes)
 	highlight_tree_selection(s)
 	render_tree_annotations(s)
 	summary.update(s)
-	require("rediff.stack_panel").refresh(s)
 	awareness.scan(s.root)
 	save(s)
 end
@@ -2171,7 +2178,6 @@ function M.open(root, comparison)
 	require("rediff.live").start(s)
 	require("rediff.discards").load(s.root)
 	awareness.start(s.root)
-	require("rediff.stack_panel").restore(s)
 	api.nvim_exec_autocmds("User", { pattern = "ReviewEnter" })
 end
 
@@ -2228,8 +2234,6 @@ function M.setup()
 	api.nvim_set_hl(0, "ReviewHunk", { fg = palette.gold, bold = true })
 	local function review_highlights()
 		api.nvim_set_hl(0, "RediffMode", { fg = palette.base, bg = palette.foam, bold = true })
-		api.nvim_set_hl(0, "ReviewStackEndpoint", { fg = palette.foam, bg = palette.highlight_low, bold = true })
-		api.nvim_set_hl(0, "ReviewStackRange", { fg = palette.foam })
 		api.nvim_set_hl(0, "ReviewFilterMatch", { fg = palette.gold, bold = true })
 		api.nvim_set_hl(0, "ReviewTotal", { fg = palette.text, bold = true })
 		api.nvim_set_hl(0, "ReviewFileSummary", { fg = palette.gold, bg = "#332b24", bold = true })
@@ -2607,7 +2611,6 @@ function M.setup()
 					local width = api.nvim_win_get_width(s.old_win) + api.nvim_win_get_width(s.new_win)
 					api.nvim_win_set_width(s.old_win, math.floor(width / 2))
 				end
-				require("rediff.stack_panel").resize(s)
 				render_comments(false, s)
 			end
 		end,

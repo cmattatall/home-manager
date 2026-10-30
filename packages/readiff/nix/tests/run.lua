@@ -179,7 +179,7 @@ local function test()
 	equal(false, table.concat(sidebar(), "\n"):find("UNTRACKED", 1, true) ~= nil, "No separate untracked section")
 	equal(true, vim.list_contains(sidebar(), " U plan.md"), "Untracked files have a U badge")
 	equal({
-		" REVIEW · Git changes",
+		" Local changes",
 		" Total  +4  −4",
 		" 3 changes",
 		" ▾ STAGED (0)",
@@ -290,14 +290,14 @@ local function test()
 	equal(path, s.last_submission, "Annotation write does not submit a batch")
 	equal(nil, s.composer, "Writing closes the annotation")
 	equal(s.new_win, vim.api.nvim_get_current_win(), "Write returns focus to the source pane")
-	equal(5, #vim.api.nvim_tabpage_list_wins(0), "Write leaves source panes, stacks, and summary open")
+	equal(4, #vim.api.nvim_tabpage_list_wins(0), "Write leaves files, source panes, and summary open")
 	equal("Check the expiry boundary too.", s.comments[2].text, "Write saves the annotation in this editor session")
 	equal(changed, vim.fn.readfile(root .. "/auth.lua"), "Composer never modifies source")
 	equal(index_before, run({ "write-tree" }), "Writing composer never stages source")
 	keys("i<Esc>:wq<CR>")
 	equal(nil, s.composer, "Native wq closes the reopened annotation")
 	equal(2, #s.comments, "Editing an existing note does not duplicate it")
-	equal(5, #vim.api.nvim_tabpage_list_wins(0), "Deferred close after wq preserves source panes, stacks, and summary")
+	equal(4, #vim.api.nvim_tabpage_list_wins(0), "Deferred close after wq preserves files, source panes, and summary")
 	equal(written, s.last_submission, "Annotation wq never submits")
 
 	-- Source edit commands continue as native operators inside the annotation.

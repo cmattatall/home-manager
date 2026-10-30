@@ -200,9 +200,9 @@ PATH precedence, and integration with an existing home configuration.
    retries a failed batch. Staged hunks revert in both index and worktree;
    files with unstaged edits must be unstaged first.
 
-Use **Space gs** or `:git stacks` to browse existing branch chains in a persistent
-sidebar above the files. Select a branch and press Enter to review it against its
-parent. Use h/l to fold chains, / to filter, r to rescan, and q to close the panel.
+Review starts with **Local changes**, grouped into Staged and Unstaged.
+Use **Space gs** or `:git scope` to choose what to review, and **Space gh** or
+`:git history` to browse commits.
 Use **Space gS** or `:git pr-stack` to discover published GitHub PR stacks.
 For manually stacked branches, use `:git branch-stack main HEAD` to discover
 their order from Git ancestry, without GitHub. Choose a parent when merge

@@ -63,6 +63,77 @@ local function compare(args)
 	open(args[2], args[3])
 end
 
+local function scope()
+	local directory = root()
+	local choices = { "Local changes", "Compare with working files", "Compare two commits" }
+	require("fzf-lua").fzf_exec(choices, {
+		prompt = "Review scope> ",
+		winopts = { width = 0.55, height = 0.3 },
+		fzf_opts = { ["--no-sort"] = true, ["--no-multi"] = true },
+		actions = {
+			["default"] = function(selected)
+				local choice = selected[1]
+				if not choice then
+					return
+				end
+				guarded(function()
+					assert(root() == directory, "Worktree changed. Choose the scope again")
+					if choice == choices[1] then
+						review.open(directory)
+					else
+						compare({ choice == choices[2] and "base" or "diff" })
+					end
+				end)
+			end,
+		},
+	})
+end
+
+local function commits()
+	local directory = root()
+	local previous = review.state and review.state.comparison
+	local function select_endpoint(selected, endpoint)
+		if not selected[1] then
+			return
+		end
+		guarded(function()
+			assert(root() == directory, "Worktree changed. Choose the commit again")
+			local ref = selected[1]:match("^%x+")
+			local commit = git.comparison(directory, ref).base
+			local current = previous or git.comparison(directory, "HEAD")
+			local comparison = {
+				base = current.base,
+				base_ref = current.base_ref,
+				head = current.head,
+				head_ref = current.head_ref,
+			}
+			if endpoint == "base" then
+				comparison.base, comparison.base_ref = commit, ref
+			else
+				comparison.head, comparison.head_ref = commit, ref
+			end
+			stack.set(directory, { comparison })
+		end)
+	end
+	require("fzf-lua").git_commits({
+		cwd = directory,
+		cmd = "git log --all --date-order --decorate=short --color=never --format='%h %s %d'",
+		prompt = "History> ",
+		header = "Enter: base · Ctrl-t: target · Esc: cancel",
+		winopts = { preview = { hidden = false, layout = "vertical", vertical = "down:60%" } },
+		fzf_opts = { ["--no-sort"] = true },
+		actions = {
+			["enter"] = function(selected)
+				select_endpoint(selected, "base")
+			end,
+			["ctrl-t"] = function(selected)
+				select_endpoint(selected, "target")
+			end,
+			["ctrl-d"] = false,
+		},
+	})
+end
+
 local function comparisons(args)
 	local directory = root()
 	if #args == 1 then
@@ -144,13 +215,12 @@ local actions = {
 		usage = "stack [REF REF ...]",
 		description = "Choose or define a comparison stack",
 	},
-	stacks = {
-		run = function()
-			require("rediff.stack_panel").open(root())
-		end,
-		description = "Browse branch stacks in the sidebar",
+	scope = {
+		run = scope,
+		description = "Choose Local changes or an explicit comparison",
 		key = "gs",
 	},
+	history = { run = commits, description = "Browse commits and choose a comparison endpoint", key = "gh" },
 	["pr-stack"] = {
 		run = function()
 			require("rediff.pr_stack").discover(root())

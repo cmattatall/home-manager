@@ -65,8 +65,10 @@ TOPICS
 ==============================================================================
 REVIEW AND ANNOTATIONS                                          *rediff-review*
 
-Interactive startup without file arguments opens Review inside Git, with tree
-focus and a diff preview. File arguments open directly for editing.
+Interactive startup without file arguments opens Local changes inside Git, with
+tree focus and a diff preview. Staged compares HEAD to the index. Unstaged compares
+the index to working files and includes untracked files.
+File arguments open directly for editing.
 Moving onto a file previews it. Tab enters the diff. Space q returns to editing,
 with the launch directory's explorer ready after automatic Review startup.
 Outside Git, startup stays in ordinary editing without a sidebar.
@@ -90,55 +92,27 @@ Split/merged views, file/hunk navigation, filtering, and annotations work as in
 Review. Staging, reverting, and :fs/:fu are unavailable here. :Review returns to
 worktree changes; Space q leaves for editing. Notes retain their commit snapshots.
 
-The comparison header shows resolved commit IDs, input refs in parentheses,
-and stack position. The statusline labels the checked-out branch separately.
+The file list shows Base and Target with pinned commit IDs and input refs.
+The statusline labels the checked-out branch separately.
 Space gc opens full comparison details, including commit IDs and the feedback
 harness.
 Space p lists searchable Git actions with descriptions and keyboard shortcuts.
 Tab completes branches, tags, and remote-tracking refs in comparison commands and
 prompts. You can also type any expression that Git resolves to a commit.
 
-STACKS SIDEBAR
+SCOPE AND HISTORY
 
-Review opens a stack graph above the file list. Space gs or :git stacks focuses
-the graph or reopens it after closing.
-It lists local and remote-tracking branches immediately, using locally available
-Git refs. No base/tip input or GitHub connection is required. Branches at the same
-commit share a row. Relationships follow Git ancestry, which does not record
-the author's intended stack. Branches with multiple nearest ancestors appear
-separately with "parent unclear".
+Space gs or :git scope chooses Local changes, a ref compared with working files,
+or two commits. Comparison choices prompt for the endpoints before opening the
+review. Escape keeps the current scope.
 
-  j/k          Move through branches without changing the comparison
-  Enter        Review against the parent, or choose a parent when ambiguous
-  a / Menu     Open comparison actions for the selected row
-  Right-click  Open comparison actions for the clicked row
-  h/l          Collapse/expand a branch's descendants
-  /            Filter branch names, keeping matching ancestors visible
-  r            Rescan local refs without fetching
-  Tab          Focus the file list
-  Esc          Clear the filter and focus the file list
-  q            Close the Stacks panel
-
-BASE and TARGET mark the compared endpoints. Checkout marks the current HEAD.
-Highlighted endpoints remain visible as separate commit rows when a branch is
-collapsed, filtered out, or has moved away from a pinned comparison commit.
-Working files is the live target. Enter on Local changes returns to the ordinary
-staged/unstaged review. Neither action checks out a branch.
-
-The action menu offers Review against parent, Use as base, and Use as target.
-Changing one endpoint preserves the other endpoint's resolved commit. Working
-files can be a target, but not a base.
-Dismiss the menu to keep the current comparison. Commands such as :git diff and
-:git base also update the graph, including refs without a local branch.
-
-Enter on a branch opens its parent comparison and includes the unambiguous
-surrounding chain for Space gu/gd.
-Forks stop automatic forward traversal. Root branches have no ancestor branch
-ref to compare against. Select a child, or use :git diff for explicit endpoints.
-Browsing and opening comparisons preserve checkout, refs, index, and working
-files. The panel stays open across comparisons. It appears in Review when invoked
-from ordinary editing. The current PR number is shown when its head matches a
-locally available branch.
+Space gh or :git history opens a searchable commit list with branch and tag
+decorations and a diff preview. Type a subject, ref name, or commit ID to filter.
+Enter uses the selected commit as the base. Ctrl-t uses it as the target.
+Changing one endpoint preserves the other endpoint's pinned commit. From Local
+changes, the starting endpoints are HEAD and Working files. Escape closes history
+and preserves the current review. Browsing and choosing endpoints preserve the
+checkout, refs, index, and working files.
 
 COMPARISON STACKS
 
@@ -209,10 +183,8 @@ shows local changes against HEAD. Save editor buffers to include their edits.
 
 The base uses the commit resolved when opened. Live refresh and Space R update the
 working-tree side. Repeating :git base BASE resolves the base again and refreshes.
-The stack graph marks that commit as BASE and Working files as TARGET, even when
-no files differ. Use :git base HEAD to compare against the current checkout's tip.
 Split/merged views, navigation, filtering, and annotations work as in Review.
-:git base reset returns to normal Review, following HEAD with separate staged
+:git base reset returns to Local changes, following HEAD with separate staged
 and unstaged groups, staging, and reverting. It has the same effect as :Review.
 To compare a branch named reset, use :git base refs/heads/reset.
 
@@ -834,7 +806,8 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
   :Git diff [BASE TARGET]     Compare two commit-ish refs, or prompt
   :Git base [BASE|reset]      Compare working files, prompt, or return to Review
   :Git comparison            Show refs, commit IDs, checkout, and harness
-  :Git stacks                Browse branch stacks in the sidebar
+  :Git scope                 Choose Local changes or an explicit comparison
+  :Git history               Browse commits and choose a comparison endpoint
   :Git stack [REF REF ...]    Choose or define adjacent comparisons
   :Git branch-stack [BASE [TIP]] Discover branch tips by Git ancestry, or prompt
   :Git pr-stack              Discover published GitHub PR stacks
