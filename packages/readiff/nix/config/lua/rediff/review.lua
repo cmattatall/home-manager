@@ -2183,7 +2183,7 @@ function M.statusline()
 	local root = (s and s.root) or (annotation and annotation.root) or vim.b.rediff_harness_root or vim.fn.getcwd()
 	local directory = vim.fn.strtrans(vim.fn.fnamemodify(root, ":~")):gsub("%%", "%%%%")
 	if s then
-		local file = s.current and vim.fn.strtrans(s.current.path):gsub("%%", "%%%%")
+		local selection_status = s.current and ""
 			or (#s.entries > 0 and "No file selected" or "No changes")
 		local mode = "REVIEW"
 		if s.comparison then
@@ -2201,7 +2201,7 @@ function M.statusline()
 			.. " · "
 			.. #s.comments
 			.. " comments   %<"
-			.. file
+			.. selection_status
 			.. (s.annotation_id and " · annotation snapshot · Space R to refresh" or "")
 			.. "%=%l:%c "
 	end

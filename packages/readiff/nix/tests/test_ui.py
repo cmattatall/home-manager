@@ -8461,6 +8461,24 @@ func greeting() string {
         editor.ui_try_resize(100, 28)
         check("COMPARE")
 
+    def test_review_keeps_file_path_in_header_without_tab_labels(self):
+        editor = self.launch(self.root)
+        for layout in ("merged", "split"):
+            self.keys(editor, f":view {layout}<CR>")
+            self.assertGreater(len(editor.api.list_tabpages()), 1)
+            self.assertEqual(0, editor.options["showtabline"])
+            status = editor.api.eval_statusline(
+                editor.options["statusline"], {"maxwidth": 300}
+            )["str"]
+            self.assertNotIn("auth.lua", status)
+            summary = self.lua(
+                editor,
+                "return vim.api.nvim_buf_get_lines(s.summary_buf, 0, -1, false)[1]",
+            )
+            self.assertIn("auth.lua", summary)
+            self.assertNotIn("red: old", summary)
+            self.assertNotIn("green: new", summary)
+
     def test_branch_and_manual_refresh(self):
         editor = self.launch(self.root)
         self.assertIn(
