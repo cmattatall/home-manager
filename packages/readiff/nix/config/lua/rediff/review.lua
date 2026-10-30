@@ -7,6 +7,7 @@ local selection = require("rediff.selection")
 local awareness = require("rediff.awareness")
 local summary = require("rediff.review_summary")
 local storage = require("rediff.review_storage")
+local pane_border = require("rediff.pane_border")
 local tree_ns = api.nvim_create_namespace("rediff.tree")
 local filter_ns = api.nvim_create_namespace("rediff.file-filter")
 local active_ns = api.nvim_create_namespace("rediff.active-file")
@@ -777,11 +778,6 @@ function M.refresh(preferred, changes)
 		title,
 		" Total  " .. additions .. "  " .. deletions,
 	}
-	if s.comparison then
-		table.insert(lines, " Space gc details")
-		table.insert(lines, " Space gu up")
-		table.insert(lines, " Space gd down")
-	end
 	if s.file_filter and s.file_filter ~= "" then
 		vim.wo[s.tree_win].winbar = " / %<"
 			.. vim.fn.strtrans(s.file_filter):gsub("%%", "%%%%")
@@ -921,6 +917,7 @@ function M.refresh(preferred, changes)
 	highlight_tree_selection(s)
 	render_tree_annotations(s)
 	summary.update(s)
+	require("rediff.stack_panel").refresh(s)
 	awareness.scan(s.root)
 	save(s)
 end
@@ -2013,6 +2010,7 @@ function M.leave()
 	end
 	save(s)
 	M.state = nil
+	pane_border.update(nil)
 	vim.uv.fs_unlink(s.directory .. "/editor.lock")
 	if api.nvim_tabpage_is_valid(s.tab) then
 		if api.nvim_tabpage_is_valid(s.previous_tab) then
@@ -2099,7 +2097,7 @@ function M.open(root, comparison)
 	s.new_buf = owned_buffer("review://" .. s.id .. "/new", {})
 	api.nvim_win_set_buf(s.new_win, s.new_buf)
 	for _, win in ipairs({ s.tree_win, s.old_win, s.new_win }) do
-		vim.wo[win].winhighlight = "WinBar:ReviewFocusedPane,WinBarNC:ReviewInactivePane"
+		vim.wo[win].winhighlight = "WinBar:ReviewInactivePane,WinBarNC:ReviewInactivePane"
 	end
 	vim.wo[s.tree_win].number = false
 	vim.wo[s.tree_win].signcolumn = "no"
@@ -2183,8 +2181,7 @@ function M.statusline()
 	local root = (s and s.root) or (annotation and annotation.root) or vim.b.rediff_harness_root or vim.fn.getcwd()
 	local directory = vim.fn.strtrans(vim.fn.fnamemodify(root, ":~")):gsub("%%", "%%%%")
 	if s then
-		local selection_status = s.current and ""
-			or (#s.entries > 0 and "No file selected" or "No changes")
+		local selection_status = s.current and "" or (#s.entries > 0 and "No file selected" or "No changes")
 		local mode = "REVIEW"
 		if s.comparison then
 			mode = "COMPARE"
@@ -2231,6 +2228,8 @@ function M.setup()
 	api.nvim_set_hl(0, "ReviewHunk", { fg = palette.gold, bold = true })
 	local function review_highlights()
 		api.nvim_set_hl(0, "RediffMode", { fg = palette.base, bg = palette.foam, bold = true })
+		api.nvim_set_hl(0, "ReviewStackEndpoint", { fg = palette.foam, bg = palette.highlight_low, bold = true })
+		api.nvim_set_hl(0, "ReviewStackRange", { fg = palette.foam })
 		api.nvim_set_hl(0, "ReviewFilterMatch", { fg = palette.gold, bold = true })
 		api.nvim_set_hl(0, "ReviewTotal", { fg = palette.text, bold = true })
 		api.nvim_set_hl(0, "ReviewFileSummary", { fg = palette.gold, bg = "#332b24", bold = true })
@@ -2244,7 +2243,8 @@ function M.setup()
 		api.nvim_set_hl(0, "ReviewSeen", { fg = palette.foam })
 		api.nvim_set_hl(0, "ReviewAnnotation", { fg = "#ff9e64" })
 		api.nvim_set_hl(0, "ReviewAnnotationChanged", { fg = palette.iris, bold = true })
-		api.nvim_set_hl(0, "ReviewFocusedPane", { fg = palette.base, bg = palette.foam, bold = true })
+		api.nvim_set_hl(0, "ReviewPaneBorder", { fg = palette.foam, bg = palette.base, blend = 0 })
+		api.nvim_set_hl(0, "ReviewPaneTransparent", { bg = palette.base, blend = 100 })
 		api.nvim_set_hl(0, "ReviewInactivePane", { fg = palette.subtle, bg = palette.surface })
 		api.nvim_set_hl(0, "ReviewCursorLineInsert", { bg = "#3b5b44" })
 		api.nvim_set_hl(0, "ReviewCursorLineDelete", { bg = "#6a4046" })
@@ -2311,6 +2311,13 @@ function M.setup()
 		})
 	end
 	api.nvim_create_autocmd("ColorScheme", { callback = review_highlights })
+	api.nvim_create_autocmd({ "WinEnter", "TabEnter", "WinResized", "VimResized" }, {
+		callback = function()
+			vim.schedule(function()
+				pane_border.update(M.active())
+			end)
+		end,
+	})
 	api.nvim_create_autocmd("OptionSet", {
 		pattern = "wrap",
 		callback = function()

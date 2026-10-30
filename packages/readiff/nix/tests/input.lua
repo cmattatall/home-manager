@@ -155,7 +155,10 @@ return function(equal)
 		lua([[vim.api.nvim_set_current_win(require("rediff.review").state.new_win)]])
 		for _, move in ipairs({
 			{ "<D-w>h", "old_win" },
-			{ "<D-w>h", "tree_win" },
+			{ "<D-w>h", "stack_win" },
+			{ "<D-w>j", "tree_win" },
+			{ "<D-w>k", "stack_win" },
+			{ "<D-w>j", "tree_win" },
 			{ "<D-w>l", "old_win" },
 			{ "v<D-w>l", "new_win" },
 		}) do

@@ -13,7 +13,7 @@ function M.ready(s)
 		and not s.annotation_id
 		-- Harness input is separate from the diff buffers.
 		and (mode == "n" or (terminal and mode == "t") or (in_panel and mode == "i"))
-		and (win == s.tree_win or win == s.old_win or win == s.new_win or terminal or in_panel)
+		and (win == s.tree_win or win == s.stack_win or win == s.old_win or win == s.new_win or terminal or in_panel)
 		and not require("rediff.feedback").busy(s.root)
 end
 

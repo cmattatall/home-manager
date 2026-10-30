@@ -54,8 +54,12 @@ local function compare(args)
 		(action == "diff" and #args == 3)
 			or (action == "base" and #args == 2)
 			or (action == "branch-stack" and (#args == 2 or #args == 3)),
-		"Usage: git diff BASE TARGET | git base BASE | git branch-stack BASE [TIP]"
+		"Usage: git diff BASE TARGET | git base BASE|reset | git branch-stack BASE [TIP]"
 	)
+	if action == "base" and args[2] == "reset" then
+		review.open(directory)
+		return
+	end
 	open(args[2], args[3])
 end
 
@@ -124,8 +128,8 @@ local actions = {
 	base = {
 		run = compare,
 		arguments = true,
-		usage = "base [BASE]",
-		description = "Compare a ref to saved working files",
+		usage = "base [BASE|reset]",
+		description = "Compare a ref to working files, or reset to local Review",
 	},
 	diff = {
 		run = compare,
@@ -309,7 +313,11 @@ function M.setup()
 			end
 			local action = line:match("^%s*Git%s+(%S+)%s")
 			if action == "diff" or action == "base" or action == "stack" or action == "branch-stack" then
-				return _G.RediffGitRefs(lead)
+				local refs = _G.RediffGitRefs(lead)
+				if action == "base" and vim.startswith("reset", lead) and not vim.tbl_contains(refs, "reset") then
+					table.insert(refs, 1, "reset")
+				end
+				return refs
 			end
 			return {}
 		end,

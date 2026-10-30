@@ -6,9 +6,6 @@ function M.update(s)
 	if not s.summary_win or not api.nvim_win_is_valid(s.summary_win) then
 		return
 	end
-	vim.wo[s.summary_win].winbar = s.comparison
-			and (" COMPARE · " .. vim.fn.strtrans(s.reference or ""):gsub("%%", "%%%%"))
-		or ""
 	local chunks = { { " No file selected", "ReviewFileSummary" } }
 	if s.current and s.diff and api.nvim_win_is_valid(s.new_win) then
 		local added, deleted = 0, 0
