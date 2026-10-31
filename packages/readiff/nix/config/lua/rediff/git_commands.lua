@@ -59,6 +59,9 @@ local function compare(args)
 			comparison.base = git.comparison(directory, args[2]).base
 			comparison.base_ref = args[2]
 		end
+		if not review.state then
+			review.open(directory)
+		end
 		require("rediff.ref_picker").open(directory, {
 			comparison = comparison,
 			local_nodes = action ~= "branch-stack",

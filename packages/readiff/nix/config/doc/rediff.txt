@@ -128,15 +128,19 @@ panning, with the cursor on its node whenever that node is visible.
 The detail pane shows full refs, the complete commit message including its
 body, and changed files. Scroll over that pane to read longer messages.
 
-Ctrl-b assigns the browsed snapshot as BASE, Ctrl-t assigns TARGET, and Ctrl-y
-applies both choices. Gold rows mark the base, cyan rows mark the target, and a
-lavender underline marks the browsing cursor. If both endpoints are the same
-commit, its row has a neutral highlight. Endpoint labels stay in the header.
+Ctrl-b assigns the browsed snapshot as BASE and Ctrl-t assigns TARGET. Each
+valid pair immediately updates the review's files and hunks. Escape closes the
+picker. In the graph, q also closes it. Gold rows mark the base, cyan rows mark
+the target, and a lavender underline marks the browsing cursor. If both endpoints
+are the same commit, its row has a neutral highlight. Endpoint labels stay in the
+header.
 Scope, history, and :git base start with the current comparison, or the selected
 local group's endpoints. :git diff starts with commit endpoints, defaulting to
 HEAD when opened from local review. Both endpoints can be changed in the picker.
-Escape cancels all pending choices. Browsing and choosing endpoints preserve the
-checkout, refs, index, and working files. The picker needs an 80×24 terminal.
+Browsing without assigning an endpoint leaves the review unchanged. Invalid
+pairs show guidance and keep the last valid diff. Browsing and choosing endpoints
+preserve the checkout, refs, index, and working files. The picker needs an 80×24
+terminal.
 
 COMPARISON STACKS
 

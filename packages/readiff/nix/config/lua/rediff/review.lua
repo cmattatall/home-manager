@@ -913,7 +913,7 @@ function M.refresh(preferred, changes)
 			end
 		end
 	end
-	if heading then
+	if heading and s.group_rows[heading] then
 		api.nvim_win_set_cursor(s.tree_win, { s.group_rows[heading], 0 })
 	end
 	highlight_tree_selection(s)
@@ -2059,8 +2059,19 @@ function M.open(root, comparison)
 	end
 	git.entries(root, comparison) -- Validate before changing windows.
 	if M.state then
-		assert(not M.state.composer, "Save or close the current annotation before switching diff modes")
-		M.leave()
+		local s = M.state
+		assert(not s.composer, "Save or close the current annotation before switching diff modes")
+		close_file_filter(s)
+		s.comparison = comparison
+		s.groups = comparison and { git.local_group(comparison) or "branch" } or { "staged", "unstaged" }
+		s.exhausted_group = nil
+		s.tree_selection = {}
+		s.checkout = nil
+		api.nvim_set_current_tabpage(s.tab)
+		M.refresh(s.current)
+		api.nvim_set_current_win(s.tree_win)
+		require("rediff.live").start(s)
+		return
 	end
 	local target = harness.get(root).target
 	local directory = feedback.directory(root)

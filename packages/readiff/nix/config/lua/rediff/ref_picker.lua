@@ -114,7 +114,7 @@ function M.open(root, opts)
 		if name == "results" or name == "details" then
 			config.border, config.title = "none", nil
 			config.zindex = 61
-		elseif name == "search" or name == "apply" then
+		elseif name == "search" then
 			config.zindex = 62
 		end
 		if name == "background" then
@@ -148,7 +148,6 @@ function M.open(root, opts)
 		local results_height = math.max(3, math.min(#matches * 3, math.floor(content_height * 0.3)))
 		pane("background", "", 0, 0, vim.o.columns, vim.o.lines - 1)
 		pane("header", "", top, left, panel_width, 3)
-		pane("apply", "", top + 1, left + panel_width - 14, 12, 1)
 		pane("sidebar", "Find snapshots", content_row, left, sidebar_width, content_height)
 		pane("search", "", content_row + 2, left + 2, sidebar_width - 4, 1)
 		pane("results", "", content_row + 6, left + 2, sidebar_width - 2, results_height)
@@ -175,9 +174,9 @@ function M.open(root, opts)
 		write(buffers.sidebar, { " " .. hint })
 		api.nvim_buf_clear_namespace(buffers.sidebar, decoration, 0, -1)
 		highlight(buffers.sidebar, 0, 0, #hint + 1, "RediffRefMuted")
-		local keys = " Ctrl-b base  Ctrl-t target  Ctrl-y compare  Tab switch  Esc cancel"
+		local keys = " Ctrl-b base  Ctrl-t target  Tab switch  Esc/q back"
 		if panel_width >= 100 then
-			keys = " Enter reveal · Ctrl-b base · Ctrl-t target · Ctrl-y compare · Tab graph/search · Esc cancel"
+			keys = " Enter reveal · Ctrl-b base · Ctrl-t target · Tab graph/search · Esc/q back"
 		end
 		write(buffers.footer, { keys })
 	end
@@ -239,9 +238,6 @@ function M.open(root, opts)
 			subtitle = "Same commit — no differences"
 		end
 		write(buffers.header, { "", " " .. base .. " → " .. target, " " .. subtitle })
-		write(buffers.apply, { "  Compare   " })
-		api.nvim_buf_clear_namespace(buffers.apply, decoration, 0, -1)
-		highlight(buffers.apply, 0, 0, 12, message and "RediffRefMuted" or "RediffRefTitle")
 		api.nvim_buf_clear_namespace(buffers.header, endpoints, 0, -1)
 		api.nvim_buf_set_extmark(buffers.header, endpoints, 1, 1, {
 			end_col = 1 + #base_badge,
@@ -590,14 +586,11 @@ function M.open(root, opts)
 		comparison[endpoint] = selected.id
 		comparison[endpoint .. "_ref"] = not selected.local_state and selected.short or nil
 		paint_endpoints()
-	end
-
-	local function apply()
 		local message = selection_error()
 		if message then
-			vim.notify(message, vim.log.levels.WARN)
 			return
 		end
+		local resolved = vim.deepcopy(comparison)
 		if comparison.head == "index" then
 			local output, code = git.run(root, { "rev-parse", "--verify", "HEAD" }, nil, true)
 			local current_head = code == 0 and vim.trim(output) or nil
@@ -605,10 +598,11 @@ function M.open(root, opts)
 				vim.notify("HEAD changed. Reopen the picker to choose the staged comparison", vim.log.levels.WARN)
 				return
 			end
-			comparison.base, comparison.base_ref = "HEAD", nil
+			resolved.base, resolved.base_ref = "HEAD", nil
 		end
-		close()
-		opts.on_select(comparison)
+		api.nvim_win_call(source_win, function()
+			opts.on_select(resolved)
+		end)
 	end
 
 	local function search()
@@ -652,7 +646,6 @@ function M.open(root, opts)
 		map({ "n", "i" }, "<C-t>", function()
 			assign("head")
 		end)
-		map({ "n", "i" }, "<C-y>", apply)
 		map("n", "/", search)
 		map({ "n", "i" }, "<Tab>", function()
 			if api.nvim_get_current_win() == windows.graph then
@@ -661,10 +654,7 @@ function M.open(root, opts)
 				reveal()
 			end
 		end)
-		map({ "n", "i" }, "<CR>", name == "apply" and apply or reveal)
-		if name == "apply" then
-			map({ "n", "i" }, "<LeftRelease>", apply)
-		end
+		map({ "n", "i" }, "<CR>", reveal)
 		if name == "graph" or name == "results" then
 			local move = name == "graph" and move_graph or move_match
 			for _, key in ipairs({ "j", "<Down>" }) do
