@@ -61,8 +61,8 @@ are disabled. Renames appear as a deletion and addition. **`:Review`** returns
 to staged/unstaged worktree changes, preserving notes and their original snapshots.
 
 Omit refs from `:git diff` or `:git base` to open the searchable commit graph.
-**Space gs** and **Space gh** open the same picker directly. See
-**`:help rediff` → Scope and history** for local snapshots, selection keys, and
+**Space gs** opens the picker directly. See
+**`:help rediff` → Comparison picker** for local snapshots, selection keys, and
 graph colors.
 
 Typed **`:gd BASE TARGET`** is a shortcut for `:git diff`, both inside and outside

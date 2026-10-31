@@ -21,14 +21,6 @@ local function current_comparison()
 	if s and s.comparison then
 		return s.comparison
 	end
-	local group = s and (s.exhausted_group or (s.current and s.current.group))
-	if s and api.nvim_get_current_win() == s.tree_win then
-		local row = api.nvim_win_get_cursor(s.tree_win)[1]
-		group = row >= s.group_rows.unstaged and "unstaged" or "staged"
-	end
-	if group == "staged" then
-		return { base = "HEAD", head = "index" }
-	end
 	return { base = "index", head = "changes" }
 end
 
@@ -89,10 +81,6 @@ end
 
 local function scope()
 	compare({ "scope" })
-end
-
-local function commits()
-	compare({ "history" })
 end
 
 local function comparisons(args)
@@ -183,7 +171,6 @@ local actions = {
 		description = "Choose local snapshots or commit endpoints",
 		key = "gs",
 	},
-	history = { run = commits, description = "Browse commits and choose a comparison endpoint", key = "gh" },
 	["pr-stack"] = {
 		run = function()
 			require("rediff.pr_stack").discover(root())

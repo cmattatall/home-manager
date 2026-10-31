@@ -100,10 +100,10 @@ Space p lists searchable Git actions with descriptions and keyboard shortcuts.
 Tab completes branches, tags, and remote-tracking refs in comparison commands.
 You can also type any expression that Git resolves to a commit.
 
-SCOPE AND HISTORY
+COMPARISON PICKER
 
-Space gs or :git scope opens the snapshot picker directly. :git base,
-:git diff, and Space gh / :git history use the same picker.
+Space gs or :git scope opens the snapshot picker directly. :git base and
+:git diff use the same picker.
 :git diff BASE prefills the base.
 
 Changes and Index appear as diamond nodes above the checked-out HEAD:
@@ -134,8 +134,8 @@ picker. In the graph, q also closes it. Gold rows mark the base, cyan rows mark
 the target, and a lavender underline marks the browsing cursor. If both endpoints
 are the same commit, its row has a neutral highlight. Endpoint labels stay in the
 header.
-Scope starts with the current comparison or the selected local group's endpoints.
-History, :git base, and :git diff retain an existing commit comparison. From local
+Scope starts with the current comparison, defaulting to Index → Changes.
+:git base and :git diff retain an existing commit comparison. From local
 review they start at HEAD → HEAD, so choosing a base compares it with HEAD.
 Both endpoints can be changed in the picker.
 Browsing without assigning an endpoint leaves the review unchanged. Invalid
@@ -835,7 +835,6 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
   :Git base [BASE|reset]      Change/pick comparison base, or return to Review
   :Git comparison            Show refs, commit IDs, checkout, and harness
   :Git scope                 Choose local snapshots or commit endpoints
-  :Git history               Browse commits and choose a comparison endpoint
   :Git stack [REF REF ...]    Choose or define adjacent comparisons
   :Git branch-stack [BASE [TIP]] Discover branch tips by Git ancestry, or pick refs
   :Git pr-stack              Discover published GitHub PR stacks

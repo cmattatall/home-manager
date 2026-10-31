@@ -828,7 +828,8 @@ class EditorUI(unittest.TestCase):
             if buf.options["filetype"] == "rediff-ref-header"
         )
         self.assertIn("Index", "\n".join(header[:]))
-        self.assertIn("HEAD", "\n".join(header[:]))
+        self.assertIn("Changes", "\n".join(header[:]))
+        self.assertNotIn("HEAD", "\n".join(header[:]))
         self.keys(editor, "=HEAD")
         self.keys(editor, "<C-t><C-u>")
         self.keys(editor, "=HEAD~1")
@@ -915,7 +916,7 @@ class EditorUI(unittest.TestCase):
         self.keys(editor, ":Review<CR>")
         self.assertIsNone(self.lua(editor, "return s.comparison"))
 
-    def test_history_selects_pinned_endpoints_without_changing_checkout(self):
+    def test_scope_selects_pinned_endpoints_without_changing_checkout(self):
         def git(*args):
             return subprocess.check_output(
                 ["git", "-C", self.root, *args], text=True
@@ -935,14 +936,17 @@ class EditorUI(unittest.TestCase):
         original = checkout_state(self.root)
         editor = self.launch(self.root)
 
-        self.keys(editor, " gh")
+        self.keys(editor, " gs")
         self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
         self.keys(editor, "feature/api<Esc>")
         self.assertIsNone(self.lua(editor, "return s.comparison"))
-        for command in (" gh", ":git history<CR>", ":git base<CR>"):
+        for command in (" gs", ":git scope<CR>", ":git base<CR>"):
             self.keys(editor, ":Review<CR>")
             self.keys(editor, command)
             self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+            if command != ":git base<CR>":
+                self.keys(editor, "=HEAD")
+                self.keys(editor, "<C-t><C-u>")
             self.keys(editor, "feature/api")
             self.keys(editor, "<C-b>")
             self.assertIsNotNone(self.lua(editor, "return s.comparison"))
@@ -960,7 +964,7 @@ class EditorUI(unittest.TestCase):
             self.assertEqual(["UI change"], self.lua(editor, """
                 return vim.api.nvim_buf_get_lines(s.new_buf, 0, -1, false)
             """))
-        self.keys(editor, " gh")
+        self.keys(editor, " gs")
         self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
         self.keys(editor, "feature/ui")
         self.keys(editor, "<C-t><Esc>")
@@ -972,7 +976,7 @@ class EditorUI(unittest.TestCase):
             return vim.tbl_map(function(entry) return entry.path end, s.entries)
         """))
         git("update-ref", "refs/heads/feature/api", base)
-        self.keys(editor, " gh")
+        self.keys(editor, " gs")
         self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
         self.keys(editor, "UI change")
         self.keys(editor, "<C-t><Esc>")
@@ -980,7 +984,7 @@ class EditorUI(unittest.TestCase):
             [api_commit, tip],
             self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
         )
-        self.keys(editor, " gh")
+        self.keys(editor, " gs")
         self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
         self.keys(editor, "main")
         self.keys(editor, "<C-b><Esc>")
@@ -3582,8 +3586,10 @@ class EditorUI(unittest.TestCase):
         window = editor.current.window.handle
         actions = [
             "base", "blame", "blame-line", "blame-toggle", "branch-stack", "comparison", "copy-link",
-            "diff", "down", "help", "history", "pr", "pr-stack", "refresh-refs", "scope", "stack", "toggle", "up",
+            "diff", "down", "help", "pr", "pr-stack", "refresh-refs", "scope", "stack", "toggle", "up",
         ]
+        self.assertEqual("", editor.funcs.maparg(" gh", "n"))
+        self.assertNotIn("history", editor.funcs.getcompletion("Git ", "cmdline"))
 
         for command, close in (
             ("Git", "q"),
