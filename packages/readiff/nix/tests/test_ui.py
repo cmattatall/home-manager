@@ -1028,6 +1028,100 @@ class EditorUI(unittest.TestCase):
         )
         self.assertEqual(original, checkout_state(self.root))
 
+    def test_ref_picker_bounds_horizontal_scroll_and_keeps_headers_aligned(self):
+        editor = self.launch(self.root)
+
+        def open_graph():
+            self.keys(editor, ":git diff<CR>")
+            self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+            return next(
+                win
+                for win in editor.windows
+                if win.buffer.options["filetype"] == "rediff-ref-graph"
+            )
+
+        def scroll(graph, direction):
+            row, col = editor.api.win_get_position(graph)
+            for _ in range(40):
+                editor.api.input_mouse("wheel", direction, "", 0, row + 2, col + 4)
+            pump(editor)
+            self.assertEqual(
+                "rediff-ref-search", editor.current.buffer.options["filetype"]
+            )
+
+        def left_column(graph):
+            return editor.exec_lua(
+                """
+                return vim.api.nvim_win_call(..., function()
+                    return vim.fn.winsaveview().leftcol
+                end)
+            """,
+                graph.handle,
+            )
+
+        def header(graph):
+            return editor.api.eval_statusline(
+                graph.options["winbar"],
+                {"winid": graph.handle, "use_winbar": True, "maxwidth": 1000},
+            )["str"]
+
+        graph = open_graph()
+        original_header = header(graph)
+        scroll(graph, "right")
+        self.assertEqual(0, left_column(graph))
+        self.assertEqual(original_header, header(graph))
+        self.keys(editor, "<Esc>")
+
+        def git(*args):
+            return subprocess.check_output(
+                ["git", "-C", self.root, *args], text=True
+            ).strip()
+
+        base = git("rev-parse", "HEAD")
+        tree = git("rev-parse", "HEAD^{tree}")
+        git("config", "user.name", "Ari Vale")
+        parents = []
+        for index in range(24):
+            tip = git(
+                "commit-tree", tree, "-p", base, "-m", f"Parallel topic {index:02d}"
+            )
+            git("update-ref", f"refs/heads/topic-{index:02d}", tip)
+            parents.extend(["-p", tip])
+        merge = git("commit-tree", tree, *parents, "-m", "Merge")
+        git("update-ref", "refs/heads/integration", merge)
+
+        editor.ui_try_resize(80, 32)
+        pump(editor)
+        graph = open_graph()
+        original_header = header(graph)
+        content_width = max(
+            editor.funcs.strdisplaywidth(line) for line in graph.buffer[:]
+        )
+        maximum_scroll = content_width - graph.width
+        self.assertGreater(maximum_scroll, 0)
+        scroll(graph, "right")
+        self.assertEqual(maximum_scroll, left_column(graph))
+        merge_row = next(line for line in graph.buffer[:] if merge[:8] in line)
+        for label, value in (
+            ("SHA", merge[:8]),
+            ("Subject", "Merge"),
+            ("Author", "Ari Vale"),
+        ):
+            column = editor.funcs.strdisplaywidth(merge_row[: merge_row.index(value)])
+            self.assertEqual(column - maximum_scroll, header(graph).index(label))
+        self.keys(editor, "<Tab>1000zl")
+        self.assertEqual(maximum_scroll, left_column(graph))
+        self.keys(editor, "<Tab>")
+        scroll(graph, "left")
+        self.assertEqual(0, left_column(graph))
+        self.assertEqual(original_header, header(graph))
+
+        scroll(graph, "right")
+        editor.ui_try_resize(200, 40)
+        pump(editor)
+        self.assertEqual(0, left_column(graph))
+        self.assertIn("Graph", header(graph))
+
     def test_base_compares_commits_to_live_worktree_including_staged_and_untracked(self):
         def git(*args):
             return subprocess.check_output(

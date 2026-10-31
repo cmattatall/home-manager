@@ -37,6 +37,7 @@ function M.open(root, opts)
 	local windows, buffers, jobs = {}, {}, {}
 	local commits, rows, matches = {}, {}, {}
 	local selected, graph_width, lane_width = nil, 0, 6
+	local graph_header, graph_content_width = "", 0
 	local panel_width, sidebar_width = 0, 0
 	local closed, loading = false, true
 	local group = api.nvim_create_augroup("rediff.ref-picker", { clear = true })
@@ -243,13 +244,25 @@ function M.open(root, opts)
 		end
 	end
 
+	local function sync_graph_view()
+		api.nvim_win_call(windows.graph, function()
+			local view = vim.fn.winsaveview()
+			local maximum_scroll = math.max(0, graph_content_width - graph_width)
+			if view.leftcol > maximum_scroll then
+				view.leftcol = maximum_scroll
+				vim.fn.winrestview(view)
+			end
+			vim.wo.winbar = "%#RediffRefMuted#" .. graph_header:sub(view.leftcol + 1, view.leftcol + graph_width)
+		end)
+	end
+
 	local function render_graph()
 		local lines = {}
 		local author_width = graph_width >= 100 and 16 or 9
 		local ref_width = graph_width >= 80 and 18 or 0
 		local date_width = graph_width >= 65 and 11 or 0
 		local subject_width = math.max(8, graph_width - lane_width - author_width - ref_width - date_width - 12)
-		vim.wo[windows.graph].winbar = "%#RediffRefMuted# "
+		graph_header = " "
 			.. fit("Graph", lane_width)
 			.. fit("SHA", 10)
 			.. (ref_width > 0 and fit("Refs", ref_width) or "")
@@ -288,7 +301,9 @@ function M.open(root, opts)
 		end
 		write(buffers.graph, #lines > 0 and lines or { loading and "Loading history…" or "No commits" })
 		api.nvim_buf_clear_namespace(buffers.graph, decoration, 0, -1)
+		graph_content_width = 0
 		for index, line in ipairs(lines) do
+			graph_content_width = math.max(graph_content_width, vim.fn.strdisplaywidth(line))
 			highlight(buffers.graph, index - 1, 0, #line, "RediffRefGraph")
 		end
 		for _, field in ipairs(fields) do
@@ -299,6 +314,7 @@ function M.open(root, opts)
 			highlight(buffers.graph, field.row, field.subject, field.author, "RediffRefSurface")
 			highlight(buffers.graph, field.row, field.author, #lines[field.row + 1], "RediffRefMuted")
 		end
+		sync_graph_view()
 		paint_endpoints()
 	end
 
@@ -565,6 +581,19 @@ function M.open(root, opts)
 		{ "TextChangedI", "TextChanged" },
 		{ group = group, buffer = buffers.search, callback = filter }
 	)
+	api.nvim_create_autocmd("WinScrolled", {
+		group = group,
+		callback = function()
+			if vim.v.event[tostring(windows.graph)] then
+				-- Defer clamping to keep scroll-change detection accurate during wheel bursts.
+				vim.schedule(function()
+					if not closed then
+						sync_graph_view()
+					end
+				end)
+			end
+		end,
+	})
 	api.nvim_create_autocmd("CursorMoved", {
 		group = group,
 		buffer = buffers.graph,
