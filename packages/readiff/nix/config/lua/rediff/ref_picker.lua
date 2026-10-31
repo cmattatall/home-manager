@@ -258,35 +258,32 @@ function M.open(root, opts)
 
 	local function render_graph()
 		local lines = {}
-		local author_width = graph_width >= 100 and 16 or 9
-		local ref_width = graph_width >= 80 and 18 or 0
-		local date_width = graph_width >= 65 and 11 or 0
-		local subject_width = math.max(8, graph_width - lane_width - author_width - ref_width - date_width - 12)
+		local author_width, ref_width, subject_width = 9, 18, 8
+		local date_width = 11
+		for _, commit in ipairs(commits) do
+			author_width = math.max(author_width, vim.fn.strdisplaywidth(commit.author))
+			subject_width = math.max(subject_width, vim.fn.strdisplaywidth(commit.subject))
+		end
+		subject_width = math.max(subject_width, graph_width - lane_width - author_width - ref_width - date_width - 12)
 		graph_header = " "
 			.. fit("Graph", lane_width)
 			.. fit("SHA", 10)
-			.. (ref_width > 0 and fit("Refs", ref_width) or "")
+			.. fit("Refs", ref_width)
 			.. fit("Subject", subject_width)
 			.. " "
 			.. fit("Author", author_width)
-			.. (date_width > 0 and " Date" or "")
+			.. " Date"
 		local glyphs = { ["*"] = "●", ["|"] = "│", ["/"] = "╱", ["\\"] = "╲", ["_"] = "─", ["-"] = "─" }
 		local fields = {}
 		for _, row in ipairs(rows) do
 			local graph = row.graph:gsub("[*|/\\_%-]", glyphs)
 			if row.sha then
 				local prefix = " " .. fit(graph, lane_width)
-				local refs = ""
-				if ref_width > 0 then
-					local names = row.refs ~= "" and row.refs:gsub("HEAD %-> ", "") or "—"
-					refs = fit(names, ref_width - 2) .. "  "
-				end
+				local names = row.refs ~= "" and row.refs:gsub("HEAD %-> ", "") or "—"
+				local refs = fit(names, ref_width - 2) .. "  "
 				local identity = prefix .. fit(row.short, 10)
 				local subject = identity .. refs .. fit(row.subject, subject_width) .. " "
-				table.insert(
-					lines,
-					subject .. fit(row.author, author_width) .. (date_width > 0 and " " .. row.date or "")
-				)
+				table.insert(lines, subject .. fit(row.author, author_width) .. " " .. row.date)
 				table.insert(fields, {
 					row = #lines - 1,
 					graph = #prefix,
@@ -308,9 +305,7 @@ function M.open(root, opts)
 		end
 		for _, field in ipairs(fields) do
 			highlight(buffers.graph, field.row, field.graph, field.refs, "RediffRefMuted")
-			if ref_width > 0 then
-				highlight(buffers.graph, field.row, field.refs, field.subject - 2, field.ref_highlight)
-			end
+			highlight(buffers.graph, field.row, field.refs, field.subject - 2, field.ref_highlight)
 			highlight(buffers.graph, field.row, field.subject, field.author, "RediffRefSurface")
 			highlight(buffers.graph, field.row, field.author, #lines[field.row + 1], "RediffRefMuted")
 		end
@@ -321,6 +316,12 @@ function M.open(root, opts)
 	local function place_graph_cursor(commit)
 		local line = api.nvim_buf_get_lines(buffers.graph, commit.row - 1, commit.row, false)[1]
 		local column = line:find("●", 1, true) - 1
+		local node_column = vim.fn.strdisplaywidth(line:sub(1, column))
+		local view = api.nvim_win_call(windows.graph, vim.fn.winsaveview)
+		if node_column < view.leftcol or node_column >= view.leftcol + graph_width then
+			-- Avoid scrolling back to expose a wide character clipped at the left edge.
+			column = vim.fn.virtcol2col(windows.graph, commit.row, view.leftcol + 2) - 1
+		end
 		api.nvim_win_set_cursor(windows.graph, { commit.row, column })
 	end
 
@@ -356,30 +357,44 @@ function M.open(root, opts)
 			"Author  " .. commit.author .. " <" .. commit.email .. ">",
 			"Date    " .. commit.date,
 			"Refs    " .. (commit.refs ~= "" and commit.refs or "—"),
-			"Subject " .. commit.subject,
 			"",
-			"Loading files…",
+			"Loading commit…",
 		}
 		write(buffers.details, details)
 		run(
-			{ "show", "--format=", "--name-status", "-z", "--no-renames", "--no-ext-diff", commit.sha, "--" },
+			{ "show", "--format=%B", "--name-status", "-z", "--no-renames", "--no-ext-diff", commit.sha, "--" },
 			function(result)
 				if selected ~= commit then
 					return
 				end
-				local files = vim.split(result.stdout or "", "\0", { trimempty = true })
-				details[7] = result.code == 0 and ("Changed files (" .. #files / 2 .. ")") or "Could not load files"
+				if result.code ~= 0 then
+					details[6] = "Could not load commit"
+					write(buffers.details, details)
+					return
+				end
+				local message_end = result.stdout:find("\0", 1, true)
+				local message = result.stdout:sub(1, message_end - 1):gsub("\n$", "")
+				local file_output = result.stdout:sub(message_end + 1):gsub("^\n", "")
+				local files = vim.split(file_output, "\0", { trimempty = true })
+				details[6] = "Message"
+				for _, line in ipairs(vim.split(message, "\n")) do
+					table.insert(details, vim.fn.strtrans(line))
+				end
+				table.insert(details, "")
+				local file_heading = #details
+				table.insert(details, "Changed files (" .. #files / 2 .. ")")
 				for index = 1, #files, 2 do
 					table.insert(details, files[index] .. "  " .. vim.fn.strtrans(files[index + 1]))
 				end
 				write(buffers.details, details)
 				api.nvim_buf_clear_namespace(buffers.details, decoration, 0, -1)
-				for row = 0, 4 do
+				for row = 0, 3 do
 					highlight(buffers.details, row, 0, 7, "RediffRefMuted")
 				end
 				highlight(buffers.details, 0, 8, #details[1], "RediffRefTarget")
-				highlight(buffers.details, 6, 0, #details[7], "RediffRefTitle")
-				for row = 7, #details - 1 do
+				highlight(buffers.details, 5, 0, #details[6], "RediffRefTitle")
+				highlight(buffers.details, file_heading, 0, #details[file_heading + 1], "RediffRefTitle")
+				for row = file_heading + 1, #details - 1 do
 					highlight(buffers.details, row, 0, 1, "RediffRefBase")
 				end
 			end
@@ -590,14 +605,20 @@ function M.open(root, opts)
 	api.nvim_create_autocmd("WinScrolled", {
 		group = group,
 		callback = function()
-			if vim.v.event[tostring(windows.graph)] then
-				-- Defer clamping to keep scroll-change detection accurate during wheel bursts.
-				vim.schedule(function()
-					if not closed then
-						sync_graph_view()
-					end
-				end)
+			local change = vim.v.event[tostring(windows.graph)]
+			if not change then
+				return
 			end
+			-- Defer clamping to keep scroll-change detection accurate during wheel bursts.
+			vim.schedule(function()
+				if closed then
+					return
+				end
+				sync_graph_view()
+				if change.leftcol ~= 0 and selected and api.nvim_get_current_win() == windows.graph then
+					place_graph_cursor(selected)
+				end
+			end)
 		end,
 	})
 	api.nvim_create_autocmd({ "WinEnter", "CursorMoved", "CursorMovedI" }, {

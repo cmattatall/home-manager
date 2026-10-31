@@ -1080,13 +1080,12 @@ class EditorUI(unittest.TestCase):
             )
 
         def scroll(graph, direction):
+            focused_window = editor.current.window
             row, col = editor.api.win_get_position(graph)
             for _ in range(40):
                 editor.api.input_mouse("wheel", direction, "", 0, row + 2, col + 4)
             pump(editor)
-            self.assertEqual(
-                "rediff-ref-search", editor.current.buffer.options["filetype"]
-            )
+            self.assertEqual(focused_window, editor.current.window)
 
         def left_column(graph):
             return editor.exec_lua(
@@ -1118,20 +1117,38 @@ class EditorUI(unittest.TestCase):
 
         base = git("rev-parse", "HEAD")
         tree = git("rev-parse", "HEAD^{tree}")
-        git("config", "user.name", "Ari Vale")
-        parents = []
-        for index in range(24):
-            tip = git(
-                "commit-tree", tree, "-p", base, "-m", f"Parallel topic {index:02d}"
-            )
-            git("update-ref", f"refs/heads/topic-{index:02d}", tip)
-            parents.extend(["-p", tip])
-        merge = git("commit-tree", tree, *parents, "-m", "Merge")
-        git("update-ref", "refs/heads/integration", merge)
+        author = "Ari Vale With A Long Name"
+        branch = "feature/full-commit-message-and-metadata"
+        subject = (
+            "Preserve 雪 and the entire commit subject while scrolling through "
+            "a narrow history panel to read the final context END"
+        )
+        body = "Explain why this change is needed.\n\nKeep the second paragraph readable too."
+        git("config", "user.name", author)
+        commit = git("commit-tree", tree, "-p", base, "-m", subject, "-m", body)
+        git("update-ref", "refs/heads/" + branch, commit)
+        empty = git("commit-tree", tree, "-p", base, "-m", "")
+        git("update-ref", "refs/heads/empty-message", empty)
 
         editor.ui_try_resize(80, 32)
         pump(editor)
         graph = open_graph()
+        self.keys(editor, branch)
+        details = next(
+            buf
+            for buf in editor.buffers
+            if buf.options["filetype"] == "rediff-ref-details"
+        )
+        self.assertIn(subject, details[:])
+        self.assertIn(body, "\n".join(details[:]))
+        self.assertIn(branch, "\n".join(details[:]))
+        self.assertIn("Changed files (0)", details[:])
+        commit_row = next(line for line in graph.buffer[:] if commit[:8] in line)
+        for text in (subject, author):
+            self.assertIn(text, commit_row)
+
+        self.keys(editor, "<Tab>")
+        selected_row = graph.cursor[0]
         original_header = header(graph)
         content_width = max(
             editor.funcs.strdisplaywidth(line) for line in graph.buffer[:]
@@ -1140,30 +1157,49 @@ class EditorUI(unittest.TestCase):
         self.assertGreater(maximum_scroll, 0)
         scroll(graph, "right")
         self.assertEqual(maximum_scroll, left_column(graph))
-        merge_row = next(line for line in graph.buffer[:] if merge[:8] in line)
+        self.assertEqual(selected_row, graph.cursor[0])
+        self.assertIn(commit[:8], details[0])
         for label, value in (
-            ("SHA", merge[:8]),
-            ("Subject", "Merge"),
-            ("Author", "Ari Vale"),
+            ("Author", author),
+            ("Date", git("show", "-s", "--format=%ad", "--date=short", commit)),
         ):
-            column = editor.funcs.strdisplaywidth(merge_row[: merge_row.index(value)])
+            column = editor.funcs.strdisplaywidth(commit_row[: commit_row.index(value)])
             self.assertEqual(column - maximum_scroll, header(graph).index(label))
-        self.keys(editor, "<Tab>1000zl")
+        tail_column = len(commit_row[: commit_row.index("END")].encode()) + 1
+        self.assertGreater(
+            editor.funcs.screenpos(graph, selected_row, tail_column)["col"], 0
+        )
+        self.keys(editor, "1000zl")
+        self.assertEqual(maximum_scroll, left_column(graph))
+        self.keys(editor, "jk")
+        self.assertEqual(selected_row, graph.cursor[0])
+        self.assertEqual(maximum_scroll, left_column(graph))
+        scroll(graph, "left")
         self.assertEqual(0, left_column(graph))
         row, column = graph.cursor
         self.assertTrue(
             graph.buffer[row - 1].encode()[column:].startswith("●".encode())
         )
-        self.keys(editor, "<Tab>")
-        scroll(graph, "left")
-        self.assertEqual(0, left_column(graph))
         self.assertEqual(original_header, header(graph))
 
+        wide_column = editor.funcs.strdisplaywidth(commit_row[: commit_row.index("雪")])
+        self.keys(editor, f"{wide_column}zl")
+        self.keys(editor, "zl")
+        self.assertGreater(left_column(graph), wide_column)
         scroll(graph, "right")
         editor.ui_try_resize(200, 40)
         pump(editor)
-        self.assertEqual(0, left_column(graph))
-        self.assertIn("Graph", header(graph))
+        self.assertEqual(content_width - graph.width, left_column(graph))
+        self.keys(editor, "<Esc>")
+        open_graph()
+        self.keys(editor, "=empty-message")
+        details = next(
+            buf
+            for buf in editor.buffers
+            if buf.options["filetype"] == "rediff-ref-details"
+        )
+        self.assertIn(empty[:8], details[0])
+        self.assertIn("Changed files (0)", details[:])
 
     def test_base_compares_commits_to_live_worktree_including_staged_and_untracked(self):
         def git(*args):

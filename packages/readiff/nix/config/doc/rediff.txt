@@ -110,7 +110,12 @@ Type to fuzzy-find subjects, authors, dates, refs, or SHAs in the left results.
 The right graph keeps all history, including nonmatching commits and connectors.
 Prefix an exact Git expression with =, for example =HEAD~2. Up/Down or Ctrl-n/p
 select a result. Enter reveals it in the graph. Tab switches graph/search, and
-j/k navigate the graph. The detail pane shows the author, date, refs, and files.
+j/k navigate commit nodes. Scroll horizontally or use zh/zl in the graph to
+read full subjects and author names. Headers move with the columns, and
+scrolling stops at the content edge. The selected commit stays selected while
+panning, with the cursor on its circle whenever that circle is visible.
+The detail pane shows full refs, the complete commit message including its
+body, and changed files. Scroll over that pane to read longer messages.
 
 Ctrl-b assigns the browsed commit as BASE, Ctrl-t assigns TARGET, and Ctrl-y
 applies both choices. Gold rows mark the base, cyan rows mark the target, and a
