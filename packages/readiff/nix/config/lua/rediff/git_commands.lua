@@ -51,7 +51,7 @@ local function compare(args)
 	end
 	if #args == 1 or (action == "diff" and #args == 2) then
 		local current = current_comparison()
-		if (action == "diff" or action == "branch-stack") and git.local_group(current) then
+		if action ~= "scope" and git.local_group(current) then
 			current = git.comparison(directory, "HEAD")
 		end
 		local comparison = vim.deepcopy(current)

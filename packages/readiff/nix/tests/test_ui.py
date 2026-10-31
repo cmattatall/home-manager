@@ -939,14 +939,27 @@ class EditorUI(unittest.TestCase):
         self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
         self.keys(editor, "feature/api<Esc>")
         self.assertIsNone(self.lua(editor, "return s.comparison"))
-        self.keys(editor, ":git history<CR>")
-        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
-        self.keys(editor, "=HEAD")
-        self.keys(editor, "<C-t><C-u>")
-        self.keys(editor, "feature/api")
-        self.keys(editor, "<C-b><Esc>")
-        self.assertEqual(api_commit, self.lua(editor, "return s.comparison.base"))
-        self.assertEqual(tip, self.lua(editor, "return s.comparison.head"))
+        for command in (" gh", ":git history<CR>", ":git base<CR>"):
+            self.keys(editor, ":Review<CR>")
+            self.keys(editor, command)
+            self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+            self.keys(editor, "feature/api")
+            self.keys(editor, "<C-b>")
+            self.assertIsNotNone(self.lua(editor, "return s.comparison"))
+            self.assertEqual(
+                [api_commit, tip],
+                self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+            )
+            self.assertEqual(
+                ["ui.txt", "", "UI change\n"],
+                self.lua(editor, "return {s.current.path, s.current.old, s.current.new}"),
+            )
+            self.assertEqual(1, self.lua(editor, "return #s.diff.changes"))
+            self.assertEqual("rediff-ref-search", editor.current.buffer.options["filetype"])
+            self.keys(editor, "<Esc>")
+            self.assertEqual(["UI change"], self.lua(editor, """
+                return vim.api.nvim_buf_get_lines(s.new_buf, 0, -1, false)
+            """))
         self.keys(editor, " gh")
         self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
         self.keys(editor, "feature/ui")

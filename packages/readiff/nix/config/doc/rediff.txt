@@ -134,9 +134,10 @@ picker. In the graph, q also closes it. Gold rows mark the base, cyan rows mark
 the target, and a lavender underline marks the browsing cursor. If both endpoints
 are the same commit, its row has a neutral highlight. Endpoint labels stay in the
 header.
-Scope, history, and :git base start with the current comparison, or the selected
-local group's endpoints. :git diff starts with commit endpoints, defaulting to
-HEAD when opened from local review. Both endpoints can be changed in the picker.
+Scope starts with the current comparison or the selected local group's endpoints.
+History, :git base, and :git diff retain an existing commit comparison. From local
+review they start at HEAD → HEAD, so choosing a base compares it with HEAD.
+Both endpoints can be changed in the picker.
 Browsing without assigning an endpoint leaves the review unchanged. Invalid
 pairs show guidance and keep the last valid diff. Browsing and choosing endpoints
 preserve the checkout, refs, index, and working files. The picker needs an 80×24
