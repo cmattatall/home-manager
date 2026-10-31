@@ -16,6 +16,22 @@ local function guarded(fn)
 	end
 end
 
+local function current_comparison()
+	local s = review.state
+	if s and s.comparison then
+		return s.comparison
+	end
+	local group = s and (s.exhausted_group or (s.current and s.current.group))
+	if s and api.nvim_get_current_win() == s.tree_win then
+		local row = api.nvim_win_get_cursor(s.tree_win)[1]
+		group = row >= s.group_rows.unstaged and "unstaged" or "staged"
+	end
+	if group == "staged" then
+		return { base = "HEAD", head = "index" }
+	end
+	return { base = "index", head = "changes" }
+end
+
 local function compare(args)
 	local action = args[1]
 	local directory = root()
@@ -34,7 +50,10 @@ local function compare(args)
 		end)
 	end
 	if #args == 1 or (action == "diff" and #args == 2) then
-		local current = review.state and review.state.comparison or git.comparison(directory, "HEAD")
+		local current = current_comparison()
+		if (action == "diff" or action == "branch-stack") and git.local_group(current) then
+			current = git.comparison(directory, "HEAD")
+		end
 		local comparison = vim.deepcopy(current)
 		if args[2] then
 			comparison.base = git.comparison(directory, args[2]).base
@@ -42,6 +61,7 @@ local function compare(args)
 		end
 		require("rediff.ref_picker").open(directory, {
 			comparison = comparison,
+			local_nodes = action ~= "branch-stack",
 			on_select = open,
 		})
 		return
@@ -58,49 +78,18 @@ local function compare(args)
 	end
 	local current = review.state and review.state.comparison
 	local comparison = git.comparison(directory, args[2], args[3])
-	if action == "base" and current then
+	if action == "base" and current and not git.local_group(current) then
 		comparison.head, comparison.head_ref = current.head, current.head_ref
 	end
 	open(comparison)
 end
 
 local function scope()
-	local directory = root()
-	local choices = { "Local changes", "Compare two commits" }
-	require("fzf-lua").fzf_exec(choices, {
-		prompt = "Review scope> ",
-		winopts = { width = 0.55, height = 0.3 },
-		fzf_opts = { ["--no-sort"] = true, ["--no-multi"] = true },
-		actions = {
-			["default"] = function(selected)
-				local choice = selected[1]
-				if not choice then
-					return
-				end
-				guarded(function()
-					assert(root() == directory, "Worktree changed. Choose the scope again")
-					if choice == choices[1] then
-						review.open(directory)
-					else
-						compare({ "diff" })
-					end
-				end)
-			end,
-		},
-	})
+	compare({ "scope" })
 end
 
 local function commits()
-	local directory = root()
-	require("rediff.ref_picker").open(directory, {
-		comparison = review.state and review.state.comparison or git.comparison(directory, "HEAD"),
-		on_select = function(comparison)
-			guarded(function()
-				assert(root() == directory, "Worktree changed. Choose the commit again")
-				stack.set(directory, { comparison })
-			end)
-		end,
-	})
+	compare({ "history" })
 end
 
 local function comparisons(args)
@@ -135,18 +124,20 @@ local function details()
 	assert(s and s.comparison, "Open a comparison with :git diff or :git base first")
 	local comparison = s.comparison
 	local index, count = stack.position(s.root, comparison)
+	local local_group = git.local_group(comparison)
 	local lines = {
 		git.comparison_label(comparison),
 		index and string.format("Comparison %d of %d", index, count) or "Comparison",
 		"",
-		"OLD  " .. comparison.base,
-		"NEW  " .. comparison.head,
+		"OLD  " .. (local_group and git.endpoint_label(comparison.base) or comparison.base),
+		"NEW  " .. (local_group and git.endpoint_label(comparison.head) or comparison.head),
 		"",
 		"Checkout: " .. git.reference(s.root),
 		"Worktree: " .. s.root,
 		require("rediff.harness").statusline(s.root),
 		"",
-		comparison.pr and ":git pr-stack reloads comparisons from GitHub."
+		local_group and "Local snapshots refresh as files and the index change."
+			or comparison.pr and ":git pr-stack reloads comparisons from GitHub."
 			or ":git refresh-refs resolves the input refs again.",
 		"Notes and feedback remain shared within this worktree.",
 	}
@@ -186,7 +177,7 @@ local actions = {
 	},
 	scope = {
 		run = scope,
-		description = "Choose Local changes or an explicit comparison",
+		description = "Choose local snapshots or commit endpoints",
 		key = "gs",
 	},
 	history = { run = commits, description = "Browse commits and choose a comparison endpoint", key = "gh" },

@@ -772,7 +772,7 @@ function M.refresh(preferred, changes)
 			{ label = "Base", commit = s.comparison.base, ref = s.comparison.base_ref },
 			{ label = "Target", commit = s.comparison.head, ref = s.comparison.head_ref },
 		}) do
-			local label = endpoint.commit:sub(1, 12)
+			local label = git.endpoint_label(endpoint.commit)
 			table.insert(lines, " " .. endpoint.label .. ": " .. label)
 			if endpoint.ref and not vim.startswith(endpoint.commit, endpoint.ref) then
 				table.insert(lines, "   " .. vim.fn.strtrans(endpoint.ref))
@@ -893,7 +893,7 @@ function M.refresh(preferred, changes)
 			if s.old_win then
 				vim.wo[s.old_win].winbar = ""
 			end
-		elseif s.comparison then
+		elseif s.comparison and not git.local_group(s.comparison) then
 			vim.wo[s.new_win].winbar = " No differences between commits "
 			if s.old_win then
 				vim.wo[s.old_win].winbar = ""
@@ -1147,8 +1147,14 @@ end
 
 function M.focus(group)
 	local s = assert(M.active(), "Enter Review first")
-	assert(not s.comparison, "Staged/unstaged groups are unavailable in base/commit comparisons; use :Review")
+	assert(not s.comparison or git.local_group(s.comparison), "Use :Review to focus staged/unstaged changes")
 	assert(group == "staged" or group == "unstaged", "Usage: focus staged|unstaged")
+	if s.comparison and git.local_group(s.comparison) ~= group then
+		local comparison = group == "staged" and { base = "HEAD", head = "index" }
+			or { base = "index", head = "changes" }
+		M.open(s.root, comparison)
+		s = M.state
+	end
 	local win = api.nvim_get_current_win()
 	for i, entry in ipairs(s.entries) do
 		if (entry.group == "staged") == (group == "staged") then
@@ -1313,7 +1319,10 @@ end
 
 function M.stage(whole_file, unstage)
 	local s = assert(M.active(), "Enter Review first")
-	assert(not s.comparison, "Staging is unavailable in base/commit comparisons; use :Review for staging")
+	assert(
+		not s.comparison or git.local_group(s.comparison),
+		"Staging is unavailable in commit comparisons; use :Review for staging"
+	)
 	assert(not s.annotation_id, "Press Space R to return to current files before staging")
 	local win = api.nvim_get_current_win()
 	local snapshot, side, line = s.current, "new", 1
@@ -1373,7 +1382,10 @@ end
 
 function M.revert(first, last)
 	local s = assert(M.active(), "Enter Review first")
-	assert(not s.comparison, "Reverting is unavailable in base/commit comparisons; use :Review for reverting")
+	assert(
+		not s.comparison or git.local_group(s.comparison),
+		"Reverting is unavailable in commit comparisons; use :Review for reverting"
+	)
 	assert(not s.annotation_id, "Press Space R to return to current files before reverting")
 	assert(not s.composer, "Close the annotation before reverting")
 	local side = side_at_cursor()
@@ -2065,7 +2077,7 @@ function M.open(root, comparison)
 	local s = {
 		root = root,
 		comparison = comparison,
-		groups = comparison and { "branch" } or { "staged", "unstaged" },
+		groups = comparison and { git.local_group(comparison) or "branch" } or { "staged", "unstaged" },
 		directory = directory,
 		comments = pending.comments or {},
 		drafts = pending.drafts or {},

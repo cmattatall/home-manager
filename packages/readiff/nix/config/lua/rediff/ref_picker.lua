@@ -1,5 +1,6 @@
 local M = {}
 local api = vim.api
+local git = require("rediff.git")
 local endpoints = api.nvim_create_namespace("rediff.ref-endpoints")
 local browsing = api.nvim_create_namespace("rediff.ref-browsing")
 local decoration = api.nvim_create_namespace("rediff.ref-decoration")
@@ -33,9 +34,15 @@ function M.open(root, opts)
 	end
 	local comparison = vim.deepcopy(opts.comparison)
 	comparison.pr = nil
+	local head_output, head_code = git.run(root, { "rev-parse", "--verify", "HEAD" }, nil, true)
+	local checkout_head = head_code == 0 and vim.trim(head_output) or nil
+	if comparison.base == "HEAD" then
+		comparison.base, comparison.base_ref = checkout_head or "HEAD", "HEAD"
+	end
 	local source_win = api.nvim_get_current_win()
 	local windows, buffers, jobs = {}, {}, {}
-	local commits, rows, matches = {}, {}, {}
+	local nodes, rows, matches = {}, {}, {}
+	local commit_count = 0
 	local selected, graph_width, lane_width = nil, 0, 6
 	local graph_header, graph_content_width = "", 0
 	local panel_width, sidebar_width = 0, 0
@@ -142,7 +149,7 @@ function M.open(root, opts)
 		pane("background", "", 0, 0, vim.o.columns, vim.o.lines - 1)
 		pane("header", "", top, left, panel_width, 3)
 		pane("apply", "", top + 1, left + panel_width - 14, 12, 1)
-		pane("sidebar", "Find commits", content_row, left, sidebar_width, content_height)
+		pane("sidebar", "Find snapshots", content_row, left, sidebar_width, content_height)
 		pane("search", "", content_row + 2, left + 2, sidebar_width - 4, 1)
 		pane("results", "", content_row + 6, left + 2, sidebar_width - 2, results_height)
 		pane(
@@ -155,7 +162,7 @@ function M.open(root, opts)
 		)
 		pane(
 			"graph",
-			"History · all refs · " .. #commits .. " commits",
+			"History · all refs · " .. commit_count .. " commits",
 			content_row,
 			left + sidebar_width + 3,
 			graph_width,
@@ -163,7 +170,7 @@ function M.open(root, opts)
 		)
 		pane("footer", "", top + height - 3, left, panel_width, 1)
 		vim.wo[windows.results].winbar = "%#RediffRefMuted#" .. #matches .. " matches"
-		vim.wo[windows.details].winbar = "%#RediffRefTitle#Selected commit"
+		vim.wo[windows.details].winbar = "%#RediffRefTitle#Selected snapshot"
 		local hint = sidebar_width >= 32 and "Type to filter · =ref for exact" or "Fuzzy search / =ref"
 		write(buffers.sidebar, { " " .. hint })
 		api.nvim_buf_clear_namespace(buffers.sidebar, decoration, 0, -1)
@@ -193,8 +200,25 @@ function M.open(root, opts)
 		jobs[job] = true
 	end
 
+	local function selection_error()
+		if comparison.base == "index" and comparison.head == "changes" then
+			return
+		end
+		if comparison.head == "index" and comparison.base == (checkout_head or "HEAD") then
+			return
+		end
+		for _, value in ipairs({ comparison.base, comparison.head }) do
+			if value == "index" or value == "changes" then
+				return "Choose Index → Changes, HEAD → Index, or two commits"
+			end
+		end
+	end
+
 	local function paint_endpoints()
 		local function label(sha, ref)
+			if sha == "index" or sha == "changes" then
+				return git.endpoint_label(sha)
+			end
 			if not ref or vim.startswith(sha, ref) then
 				return sha:sub(1, 8)
 			end
@@ -205,7 +229,19 @@ function M.open(root, opts)
 		local target_badge = panel_width >= 100 and " NEW / TARGET " or " TARGET "
 		local base = fit(base_badge .. " " .. label(comparison.base, comparison.base_ref), half)
 		local target = fit(target_badge .. " " .. label(comparison.head, comparison.head_ref), half)
-		write(buffers.header, { "", " " .. base .. " → " .. target, "" })
+		local message = selection_error()
+		local subtitle = message or ""
+		if comparison.base == "index" and comparison.head == "changes" then
+			subtitle = "Unstaged edits and untracked files"
+		elseif comparison.head == "index" and not message then
+			subtitle = "Staged changes"
+		elseif comparison.base == comparison.head and not message then
+			subtitle = "Same commit — no differences"
+		end
+		write(buffers.header, { "", " " .. base .. " → " .. target, " " .. subtitle })
+		write(buffers.apply, { "  Compare   " })
+		api.nvim_buf_clear_namespace(buffers.apply, decoration, 0, -1)
+		highlight(buffers.apply, 0, 0, 12, message and "RediffRefMuted" or "RediffRefTitle")
 		api.nvim_buf_clear_namespace(buffers.header, endpoints, 0, -1)
 		api.nvim_buf_set_extmark(buffers.header, endpoints, 1, 1, {
 			end_col = 1 + #base_badge,
@@ -217,26 +253,19 @@ function M.open(root, opts)
 			hl_group = "RediffRefTargetLabel",
 		})
 		api.nvim_buf_clear_namespace(buffers.graph, endpoints, 0, -1)
-		for _, commit in ipairs(commits) do
-			local is_base, is_target = commit.sha == comparison.base, commit.sha == comparison.head
+		for _, node in ipairs(nodes) do
+			local is_base, is_target = node.id == comparison.base, node.id == comparison.head
 			if is_base or is_target then
 				local highlight = is_base and "RediffRefBase" or "RediffRefTarget"
-				api.nvim_buf_set_extmark(buffers.graph, endpoints, commit.row - 1, 0, {
-					end_row = commit.row,
+				if is_base and is_target then
+					highlight = "RediffRefMatch"
+				end
+				api.nvim_buf_set_extmark(buffers.graph, endpoints, node.row - 1, 0, {
+					end_row = node.row,
 					hl_group = highlight,
 					hl_eol = true,
 					priority = 110,
 				})
-				if is_base and is_target then
-					local line = api.nvim_buf_get_lines(buffers.graph, commit.row - 1, commit.row, false)[1]
-					local middle = #vim.fn.strcharpart(line, 0, math.floor(vim.fn.strchars(line) / 2))
-					api.nvim_buf_set_extmark(buffers.graph, endpoints, commit.row - 1, middle, {
-						end_row = commit.row,
-						hl_group = "RediffRefTarget",
-						hl_eol = true,
-						priority = 111,
-					})
-				end
 			end
 		end
 	end
@@ -257,14 +286,14 @@ function M.open(root, opts)
 		local lines = {}
 		local author_width, ref_width, subject_width = 9, 18, 8
 		local date_width = 11
-		for _, commit in ipairs(commits) do
-			author_width = math.max(author_width, vim.fn.strdisplaywidth(commit.author))
-			subject_width = math.max(subject_width, vim.fn.strdisplaywidth(commit.subject))
+		for _, node in ipairs(nodes) do
+			author_width = math.max(author_width, vim.fn.strdisplaywidth(node.author))
+			subject_width = math.max(subject_width, vim.fn.strdisplaywidth(node.subject))
 		end
 		subject_width = math.max(subject_width, graph_width - lane_width - author_width - ref_width - date_width - 12)
 		graph_header = " "
 			.. fit("Graph", lane_width)
-			.. fit("SHA", 10)
+			.. fit("Snapshot", 10)
 			.. fit("Refs", ref_width)
 			.. fit("Subject", subject_width)
 			.. " "
@@ -274,9 +303,9 @@ function M.open(root, opts)
 		local fields = {}
 		for _, row in ipairs(rows) do
 			local graph = row.graph:gsub("[*|/\\_%-]", glyphs)
-			if row.sha then
+			if row.id then
 				local prefix = " " .. fit(graph, lane_width)
-				local names = row.refs ~= "" and row.refs:gsub("HEAD %-> ", "") or "—"
+				local names = row.local_state and "" or (row.refs ~= "" and row.refs:gsub("HEAD %-> ", "") or "—")
 				local refs = fit(names, ref_width - 2) .. "  "
 				local identity = prefix .. fit(row.short, 10)
 				local subject = identity .. refs .. fit(row.subject, subject_width) .. " "
@@ -310,28 +339,29 @@ function M.open(root, opts)
 		paint_endpoints()
 	end
 
-	local function place_graph_cursor(commit)
-		local line = api.nvim_buf_get_lines(buffers.graph, commit.row - 1, commit.row, false)[1]
-		local column = line:find("●", 1, true) - 1
+	local function place_graph_cursor(node)
+		local line = api.nvim_buf_get_lines(buffers.graph, node.row - 1, node.row, false)[1]
+		local column = line:find(node.local_state and "◇" or "●", 1, true) - 1
 		local node_column = vim.fn.strdisplaywidth(line:sub(1, column))
 		local view = api.nvim_win_call(windows.graph, vim.fn.winsaveview)
 		if node_column < view.leftcol or node_column >= view.leftcol + graph_width then
 			-- Avoid scrolling back to expose a wide character clipped at the left edge.
-			column = vim.fn.virtcol2col(windows.graph, commit.row, view.leftcol + 2) - 1
+			column = vim.fn.virtcol2col(windows.graph, node.row, view.leftcol + 2) - 1
 		end
-		api.nvim_win_set_cursor(windows.graph, { commit.row, column })
+		api.nvim_win_set_cursor(windows.graph, { node.row, column })
 	end
 
-	local function select_commit(commit)
-		selected = commit
+	local function select_node(node)
+		selected = node
 		api.nvim_buf_clear_namespace(buffers.graph, browsing, 0, -1)
 		api.nvim_buf_clear_namespace(buffers.results, browsing, 0, -1)
-		if not commit then
-			write(buffers.details, { "No matching commit" })
+		api.nvim_buf_clear_namespace(buffers.details, decoration, 0, -1)
+		if not node then
+			write(buffers.details, { "No matching snapshot" })
 			return
 		end
 		for index, match in ipairs(matches) do
-			if match.sha == commit.sha then
+			if match.id == node.id then
 				local first_row = (index - 1) * 3
 				api.nvim_buf_set_extmark(buffers.results, browsing, first_row, 0, {
 					end_row = first_row + 2,
@@ -342,26 +372,42 @@ function M.open(root, opts)
 				break
 			end
 		end
-		api.nvim_buf_set_extmark(buffers.graph, browsing, commit.row - 1, 0, {
-			end_row = commit.row,
+		api.nvim_buf_set_extmark(buffers.graph, browsing, node.row - 1, 0, {
+			end_row = node.row,
 			hl_group = "RediffRefBrowse",
 			hl_eol = true,
 			priority = 120,
 		})
-		place_graph_cursor(commit)
+		place_graph_cursor(node)
+		if node.local_state then
+			local comparison = node.id == "index" and { base = "HEAD", head = "index" }
+				or { base = "index", head = "changes" }
+			local details = { node.short, node.subject, "", git.comparison_label(comparison), "" }
+			local ok, entries = pcall(git.entries, root, comparison)
+			if ok then
+				table.insert(details, "Changed files (" .. #entries .. ")")
+				for _, entry in ipairs(entries) do
+					table.insert(details, entry.status .. "  " .. vim.fn.strtrans(entry.path))
+				end
+			else
+				table.insert(details, tostring(entries))
+			end
+			write(buffers.details, details)
+			return
+		end
 		local details = {
-			"SHA     " .. commit.short,
-			"Author  " .. commit.author .. " <" .. commit.email .. ">",
-			"Date    " .. commit.date,
-			"Refs    " .. (commit.refs ~= "" and commit.refs or "—"),
+			"SHA     " .. node.short,
+			"Author  " .. node.author .. " <" .. node.email .. ">",
+			"Date    " .. node.date,
+			"Refs    " .. (node.refs ~= "" and node.refs or "—"),
 			"",
 			"Loading commit…",
 		}
 		write(buffers.details, details)
 		run(
-			{ "show", "--format=%B", "--name-status", "-z", "--no-renames", "--no-ext-diff", commit.sha, "--" },
+			{ "show", "--format=%B", "--name-status", "-z", "--no-renames", "--no-ext-diff", node.id, "--" },
 			function(result)
-				if selected ~= commit then
+				if selected ~= node then
 					return
 				end
 				if result.code ~= 0 then
@@ -398,6 +444,29 @@ function M.open(root, opts)
 		)
 	end
 
+	local function add_local_nodes(graph)
+		for _, state in ipairs({
+			{ id = "changes", label = "Changes", subject = "Working files + untracked" },
+			{ id = "index", label = "Index", subject = "Staged snapshot" },
+		}) do
+			local node = {
+				id = state.id,
+				local_state = true,
+				short = state.label,
+				subject = state.subject,
+				graph = graph:gsub("%*", "◇"),
+				author = "",
+				date = "",
+				refs = "",
+				search = state.label .. " " .. state.subject,
+				row = #rows + 1,
+			}
+			table.insert(nodes, node)
+			table.insert(rows, node)
+			table.insert(rows, { graph = graph:gsub("%*", "┊") })
+		end
+	end
+
 	local filter
 	local function load_history(extra)
 		loading = true
@@ -413,32 +482,42 @@ function M.open(root, opts)
 			"--decorate=short",
 			"--abbrev=8",
 			"--format=%x00%H%x00%h%x00%an%x00%ad%x00%D%x00%s%x00%ae%n",
-			comparison.base,
-			comparison.head,
 		}
+		for _, endpoint in ipairs({ comparison.base, comparison.head, checkout_head }) do
+			if endpoint ~= "index" and endpoint ~= "changes" and endpoint ~= "HEAD" then
+				table.insert(args, endpoint)
+			end
+		end
 		if extra then
 			table.insert(args, extra)
 		end
 		table.insert(args, "--")
 		run(args, function(result)
 			loading = false
-			if result.code ~= 0 then
+			if result.code ~= 0 and checkout_head then
 				write(buffers.graph, { "Could not load history", vim.fn.strtrans(result.stderr or "Git failed") })
 				return
 			end
-			commits, rows, lane_width = {}, {}, 6
+			nodes, rows, lane_width, commit_count = {}, {}, 6, 0
+			if opts.local_nodes ~= false and not checkout_head then
+				add_local_nodes("* ")
+			end
 			for _, line in ipairs(vim.split(result.stdout, "\n", { trimempty = true })) do
 				local fields = vim.split(line, "\0", { plain = true })
 				local row = { graph = fields[1] }
 				lane_width = math.max(lane_width, #row.graph)
 				if fields[2] then
-					row.sha, row.short = fields[2], fields[3]
+					row.id, row.short = fields[2], fields[3]
+					if opts.local_nodes ~= false and row.id == checkout_head then
+						add_local_nodes(row.graph)
+					end
 					row.author, row.date = vim.fn.strtrans(fields[4]), fields[5]
 					row.refs, row.subject = vim.fn.strtrans(fields[6]), vim.fn.strtrans(fields[7])
 					row.email = vim.fn.strtrans(fields[8])
-					row.search = table.concat({ row.sha, row.author, row.date, row.refs, row.subject }, " ")
+					row.search = table.concat({ row.id, row.author, row.date, row.refs, row.subject }, " ")
 					row.row = #rows + 1
-					table.insert(commits, row)
+					table.insert(nodes, row)
+					commit_count = commit_count + 1
 				end
 				table.insert(rows, row)
 			end
@@ -451,9 +530,11 @@ function M.open(root, opts)
 		matches = found
 		layout()
 		local lines = {}
-		for _, commit in ipairs(matches) do
-			table.insert(lines, fit(commit.short .. " " .. commit.subject, sidebar_width - 2))
-			table.insert(lines, fit("  " .. commit.author .. " · " .. commit.date, sidebar_width - 2))
+		for _, node in ipairs(matches) do
+			table.insert(lines, fit(node.short .. " " .. node.subject, sidebar_width - 2))
+			local metadata = node.local_state and "  Live local snapshot"
+				or ("  " .. node.author .. " · " .. node.date)
+			table.insert(lines, fit(metadata, sidebar_width - 2))
 			table.insert(lines, "")
 		end
 		write(buffers.results, #lines > 0 and lines or { loading and "Loading history…" or "No matches" })
@@ -465,13 +546,21 @@ function M.open(root, opts)
 		local title = #matches == 1 and "1 match" or (#matches .. " matches")
 		vim.wo[windows.results].winbar = "%#RediffRefMuted#" .. title
 		api.nvim_win_set_cursor(windows.results, { 1, 0 })
-		select_commit(selection or matches[1])
+		select_node(selection or matches[1])
 	end
 
 	filter = function()
 		local query = api.nvim_buf_get_lines(buffers.search, 0, 1, false)[1] or ""
+		if query == "" and (comparison.head == "index" or comparison.head == "changes") then
+			for _, node in ipairs(nodes) do
+				if node.id == comparison.head then
+					show_matches(nodes, node)
+					return
+				end
+			end
+		end
 		if query:sub(1, 1) ~= "=" then
-			show_matches(query == "" and commits or vim.fn.matchfuzzy(commits, query, { key = "search" }))
+			show_matches(query == "" and nodes or vim.fn.matchfuzzy(nodes, query, { key = "search" }))
 			return
 		end
 		show_matches({})
@@ -480,8 +569,8 @@ function M.open(root, opts)
 				return
 			end
 			local sha = vim.trim(result.stdout or "")
-			for _, commit in ipairs(commits) do
-				if commit.sha == sha then
+			for _, commit in ipairs(nodes) do
+				if commit.id == sha then
 					show_matches({ commit })
 					return
 				end
@@ -498,11 +587,26 @@ function M.open(root, opts)
 		if not selected then
 			return
 		end
-		comparison[endpoint], comparison[endpoint .. "_ref"] = selected.sha, selected.short
+		comparison[endpoint] = selected.id
+		comparison[endpoint .. "_ref"] = not selected.local_state and selected.short or nil
 		paint_endpoints()
 	end
 
 	local function apply()
+		local message = selection_error()
+		if message then
+			vim.notify(message, vim.log.levels.WARN)
+			return
+		end
+		if comparison.head == "index" then
+			local output, code = git.run(root, { "rev-parse", "--verify", "HEAD" }, nil, true)
+			local current_head = code == 0 and vim.trim(output) or nil
+			if current_head ~= checkout_head then
+				vim.notify("HEAD changed. Reopen the picker to choose the staged comparison", vim.log.levels.WARN)
+				return
+			end
+			comparison.base, comparison.base_ref = "HEAD", nil
+		end
 		close()
 		opts.on_select(comparison)
 	end
@@ -522,14 +626,14 @@ function M.open(root, opts)
 	local function move_match(delta)
 		local index = math.floor((api.nvim_win_get_cursor(windows.results)[1] - 1) / 3) + 1
 		index = math.max(1, math.min(#matches, index + delta))
-		select_commit(matches[index])
+		select_node(matches[index])
 	end
 
 	local function move_graph(delta)
 		local row = api.nvim_win_get_cursor(windows.graph)[1] + delta
 		while rows[row] do
-			if rows[row].sha then
-				select_commit(rows[row])
+			if rows[row].id then
+				select_node(rows[row])
 				return
 			end
 			row = row + delta
@@ -619,17 +723,17 @@ function M.open(root, opts)
 			vim.cmd.stopinsert()
 			local row = api.nvim_win_get_cursor(windows.graph)[1]
 			local direction = selected and row < selected.row and -1 or 1
-			while rows[row] and not rows[row].sha do
+			while rows[row] and not rows[row].id do
 				row = row + direction
 			end
-			local commit = rows[row] or selected
-			if not commit then
+			local node = rows[row] or selected
+			if not node then
 				return
 			end
-			if commit ~= selected then
-				select_commit(commit)
+			if node ~= selected then
+				select_node(node)
 			else
-				place_graph_cursor(commit)
+				place_graph_cursor(node)
 			end
 		end,
 	})
@@ -638,9 +742,9 @@ function M.open(root, opts)
 		buffer = buffers.results,
 		callback = function()
 			local index = math.floor((api.nvim_win_get_cursor(windows.results)[1] - 1) / 3) + 1
-			local commit = matches[index]
-			if commit ~= selected then
-				select_commit(commit)
+			local node = matches[index]
+			if node ~= selected then
+				select_node(node)
 			end
 		end,
 	})
@@ -668,8 +772,6 @@ function M.open(root, opts)
 			end
 		end,
 	})
-	write(buffers.apply, { "  Compare   " })
-	highlight(buffers.apply, 0, 0, 12, "RediffRefTitle")
 	write(buffers.search, { "" })
 	vim.bo[buffers.search].modifiable = true
 	vim.wo[windows.details].wrap = true

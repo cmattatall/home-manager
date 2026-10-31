@@ -42,16 +42,32 @@ function M.comparison(root, base, head)
 	return { base = resolve(base), head = resolve(head), base_ref = base, head_ref = head }
 end
 
-function M.comparison_label(comparison)
-	local function endpoint(commit, ref)
-		local label = commit:sub(1, 12)
-		if ref and not vim.startswith(commit, ref) then
-			label = label .. " (" .. ref .. ")"
+function M.local_group(comparison)
+	if comparison then
+		if comparison.base == "index" and comparison.head == "changes" then
+			return "unstaged"
+		elseif comparison.base == "HEAD" and comparison.head == "index" then
+			return "staged"
 		end
-		return label
 	end
-	local base = endpoint(comparison.base, comparison.base_ref)
-	local head = endpoint(comparison.head, comparison.head_ref)
+end
+
+function M.endpoint_label(value, ref)
+	if value == "index" then
+		return "Index"
+	elseif value == "changes" then
+		return "Changes"
+	end
+	local label = value:sub(1, 12)
+	if ref and not vim.startswith(value, ref) then
+		label = label .. " (" .. ref .. ")"
+	end
+	return label
+end
+
+function M.comparison_label(comparison)
+	local base = M.endpoint_label(comparison.base, comparison.base_ref)
+	local head = M.endpoint_label(comparison.head, comparison.head_ref)
 	local label = base .. " → " .. head
 	return comparison.pr and ("PR #" .. comparison.pr.number .. " · " .. label) or label
 end
@@ -68,13 +84,14 @@ function M.refs(root, lead)
 end
 
 function M.entries(root, comparison)
-	if not comparison then
+	local local_group = M.local_group(comparison)
+	if not comparison or local_group then
 		assert(
 			#paths(root, { "diff", "--name-only", "--diff-filter=U", "-z" }) == 0,
 			"Resolve merge conflicts before entering Review"
 		)
 	end
-	if comparison then
+	if comparison and not local_group then
 		local args = { "diff", "--name-status", "--no-renames", "-z", comparison.base, comparison.head, "--" }
 		local fields = paths(root, args)
 		local result = {}
@@ -91,7 +108,13 @@ function M.entries(root, comparison)
 		return result
 	end
 	local result = {}
-	for _, group in ipairs({ "staged", "unstaged", "untracked" }) do
+	local groups = { "staged", "unstaged", "untracked" }
+	if local_group == "staged" then
+		groups = { "staged" }
+	elseif local_group == "unstaged" then
+		groups = { "unstaged", "untracked" }
+	end
+	for _, group in ipairs(groups) do
 		local args = { "diff", "--name-status", "--find-renames", "-z" }
 		if group == "staged" then
 			table.insert(args, "--cached")
@@ -144,7 +167,12 @@ function M.line_totals(root, entries, comparison)
 		end
 	end
 
-	if comparison then
+	local local_group = M.local_group(comparison)
+	if local_group == "staged" then
+		add_diff({ "--cached" })
+	elseif local_group == "unstaged" then
+		add_diff({})
+	elseif comparison then
 		add_diff({ comparison.base, comparison.head })
 	else
 		add_diff({ "--cached" })

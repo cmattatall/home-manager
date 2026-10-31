@@ -135,6 +135,10 @@ function M.refresh(root)
 	assert(s and s.comparison, "Open a comparison before refreshing refs")
 	local comparison = s.comparison
 	assert(not comparison.pr, "Use :git pr-stack to reload comparisons from GitHub")
+	if git.local_group(comparison) then
+		require("rediff.review").refresh(s.current)
+		return
+	end
 	local refreshed =
 		git.comparison(root, comparison.base_ref or comparison.base, comparison.head_ref or comparison.head)
 	local index = M.position(root, comparison)

@@ -102,27 +102,39 @@ You can also type any expression that Git resolves to a commit.
 
 SCOPE AND HISTORY
 
-Space gs or :git scope chooses Local changes or Compare two commits.
-Commit comparisons open the same ref picker as :git base,
-:git diff, and Space gh / :git history. :git diff BASE prefills the base.
+Space gs or :git scope opens the snapshot picker directly. :git base,
+:git diff, and Space gh / :git history use the same picker.
+:git diff BASE prefills the base.
+
+Changes and Index appear as diamond nodes above the checked-out HEAD:
+  Changes       Saved working files, including untracked files
+  Index         The staged snapshot
+
+Choose Index → Changes to review unstaged edits and untracked files, or
+HEAD → Index to review staged changes. These views refresh live and support
+staging, unstaging, and reverting. :fs and :fu switch between them. :Review
+returns to the combined Staged/Unstaged sidebar.
+Choose two commits for a pinned historical comparison. Local comparisons use
+the two adjacent pairs above, keeping committed work separate from local edits.
 
 Type to fuzzy-find subjects, authors, dates, refs, or SHAs in the left results.
 The right graph keeps all history, including nonmatching commits and connectors.
 Prefix an exact Git expression with =, for example =HEAD~2. Up/Down or Ctrl-n/p
 select a result. Enter reveals it in the graph. Tab switches graph/search, and
-j/k navigate commit nodes. Scroll horizontally or use zh/zl in the graph to
+j/k navigate snapshot nodes. Scroll horizontally or use zh/zl in the graph to
 read full subjects and author names. Headers move with the columns, and
 scrolling stops at the content edge. The selected commit stays selected while
-panning, with the cursor on its circle whenever that circle is visible.
+panning, with the cursor on its node whenever that node is visible.
 The detail pane shows full refs, the complete commit message including its
 body, and changed files. Scroll over that pane to read longer messages.
 
-Ctrl-b assigns the browsed commit as BASE, Ctrl-t assigns TARGET, and Ctrl-y
+Ctrl-b assigns the browsed snapshot as BASE, Ctrl-t assigns TARGET, and Ctrl-y
 applies both choices. Gold rows mark the base, cyan rows mark the target, and a
 lavender underline marks the browsing cursor. If both endpoints are the same
-commit, its row uses both colors. Endpoint labels stay in the header.
-The picker starts with the current comparison's commits, or HEAD for both
-endpoints from Local changes. Both endpoints can be changed in every picker.
+commit, its row has a neutral highlight. Endpoint labels stay in the header.
+Scope, history, and :git base start with the current comparison, or the selected
+local group's endpoints. :git diff starts with commit endpoints, defaulting to
+HEAD when opened from local review. Both endpoints can be changed in the picker.
 Escape cancels all pending choices. Browsing and choosing endpoints preserve the
 checkout, refs, index, and working files. The picker needs an 80×24 terminal.
 
@@ -817,7 +829,7 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
   :Git diff [BASE [TARGET]]   Compare two refs, picking missing endpoints
   :Git base [BASE|reset]      Change/pick comparison base, or return to Review
   :Git comparison            Show refs, commit IDs, checkout, and harness
-  :Git scope                 Choose Local changes or an explicit comparison
+  :Git scope                 Choose local snapshots or commit endpoints
   :Git history               Browse commits and choose a comparison endpoint
   :Git stack [REF REF ...]    Choose or define adjacent comparisons
   :Git branch-stack [BASE [TIP]] Discover branch tips by Git ancestry, or pick refs
