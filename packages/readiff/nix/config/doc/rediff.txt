@@ -79,7 +79,7 @@ COMPARING GIT REFS
 
 :git diff BASE TARGET compares two commits, with BASE on the OLD side and
 TARGET on the NEW side. Use full/short SHAs, branches, tags, remote-tracking refs,
-or expressions like HEAD~2. :git diff without arguments prompts for both refs.
+or expressions like HEAD~2. Omit either argument to open the ref picker below.
 For example: :git diff main HEAD or :git diff a1b2c3d e4f5a6b.
 Typed :gd BASE TARGET is a shortcut, in Review or ordinary editing.
 Scripts should use :Git diff. Normal-mode gd still finds symbol definitions.
@@ -97,22 +97,30 @@ The statusline labels the checked-out branch separately.
 Space gc opens full comparison details, including commit IDs and the feedback
 harness.
 Space p lists searchable Git actions with descriptions and keyboard shortcuts.
-Tab completes branches, tags, and remote-tracking refs in comparison commands and
-prompts. You can also type any expression that Git resolves to a commit.
+Tab completes branches, tags, and remote-tracking refs in comparison commands.
+You can also type any expression that Git resolves to a commit.
 
 SCOPE AND HISTORY
 
 Space gs or :git scope chooses Local changes, a ref compared with working files,
-or two commits. Comparison choices prompt for the endpoints before opening the
-review. Escape keeps the current scope.
+or two commits. Comparison choices open the same ref picker as :git base,
+:git diff, and Space gh / :git history. :git diff BASE prefills the base.
 
-Space gh or :git history opens a searchable commit list with branch and tag
-decorations and a diff preview. Type a subject, ref name, or commit ID to filter.
-Enter uses the selected commit as the base. Ctrl-t uses it as the target.
-Changing one endpoint preserves the other endpoint's pinned commit. From Local
-changes, the starting endpoints are HEAD and Working files. Escape closes history
-and preserves the current review. Browsing and choosing endpoints preserve the
-checkout, refs, index, and working files.
+Type to fuzzy-find subjects, authors, dates, refs, or SHAs in the left results.
+The right graph keeps all history, including nonmatching commits and connectors.
+Prefix an exact Git expression with =, for example =HEAD~2. Up/Down or Ctrl-n/p
+select a result. Enter reveals it in the graph. Tab switches graph/search, and
+j/k navigate the graph. The detail pane shows the author, date, refs, and files.
+
+Ctrl-b assigns the browsed commit as BASE, Ctrl-t assigns TARGET, and Ctrl-y
+applies both choices. Gold rows mark the base, cyan rows mark the target, and a
+lavender underline marks the browsing cursor. If both endpoints are the same
+commit, its row uses both colors. Endpoint labels stay in the header.
+:git base keeps the target on Working files. History starts with the current
+comparison, or HEAD and Working files from Local changes. :git diff starts with
+the current commit endpoints, using HEAD when the target was Working files.
+Escape cancels all pending choices. Browsing and choosing endpoints preserve the
+checkout, refs, index, and working files. The picker needs an 80×24 terminal.
 
 COMPARISON STACKS
 
@@ -138,7 +146,7 @@ Notes and feedback remain shared within the worktree across comparisons.
 MANUALLY STACKED BRANCHES
 
 :git branch-stack main HEAD discovers branch tips between a base and a tip using
-Git ancestry. The tip defaults to HEAD. With no arguments, it prompts for both
+Git ancestry. The tip defaults to HEAD. With no arguments, the ref picker selects
 endpoints. Local and remote-tracking branches already present in this repository
 are included. GitHub access, PRs, and stack metadata are optional.
 
@@ -179,7 +187,7 @@ BASE DIFF MODE
 staged, unstaged, and untracked changes in one WORKTREE group. For example,
 :git base HEAD~1 includes the last commit and your local changes. :git base HEAD
 shows local changes against HEAD. Save editor buffers to include their edits.
-:git base without arguments prompts for its base. Scripts use :Git base BASE.
+:git base without arguments opens the ref picker. Scripts use :Git base BASE.
 
 The base uses the commit resolved when opened. Live refresh and Space R update the
 working-tree side. Repeating :git base BASE resolves the base again and refreshes.
@@ -803,13 +811,13 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
 :focus = :Focus, :fs = :Focus staged, :fu = :Focus unstaged.
 
   :Review / :ReviewLeave       Enter worktree Review / leave Review
-  :Git diff [BASE TARGET]     Compare two commit-ish refs, or prompt
-  :Git base [BASE|reset]      Compare working files, prompt, or return to Review
+  :Git diff [BASE [TARGET]]   Compare two refs, picking missing endpoints
+  :Git base [BASE|reset]      Compare working files, pick base, or return to Review
   :Git comparison            Show refs, commit IDs, checkout, and harness
   :Git scope                 Choose Local changes or an explicit comparison
   :Git history               Browse commits and choose a comparison endpoint
   :Git stack [REF REF ...]    Choose or define adjacent comparisons
-  :Git branch-stack [BASE [TIP]] Discover branch tips by Git ancestry, or prompt
+  :Git branch-stack [BASE [TIP]] Discover branch tips by Git ancestry, or pick refs
   :Git pr-stack              Discover published GitHub PR stacks
   :Git up / :Git down         Move toward the tip / base of the comparison stack
   :Git refresh-refs           Resolve the current comparison's refs again

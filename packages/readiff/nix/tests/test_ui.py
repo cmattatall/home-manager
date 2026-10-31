@@ -482,7 +482,8 @@ class EditorUI(unittest.TestCase):
         editor = self.launch(self.root)
         original = checkout_state(self.root)
         self.keys(editor, " gD")
-        self.keys(editor, "HEAD<CR>HEAD<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+        self.keys(editor, "<C-y>")
         self.wait_for(editor, "s.comparison ~= nil")
         commit = original["head"].decode().strip()[:12]
         self.assertEqual(
@@ -575,7 +576,10 @@ class EditorUI(unittest.TestCase):
         for answer in ("<Esc>", "main<CR><Esc>"):
             self.keys(editor, ":git branch-stack<CR>" + answer)
             self.assertEqual(selected, self.lua(editor, "return s.comparison"))
-        self.keys(editor, ":git branch-stack<CR>main<CR><CR>")
+        self.keys(editor, ":git branch-stack<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+        self.keys(editor, "=main")
+        self.keys(editor, "<C-b><C-y>")
         self.assertEqual(foundation, self.lua(editor, "return s.comparison.head"))
         self.assertIn(
             "origin/a-middle",
@@ -762,7 +766,7 @@ class EditorUI(unittest.TestCase):
                 :find('No open GitHub PR stacks', 1, true) ~= nil
         """)
         self.keys(editor, "b")
-        self.assertEqual("@", editor.funcs.getcmdtype())
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
         self.keys(editor, "<Esc>")
         self.assertEqual(selected, self.lua(editor, "return s.comparison"))
 
@@ -772,7 +776,10 @@ class EditorUI(unittest.TestCase):
             table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\\n')
                 :find('GitHub authentication required', 1, true) ~= nil
         """)
-        self.keys(editor, "bHEAD<CR><CR>")
+        self.keys(editor, "b")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+        self.keys(editor, "=HEAD")
+        self.keys(editor, "<C-b><C-t><C-y>")
         self.wait_for(editor, "s.comparison and s.comparison.pr == nil")
         self.assertEqual([base, base], self.lua(editor, "return {s.comparison.base, s.comparison.head}"))
         selected = self.lua(editor, "return s.comparison")
@@ -813,14 +820,16 @@ class EditorUI(unittest.TestCase):
         self.wait_for(editor, "vim.bo.filetype == 'fzf'")
         self.keys(editor, "two commits")
         self.keys(editor, "<CR>")
-        self.keys(editor, "HEAD~1<CR>HEAD<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+        self.keys(editor, "=HEAD~1")
+        self.keys(editor, "<C-b><C-y>")
         self.assertEqual([base, tip], self.lua(editor, "return {s.comparison.base, s.comparison.head}"))
         self.assertIn(" Base: " + base[:12], sidebar())
         self.assertIn(" Target: " + tip[:12], sidebar())
         self.assertIn("checkout: main", self.lua(editor, "return r.statusline()"))
 
         selected = self.lua(editor, "return s.comparison")
-        for query, answer in (("", "<Esc>"), ("two commits", "HEAD<CR><Esc>")):
+        for query, answer in (("", "<Esc>"), ("two commits", "HEAD<Esc>")):
             self.keys(editor, ":git scope<CR>")
             self.wait_for(editor, "vim.bo.filetype == 'fzf'")
             if query:
@@ -833,7 +842,9 @@ class EditorUI(unittest.TestCase):
         self.wait_for(editor, "vim.bo.filetype == 'fzf'")
         self.keys(editor, "working files")
         self.keys(editor, "<CR>")
-        self.keys(editor, "HEAD<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+        self.keys(editor, "=HEAD")
+        self.keys(editor, "<C-b><C-y>")
         self.assertEqual(tip, self.lua(editor, "return s.comparison.base"))
         self.assertIsNone(self.lua(editor, "return s.comparison.head"))
         self.assertIn(" Target: Working files", sidebar())
@@ -869,19 +880,19 @@ class EditorUI(unittest.TestCase):
         editor = self.launch(self.root)
 
         self.keys(editor, " gh")
-        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
         self.keys(editor, "feature/api<Esc>")
         self.assertIsNone(self.lua(editor, "return s.comparison"))
         self.keys(editor, ":git history<CR>")
-        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
         self.keys(editor, "feature/api")
-        self.keys(editor, "<CR>")
+        self.keys(editor, "<C-b><C-y>")
         self.assertEqual(api_commit, self.lua(editor, "return s.comparison.base"))
         self.assertIsNone(self.lua(editor, "return s.comparison.head"))
         self.keys(editor, " gh")
-        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
         self.keys(editor, "feature/ui")
-        self.keys(editor, "<C-t>")
+        self.keys(editor, "<C-t><C-y>")
         self.assertEqual(
             [api_commit, tip],
             self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
@@ -891,22 +902,130 @@ class EditorUI(unittest.TestCase):
         """))
         git("update-ref", "refs/heads/feature/api", base)
         self.keys(editor, " gh")
-        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
         self.keys(editor, "UI change")
-        self.keys(editor, "<C-t>")
+        self.keys(editor, "<C-t><C-y>")
         self.assertEqual(
             [api_commit, tip],
             self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
         )
         self.keys(editor, " gh")
-        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
         self.keys(editor, "main")
-        self.keys(editor, "<CR>")
+        self.keys(editor, "<C-b><C-y>")
         self.assertEqual(base, self.lua(editor, "return s.comparison.base"))
         self.assertEqual(tip, self.lua(editor, "return s.comparison.head"))
         self.keys(editor, ":git base reset<CR>")
         self.assertIsNone(self.lua(editor, "return s.comparison"))
         self.assertEqual(4, split_count(editor))
+        self.assertEqual(original, checkout_state(self.root))
+
+    def test_ref_picker_searches_graph_and_edits_both_endpoints_atomically(self):
+        def git(*args):
+            return subprocess.check_output(
+                ["git", "-C", self.root, *args], text=True
+            ).strip()
+
+        base = git("rev-parse", "HEAD")
+        git("checkout", "-qb", "feature/session")
+        git("add", "-A")
+        git(
+            "commit",
+            "-qm",
+            "Refresh session tokens",
+            "--author=Maya Example <maya@example.test>",
+        )
+        target = git("rev-parse", "HEAD")
+        git("checkout", "-qb", "feature/docs", base)
+        Path(self.root, "guide.md").write_text("Session guide\n")
+        git("add", "guide.md")
+        git("commit", "-qm", "Document authentication")
+        other = git("rev-parse", "HEAD")
+        original = checkout_state(self.root)
+        editor = self.launch(self.root)
+
+        def pane(name):
+            return next(
+                buf
+                for buf in editor.buffers
+                if buf.valid and buf.options["filetype"] == "rediff-ref-" + name
+            )
+
+        self.keys(editor, ":git diff main<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+        self.keys(editor, "<Down><Down><Up><Down>")
+        self.assertIn(base[:8], pane("details")[0])
+        self.keys(editor, "<CR>kj")
+        self.assertIn(base[:8], pane("details")[0])
+        self.keys(editor, "<Tab>")
+        self.keys(editor, "Mya")
+        self.assertIn(target[:7], "\n".join(pane("results")[:]))
+        self.assertNotIn(other[:7], "\n".join(pane("results")[:]))
+        self.assertIn("Maya Example <maya@example.test>", "\n".join(pane("details")[:]))
+        graph = pane("graph")[:]
+        for sha in (base, target, other):
+            self.assertIn(sha[:7], "\n".join(graph))
+        self.assertIn("Maya", "\n".join(graph))
+        self.keys(editor, "<C-t>")
+        self.assertIsNone(self.lua(editor, "return s.comparison"))
+        self.keys(editor, "<C-y>")
+        self.assertEqual(
+            [base, target],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+        )
+
+        self.keys(editor, ":git diff<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+        self.keys(editor, "feature/docs")
+        self.keys(editor, "<C-b>")
+        self.keys(editor, "<C-u>Refresh")
+        self.keys(editor, "<C-t>")
+        self.assertEqual(
+            [base, target],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+        )
+        self.assertEqual(graph, pane("graph")[:])
+        self.keys(editor, "<Esc>")
+        self.assertEqual(
+            [base, target],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+        )
+
+        self.keys(editor, ":git diff<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+        self.keys(editor, "feature/docs")
+        self.assertIn("A  guide.md", pane("details")[:])
+        self.keys(editor, "<C-b>")
+        button = next(win for win in editor.windows if win.buffer == pane("apply"))
+        position = editor.funcs.screenpos(button, 1, 3)
+        for action in ("press", "release"):
+            editor.api.input_mouse(
+                "left", action, "", 0, position["row"] - 1, position["col"] - 1
+            )
+            pump(editor)
+        self.assertEqual(
+            [other, target],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+        )
+        self.assertEqual(original, checkout_state(self.root))
+
+        self.keys(editor, ":git base<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+        self.keys(editor, "=HEAD~1")
+        self.keys(editor, "<C-b><C-y>")
+        self.assertEqual(base, self.lua(editor, "return s.comparison.base"))
+        self.assertIsNone(self.lua(editor, "return s.comparison.head"))
+        self.keys(editor, f":git diff {target} {other}<CR>")
+        self.assertEqual(
+            [target, other],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+        )
+        self.assertFalse(
+            any(
+                buf.valid and buf.options["filetype"].startswith("rediff-ref-")
+                for buf in editor.buffers
+            )
+        )
         self.assertEqual(original, checkout_state(self.root))
 
     def test_base_compares_commits_to_live_worktree_including_staged_and_untracked(self):
@@ -1192,7 +1311,6 @@ class EditorUI(unittest.TestCase):
         self.assertEqual(snapshot, self.lua(editor, "return s.current.id"))
         self.assertEqual(1, self.lua(editor, "return #s.comments"))
         for args in (
-            "",
             "does-not-exist",
             "--all",
             "reset extra",
@@ -1209,7 +1327,7 @@ class EditorUI(unittest.TestCase):
                 "return pcall(require('rediff.git').validate, s.root, s.current)",
             )
         )
-        for args in ("does-not-exist HEAD", "HEAD", "HEAD HEAD extra", "--all HEAD"):
+        for args in ("does-not-exist HEAD", "HEAD HEAD extra", "--all HEAD"):
             self.keys(editor, f":git diff {args}<CR>")
             self.assertEqual(snapshot, self.lua(editor, "return s.current.id"))
         for args in ("status", "reset --hard"):

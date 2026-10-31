@@ -19,35 +19,38 @@ end
 local function compare(args)
 	local action = args[1]
 	local directory = root()
-	local function open(base, head)
+	local function open(comparison)
 		guarded(function()
 			assert(root() == directory, "Worktree changed. Choose the comparison again")
 			if action == "branch-stack" then
-				require("rediff.branch_stack").discover(directory, base, head or "HEAD")
+				require("rediff.branch_stack").discover(
+					directory,
+					comparison.base_ref or comparison.base,
+					comparison.head_ref or comparison.head or "HEAD"
+				)
 			else
-				stack.set(directory, { git.comparison(directory, base, head) })
+				stack.set(directory, { comparison })
 			end
 		end)
 	end
-	if #args == 1 then
-		vim.ui.input({ prompt = "Base ref (OLD): ", completion = "customlist,v:lua.RediffGitRefs" }, function(base)
-			if not base or base == "" then
-				return
-			end
-			if action == "base" then
-				open(base)
-			else
-				vim.ui.input({
-					prompt = "Target ref (NEW): ",
-					completion = "customlist,v:lua.RediffGitRefs",
-					default = action == "branch-stack" and "HEAD" or nil,
-				}, function(head)
-					if head and head ~= "" then
-						open(base, head)
-					end
-				end)
-			end
-		end)
+	if #args == 1 or (action == "diff" and #args == 2) then
+		local current = review.state and review.state.comparison or git.comparison(directory, "HEAD")
+		local comparison = vim.deepcopy(current)
+		if args[2] then
+			comparison.base = git.comparison(directory, args[2]).base
+			comparison.base_ref = args[2]
+		end
+		if action == "base" then
+			comparison.head, comparison.head_ref = nil, nil
+		elseif not comparison.head then
+			comparison.head = git.comparison(directory, "HEAD").base
+			comparison.head_ref = "HEAD"
+		end
+		require("rediff.ref_picker").open(directory, {
+			comparison = comparison,
+			worktree = action == "base",
+			on_select = open,
+		})
 		return
 	end
 	assert(
@@ -60,7 +63,7 @@ local function compare(args)
 		review.open(directory)
 		return
 	end
-	open(args[2], args[3])
+	open(git.comparison(directory, args[2], args[3]))
 end
 
 local function scope()
@@ -91,46 +94,14 @@ end
 
 local function commits()
 	local directory = root()
-	local previous = review.state and review.state.comparison
-	local function select_endpoint(selected, endpoint)
-		if not selected[1] then
-			return
-		end
-		guarded(function()
-			assert(root() == directory, "Worktree changed. Choose the commit again")
-			local ref = selected[1]:match("^%x+")
-			local commit = git.comparison(directory, ref).base
-			local current = previous or git.comparison(directory, "HEAD")
-			local comparison = {
-				base = current.base,
-				base_ref = current.base_ref,
-				head = current.head,
-				head_ref = current.head_ref,
-			}
-			if endpoint == "base" then
-				comparison.base, comparison.base_ref = commit, ref
-			else
-				comparison.head, comparison.head_ref = commit, ref
-			end
-			stack.set(directory, { comparison })
-		end)
-	end
-	require("fzf-lua").git_commits({
-		cwd = directory,
-		cmd = "git log --all --date-order --decorate=short --color=never --format='%h %s %d'",
-		prompt = "History> ",
-		header = "Enter: base · Ctrl-t: target · Esc: cancel",
-		winopts = { preview = { hidden = false, layout = "vertical", vertical = "down:60%" } },
-		fzf_opts = { ["--no-sort"] = true },
-		actions = {
-			["enter"] = function(selected)
-				select_endpoint(selected, "base")
-			end,
-			["ctrl-t"] = function(selected)
-				select_endpoint(selected, "target")
-			end,
-			["ctrl-d"] = false,
-		},
+	require("rediff.ref_picker").open(directory, {
+		comparison = review.state and review.state.comparison or git.comparison(directory, "HEAD"),
+		on_select = function(comparison)
+			guarded(function()
+				assert(root() == directory, "Worktree changed. Choose the commit again")
+				stack.set(directory, { comparison })
+			end)
+		end,
 	})
 end
 
@@ -205,7 +176,7 @@ local actions = {
 	diff = {
 		run = compare,
 		arguments = true,
-		usage = "diff BASE TARGET (or prompt)",
+		usage = "diff [BASE [TARGET]]",
 		description = "Compare two Git refs",
 		key = "gD",
 	},
