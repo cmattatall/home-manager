@@ -318,6 +318,12 @@ function M.open(root, opts)
 		paint_endpoints()
 	end
 
+	local function place_graph_cursor(commit)
+		local line = api.nvim_buf_get_lines(buffers.graph, commit.row - 1, commit.row, false)[1]
+		local column = line:find("●", 1, true) - 1
+		api.nvim_win_set_cursor(windows.graph, { commit.row, column })
+	end
+
 	local function select_commit(commit)
 		selected = commit
 		api.nvim_buf_clear_namespace(buffers.graph, browsing, 0, -1)
@@ -344,7 +350,7 @@ function M.open(root, opts)
 			hl_eol = true,
 			priority = 120,
 		})
-		api.nvim_win_set_cursor(windows.graph, { commit.row, 0 })
+		place_graph_cursor(commit)
 		local details = {
 			"SHA     " .. commit.short,
 			"Author  " .. commit.author .. " <" .. commit.email .. ">",
@@ -594,13 +600,24 @@ function M.open(root, opts)
 			end
 		end,
 	})
-	api.nvim_create_autocmd("CursorMoved", {
+	api.nvim_create_autocmd({ "WinEnter", "CursorMoved", "CursorMovedI" }, {
 		group = group,
 		buffer = buffers.graph,
 		callback = function()
-			local row = rows[api.nvim_win_get_cursor(windows.graph)[1]]
-			if row and row.sha and row ~= selected then
-				select_commit(row)
+			vim.cmd.stopinsert()
+			local row = api.nvim_win_get_cursor(windows.graph)[1]
+			local direction = selected and row < selected.row and -1 or 1
+			while rows[row] and not rows[row].sha do
+				row = row + direction
+			end
+			local commit = rows[row] or selected
+			if not commit then
+				return
+			end
+			if commit ~= selected then
+				select_commit(commit)
+			else
+				place_graph_cursor(commit)
 			end
 		end,
 	})

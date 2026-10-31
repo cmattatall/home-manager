@@ -957,6 +957,45 @@ class EditorUI(unittest.TestCase):
         self.assertIn(base[:8], pane("details")[0])
         self.keys(editor, "<CR>kj")
         self.assertIn(base[:8], pane("details")[0])
+        graph_window = next(
+            win for win in editor.windows if win.buffer == pane("graph")
+        )
+
+        def assert_node(sha):
+            row, column = graph_window.cursor
+            line = pane("graph")[row - 1]
+            self.assertIn(sha[:8], line)
+            self.assertTrue(line.encode()[column:].startswith("●".encode()))
+            self.assertIn(sha[:8], pane("details")[0])
+
+        assert_node(base)
+        for motion in ("$", "0", "w", "<Right>", "<Right>"):
+            self.keys(editor, motion)
+            assert_node(base)
+        self.keys(editor, "2G")
+        assert_node(other)
+        self.keys(editor, "<Tab>")
+
+        def click(row, column):
+            position = editor.funcs.screenpos(graph_window, row, column)
+            for action in ("press", "release"):
+                editor.api.input_mouse(
+                    "left", action, "", 0, position["row"] - 1, position["col"] - 1
+                )
+                pump(editor)
+
+        target_row = next(
+            index + 1
+            for index, line in enumerate(pane("graph")[:])
+            if target[:8] in line
+        )
+        line = pane("graph")[target_row - 1]
+        click(target_row, len(line[: line.index(target[:8])].encode()) + 1)
+        self.assertEqual("n", editor.api.get_mode()["mode"])
+        assert_node(target)
+        self.assertNotIn("●", pane("graph")[target_row])
+        click(target_row + 1, 1)
+        assert_node(base)
         self.keys(editor, "<Tab>")
         self.keys(editor, "Mya")
         self.assertIn(target[:7], "\n".join(pane("results")[:]))
@@ -1110,7 +1149,11 @@ class EditorUI(unittest.TestCase):
             column = editor.funcs.strdisplaywidth(merge_row[: merge_row.index(value)])
             self.assertEqual(column - maximum_scroll, header(graph).index(label))
         self.keys(editor, "<Tab>1000zl")
-        self.assertEqual(maximum_scroll, left_column(graph))
+        self.assertEqual(0, left_column(graph))
+        row, column = graph.cursor
+        self.assertTrue(
+            graph.buffer[row - 1].encode()[column:].startswith("●".encode())
+        )
         self.keys(editor, "<Tab>")
         scroll(graph, "left")
         self.assertEqual(0, left_column(graph))
