@@ -840,17 +840,6 @@ class EditorUI(unittest.TestCase):
 
         self.keys(editor, " gs")
         self.wait_for(editor, "vim.bo.filetype == 'fzf'")
-        self.keys(editor, "working files")
-        self.keys(editor, "<CR>")
-        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
-        self.keys(editor, "=HEAD")
-        self.keys(editor, "<C-b><C-y>")
-        self.assertEqual(tip, self.lua(editor, "return s.comparison.base"))
-        self.assertIsNone(self.lua(editor, "return s.comparison.head"))
-        self.assertIn(" Target: Working files", sidebar())
-
-        self.keys(editor, " gs")
-        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
         self.keys(editor, "Local changes")
         self.keys(editor, "<CR>")
         self.assertIsNone(self.lua(editor, "return s.comparison"))
@@ -888,7 +877,7 @@ class EditorUI(unittest.TestCase):
         self.keys(editor, "feature/api")
         self.keys(editor, "<C-b><C-y>")
         self.assertEqual(api_commit, self.lua(editor, "return s.comparison.base"))
-        self.assertIsNone(self.lua(editor, "return s.comparison.head"))
+        self.assertEqual(tip, self.lua(editor, "return s.comparison.head"))
         self.keys(editor, " gh")
         self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
         self.keys(editor, "feature/ui")
@@ -1053,7 +1042,15 @@ class EditorUI(unittest.TestCase):
         self.keys(editor, "=HEAD~1")
         self.keys(editor, "<C-b><C-y>")
         self.assertEqual(base, self.lua(editor, "return s.comparison.base"))
-        self.assertIsNone(self.lua(editor, "return s.comparison.head"))
+        self.assertEqual(target, self.lua(editor, "return s.comparison.head"))
+        self.keys(editor, ":git base<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+        self.keys(editor, "feature/docs")
+        self.keys(editor, "<C-t><C-y>")
+        self.assertEqual(
+            [base, other],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+        )
         self.keys(editor, f":git diff {target} {other}<CR>")
         self.assertEqual(
             [target, other],
@@ -1201,7 +1198,7 @@ class EditorUI(unittest.TestCase):
         self.assertIn(empty[:8], details[0])
         self.assertIn("Changed files (0)", details[:])
 
-    def test_base_compares_commits_to_live_worktree_including_staged_and_untracked(self):
+    def test_base_compares_commits_and_keeps_local_changes_separate(self):
         def git(*args):
             return subprocess.check_output(
                 ["git", "-C", self.root, *args], text=True
@@ -1211,8 +1208,6 @@ class EditorUI(unittest.TestCase):
             "committed.txt": "previous\n",
             "staged.txt": "original\n",
             "mixed.txt": "one\ntwo\nthree\n",
-            "removed.txt": "gone\n",
-            "untracked-existing.txt": "same\nold\n",
         }
         for name, text in files.items():
             Path(self.root, name).write_text(text)
@@ -1228,14 +1223,10 @@ class EditorUI(unittest.TestCase):
         mixed.write_text("one\nindex\nthree\n")
         git("add", "staged.txt", "mixed.txt")
         mixed.write_text("one\nchanged\nthree\nextra\n")
-        Path(self.root, "removed.txt").unlink()
-        git("rm", "--cached", "untracked-existing.txt")
-        untracked_existing = Path(self.root, "untracked-existing.txt")
-        untracked_existing.write_text("same\nnew\nextra\n")
-        untracked = Path(self.root, ":(glob)untracked.txt")
-        untracked.write_text("new\nanother\n")
-        Path(self.root, "binary.dat").write_bytes(b"\x00\x01")
-        index, status = git("write-tree"), git("status", "--porcelain")
+        Path(self.root, "untracked.txt").write_text("unfinished\n")
+        Path(self.root, "committed.txt").write_text(
+            "unfinished edit to committed file\n"
+        )
         original_checkout = checkout_state(self.root)
         editor = self.launch(self.root)
 
@@ -1252,7 +1243,9 @@ class EditorUI(unittest.TestCase):
             )
 
         def select(name):
-            editor.exec_lua(STATE + """
+            editor.exec_lua(
+                STATE
+                + """
                 for i,entry in ipairs(s.entries) do
                     if entry.path == ... then
                         r.show(i)
@@ -1261,119 +1254,94 @@ class EditorUI(unittest.TestCase):
                     end
                 end
                 error('Missing file')
-            """, name)
+            """,
+                name,
+            )
 
-        expected = {
-            "committed.txt": "M",
-            "staged.txt": "M",
-            "mixed.txt": "M",
-            "removed.txt": "D",
-            ":(glob)untracked.txt": "U",
-            "binary.dat": "U",
-            "untracked-existing.txt": "U",
-        }
         self.keys(editor, ":git b<Tab>")
         self.assertEqual("Git base", editor.funcs.getcmdline())
         self.keys(editor, " HEAD~1<CR>")
-        self.assertEqual(expected, entries())
+        self.assertEqual({"committed.txt": "M"}, entries())
         self.assertEqual(original_checkout, checkout_state(self.root))
         self.assertEqual(
-            {"added": 8, "deleted": 5}, self.lua(editor, "return s.line_totals")
+            {"added": 1, "deleted": 1}, self.lua(editor, "return s.line_totals")
         )
         self.assertEqual(
-            [base, True, True],
-            self.lua(editor, """
-                return {s.comparison.base, s.comparison.head == nil, s.live_refresh == true}
-            """),
+            [base, head],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
         )
         self.assertIn("COMPARE", self.lua(editor, "return r.statusline()"))
+        select("committed.txt")
         self.assertEqual(
-            f"1/1 · {base[:12]} (HEAD~1) → WORKTREE",
-            self.lua(editor, "return s.reference"),
-        )
-        select("mixed.txt")
-        self.assertEqual(
-            [files["mixed.txt"], mixed.read_text()],
+            ["previous\n", "committed\n"],
             self.lua(editor, "return {s.current.old, s.current.new}"),
         )
         for layout in ("merged", "split"):
             self.keys(editor, f":View {layout}<CR>")
             self.assertTrue(self.lua(editor, "return #s.diff.changes > 0"))
             summary = self.lua(
-                editor, "return vim.api.nvim_buf_get_lines(s.summary_buf, 0, 1, false)[1]"
+                editor,
+                "return vim.api.nvim_buf_get_lines(s.summary_buf, 0, 1, false)[1]",
             )
-            self.assertIn("mixed.txt", summary)
+            self.assertIn("committed.txt", summary)
         self.assertEqual(
-            " NEW · WORKTREE ", self.lua(editor, "return vim.wo[s.new_win].winbar")
+            f" NEW · {head[:12]} ", self.lua(editor, "return vim.wo[s.new_win].winbar")
         )
         self.assertIn(base[:12], self.lua(editor, "return vim.wo[s.old_win].winbar"))
         self.keys(editor, ":ReviewStage file<CR>")
         self.assertIn("Staging is unavailable", editor.vars["startup_notice"])
         self.keys(editor, ":ReviewRevert<CR>")
         self.assertIn("Reverting is unavailable", editor.vars["startup_notice"])
-        self.assertEqual(index, git("write-tree"))
-        self.assertEqual(status, git("status", "--porcelain"))
+        self.assertEqual(original_checkout, checkout_state(self.root))
 
         self.keys(editor, ":git base HEAD<CR>")
-        del expected["committed.txt"]
-        self.assertEqual(expected, entries())
+        self.assertEqual(0, self.lua(editor, "return #s.entries"))
         self.assertEqual(original_checkout, checkout_state(self.root))
         self.assertEqual(
-            {"added": 7, "deleted": 4}, self.lua(editor, "return s.line_totals")
+            {"added": 0, "deleted": 0}, self.lua(editor, "return s.line_totals")
         )
-        self.assertEqual(head, self.lua(editor, "return s.comparison.base"))
-        select("staged.txt")
-        self.assertEqual(
-            ["original\n", "staged\n"],
-            self.lua(editor, "return {s.current.old, s.current.new}"),
-        )
-        select(untracked_existing.name)
-        self.assertEqual(
-            [files[untracked_existing.name], untracked_existing.read_text()],
-            self.lua(editor, "return {s.current.old, s.current.new}"),
-        )
-        select(untracked.name)
-        self.assertEqual(
-            ["", untracked.read_text()],
-            self.lua(editor, "return {s.current.old, s.current.new}"),
-        )
-        self.assertTrue(self.lua(
-            editor, "return pcall(require('rediff.git').validate, s.root, s.current)"
-        ))
 
-        untracked.write_text("new\nanother\nlive update\n")
-        self.wait_for(editor, "s.current.new == 'new\\nanother\\nlive update\\n'")
-        self.assertEqual(
-            {"added": 8, "deleted": 4}, self.lua(editor, "return s.line_totals")
-        )
-        self.lua(editor, "require('rediff.live').stop(s)")
-        untracked.write_text("new\nanother\nmanual update\n")
-        updated_checkout = checkout_state(self.root)
+        self.keys(editor, f":git diff {head} {base}<CR>")
         self.keys(editor, ":git base HEAD<CR>")
-        self.assertEqual(untracked.read_text(), self.lua(editor, "return s.current.new"))
-        self.assertEqual(updated_checkout, checkout_state(self.root))
+        self.assertEqual(
+            [head, base],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+        )
+        select("committed.txt")
+        self.assertEqual(
+            ["committed\n", "previous\n"],
+            self.lua(editor, "return {s.current.old, s.current.new}"),
+        )
 
         self.keys(editor, f":git diff {base} {head}<CR>")
         self.assertEqual({"committed.txt": "M"}, entries())
-        self.assertEqual(updated_checkout, checkout_state(self.root))
-        self.keys(editor, ":git base HEAD<CR>")
-        self.assertEqual(expected, entries())
-        self.assertEqual(updated_checkout, checkout_state(self.root))
-        self.assertEqual(["reset"], editor.funcs.getcompletion("Git base re", "cmdline"))
+        self.assertEqual(
+            ["reset"], editor.funcs.getcompletion("Git base re", "cmdline")
+        )
         git("branch", "reset", base)
         for command in ("git base refs/heads/reset", f"git diff {base} {head}"):
             self.keys(editor, f":{command}<CR>")
             self.assertEqual(base, self.lua(editor, "return s.comparison.base"))
             self.keys(editor, ":git base re<Tab><CR>")
             self.assertIsNone(self.lua(editor, "return s.comparison"))
-            self.assertEqual(["staged", "unstaged"], self.lua(editor, "return s.groups"))
-            self.assertNotIn("committed.txt", entries())
+            self.assertEqual(
+                ["staged", "unstaged"], self.lua(editor, "return s.groups")
+            )
+            self.assertEqual(
+                {
+                    "committed.txt": "M",
+                    "mixed.txt": "M",
+                    "staged.txt": "M",
+                    "untracked.txt": "U",
+                },
+                entries(),
+            )
             select("mixed.txt")
             self.assertEqual(
                 [files["mixed.txt"], "one\nindex\nthree\n"],
                 self.lua(editor, "return {s.current.old, s.current.new}"),
             )
-            self.assertEqual(updated_checkout, checkout_state(self.root))
+            self.assertEqual(original_checkout, checkout_state(self.root))
 
     def test_branch_diff_pins_two_commits_without_touching_worktree(self):
         def git(*args):

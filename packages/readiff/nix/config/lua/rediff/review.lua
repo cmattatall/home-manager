@@ -147,9 +147,6 @@ local function entry_key(entry)
 end
 
 local function tree_group(entry)
-	if entry.base and entry.group == "untracked" then
-		return "worktree"
-	end
 	return entry.group == "untracked" and "unstaged" or entry.group
 end
 
@@ -611,11 +608,9 @@ function M.show(index, snapshot, keep_fold)
 		require("codediff.ui.inline").render_inline_diff(s.new_buf, s.diff, old_lines, new_lines, { filetype = ft })
 	else
 		local old_label, new_label = "INDEX", "WORKTREE"
-		if snapshot.base then
+		if snapshot.group == "branch" then
 			old_label = snapshot.base:sub(1, 12)
-			if snapshot.group == "branch" then
-				new_label = snapshot.head:sub(1, 12)
-			end
+			new_label = snapshot.head:sub(1, 12)
 		elseif buffer_snapshot then
 			old_label, new_label = "BUFFER", "BUFFER"
 		elseif snapshot.group == "staged" then
@@ -777,7 +772,7 @@ function M.refresh(preferred, changes)
 			{ label = "Base", commit = s.comparison.base, ref = s.comparison.base_ref },
 			{ label = "Target", commit = s.comparison.head, ref = s.comparison.head_ref },
 		}) do
-			local label = endpoint.commit and endpoint.commit:sub(1, 12) or "Working files"
+			local label = endpoint.commit:sub(1, 12)
 			table.insert(lines, " " .. endpoint.label .. ": " .. label)
 			if endpoint.ref and not vim.startswith(endpoint.commit, endpoint.ref) then
 				table.insert(lines, "   " .. vim.fn.strtrans(endpoint.ref))
@@ -899,8 +894,7 @@ function M.refresh(preferred, changes)
 				vim.wo[s.old_win].winbar = ""
 			end
 		elseif s.comparison then
-			vim.wo[s.new_win].winbar = s.comparison.head and " No differences between commits "
-				or " No working-tree differences from base "
+			vim.wo[s.new_win].winbar = " No differences between commits "
 			if s.old_win then
 				vim.wo[s.old_win].winbar = ""
 			end
@@ -2071,7 +2065,7 @@ function M.open(root, comparison)
 	local s = {
 		root = root,
 		comparison = comparison,
-		groups = comparison and { comparison.head and "branch" or "worktree" } or { "staged", "unstaged" },
+		groups = comparison and { "branch" } or { "staged", "unstaged" },
 		directory = directory,
 		comments = pending.comments or {},
 		drafts = pending.drafts or {},

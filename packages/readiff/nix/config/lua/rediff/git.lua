@@ -38,7 +38,8 @@ function M.comparison(root, base, head)
 	local function resolve(ref)
 		return vim.trim(M.run(root, { "rev-parse", "--verify", "--end-of-options", ref .. "^{commit}" }))
 	end
-	return { base = resolve(base), head = head and resolve(head), base_ref = base, head_ref = head }
+	head = head or "HEAD"
+	return { base = resolve(base), head = resolve(head), base_ref = base, head_ref = head }
 end
 
 function M.comparison_label(comparison)
@@ -50,7 +51,7 @@ function M.comparison_label(comparison)
 		return label
 	end
 	local base = endpoint(comparison.base, comparison.base_ref)
-	local head = comparison.head and endpoint(comparison.head, comparison.head_ref) or "WORKTREE"
+	local head = endpoint(comparison.head, comparison.head_ref)
 	local label = base .. " → " .. head
 	return comparison.pr and ("PR #" .. comparison.pr.number .. " · " .. label) or label
 end
@@ -67,39 +68,25 @@ function M.refs(root, lead)
 end
 
 function M.entries(root, comparison)
-	if not comparison or not comparison.head then
+	if not comparison then
 		assert(
 			#paths(root, { "diff", "--name-only", "--diff-filter=U", "-z" }) == 0,
 			"Resolve merge conflicts before entering Review"
 		)
 	end
 	if comparison then
-		local args = { "diff", "--name-status", "--no-renames", "-z", comparison.base }
-		if comparison.head then
-			table.insert(args, comparison.head)
-		end
-		table.insert(args, "--")
+		local args = { "diff", "--name-status", "--no-renames", "-z", comparison.base, comparison.head, "--" }
 		local fields = paths(root, args)
-		local result, seen = {}, {}
+		local result = {}
 		for i = 1, #fields, 2 do
 			local entry = {
 				path = fields[i + 1],
-				group = comparison.head and "branch" or "worktree",
+				group = "branch",
 				status = fields[i],
 				base = comparison.base,
 				head = comparison.head,
 			}
 			table.insert(result, entry)
-			seen[entry.path] = entry
-		end
-		if not comparison.head then
-			for _, path in ipairs(paths(root, { "ls-files", "--others", "--exclude-standard", "-z" })) do
-				if seen[path] then
-					seen[path].group, seen[path].status = "untracked", "U"
-				else
-					table.insert(result, { path = path, group = "untracked", status = "U", base = comparison.base })
-				end
-			end
 		end
 		return result
 	end
@@ -134,39 +121,21 @@ end
 
 function M.line_totals(root, entries, comparison)
 	local totals = { added = 0, deleted = 0 }
-	local untracked = {}
-	for _, entry in ipairs(entries) do
-		if entry.group == "untracked" then
-			untracked[entry.path] = true
-		end
-	end
-	local function add_diff(revisions, untracked_path, old_text)
+	local function add_diff(revisions, untracked_path)
 		local args = { "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--numstat", "-z" }
-		local old_file
 		if untracked_path then
-			if old_text and old_text ~= "" then
-				old_file = vim.fn.tempname()
-				local fd = assert(vim.uv.fs_open(old_file, "w", 384))
-				assert(vim.uv.fs_write(fd, old_text, 0))
-				assert(vim.uv.fs_close(fd))
-			end
-			vim.list_extend(args, { "--no-index", "--", old_file or "/dev/null", root .. "/" .. untracked_path })
+			vim.list_extend(args, { "--no-index", "--", "/dev/null", root .. "/" .. untracked_path })
 		else
 			vim.list_extend(args, revisions)
 			table.insert(args, "--")
 		end
 		local output, code = M.run(root, args, nil, untracked_path ~= nil)
-		if old_file then
-			assert(vim.uv.fs_unlink(old_file))
-		end
 		assert(code == 0 or code == 1, "Cannot count changed lines: " .. (untracked_path or root))
 		local records = vim.split(output, "\0", { plain = true })
 		local index = 1
 		while index <= #records do
 			local added, deleted, path = records[index]:match("^(%S+)\t(%S+)\t(.*)$")
-			-- A path removed from the index can still exist as an untracked file.
-			local counted_separately = comparison and untracked[path] and not untracked_path
-			if tonumber(added) and not counted_separately then
+			if tonumber(added) then
 				totals.added = totals.added + tonumber(added)
 				totals.deleted = totals.deleted + tonumber(deleted)
 			end
@@ -183,8 +152,7 @@ function M.line_totals(root, entries, comparison)
 	end
 	for _, entry in ipairs(entries) do
 		if entry.group == "untracked" then
-			local old_text = entry.base and blob(root, entry.base, entry.path)
-			add_diff({}, entry.path, old_text)
+			add_diff({}, entry.path)
 		end
 	end
 	return totals
@@ -219,14 +187,12 @@ function M.snapshot(root, entry, buffer_text)
 		new = buffer_text or worktree(root, entry.path):gsub("\r\n", "\n")
 		old, patch = new, ""
 	elseif entry.group == "untracked" then
-		old = entry.base and blob(root, entry.base, entry.path) or ""
+		old = ""
 		new = worktree(root, entry.path)
 		patch = vim.diff(old, new, { result_type = "unified", ctxlen = 3 })
 	else
 		if entry.group == "branch" then
 			old, new = blob(root, entry.base, entry.path), blob(root, entry.head, entry.path)
-		elseif entry.group == "worktree" then
-			old, new = blob(root, entry.base, entry.path), worktree(root, entry.path)
 		else
 			old = blob(root, entry.group == "staged" and "HEAD" or "", entry.path)
 			new = entry.group == "staged" and blob(root, "", entry.path) or worktree(root, entry.path)
@@ -235,8 +201,6 @@ function M.snapshot(root, entry, buffer_text)
 			{ "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", "--binary", "--unified=3" }
 		if entry.group == "branch" then
 			vim.list_extend(args, { entry.base, entry.head })
-		elseif entry.group == "worktree" then
-			table.insert(args, entry.base)
 		elseif entry.group == "staged" then
 			table.insert(args, "--cached")
 		end

@@ -195,9 +195,6 @@ function M.open(root, opts)
 
 	local function paint_endpoints()
 		local function label(sha, ref)
-			if not sha then
-				return "Working files"
-			end
 			if not ref or vim.startswith(sha, ref) then
 				return sha:sub(1, 8)
 			end
@@ -417,10 +414,8 @@ function M.open(root, opts)
 			"--abbrev=8",
 			"--format=%x00%H%x00%h%x00%an%x00%ad%x00%D%x00%s%x00%ae%n",
 			comparison.base,
+			comparison.head,
 		}
-		if comparison.head then
-			table.insert(args, comparison.head)
-		end
 		if extra then
 			table.insert(args, extra)
 		end
@@ -501,10 +496,6 @@ function M.open(root, opts)
 
 	local function assign(endpoint)
 		if not selected then
-			return
-		end
-		if endpoint == "head" and opts.worktree then
-			vim.notify(":git base compares against working files. Use :git diff to select two commits")
 			return
 		end
 		comparison[endpoint], comparison[endpoint .. "_ref"] = selected.sha, selected.short

@@ -26,7 +26,7 @@ local function compare(args)
 				require("rediff.branch_stack").discover(
 					directory,
 					comparison.base_ref or comparison.base,
-					comparison.head_ref or comparison.head or "HEAD"
+					comparison.head_ref or comparison.head
 				)
 			else
 				stack.set(directory, { comparison })
@@ -40,15 +40,8 @@ local function compare(args)
 			comparison.base = git.comparison(directory, args[2]).base
 			comparison.base_ref = args[2]
 		end
-		if action == "base" then
-			comparison.head, comparison.head_ref = nil, nil
-		elseif not comparison.head then
-			comparison.head = git.comparison(directory, "HEAD").base
-			comparison.head_ref = "HEAD"
-		end
 		require("rediff.ref_picker").open(directory, {
 			comparison = comparison,
-			worktree = action == "base",
 			on_select = open,
 		})
 		return
@@ -63,12 +56,17 @@ local function compare(args)
 		review.open(directory)
 		return
 	end
-	open(git.comparison(directory, args[2], args[3]))
+	local current = review.state and review.state.comparison
+	local comparison = git.comparison(directory, args[2], args[3])
+	if action == "base" and current then
+		comparison.head, comparison.head_ref = current.head, current.head_ref
+	end
+	open(comparison)
 end
 
 local function scope()
 	local directory = root()
-	local choices = { "Local changes", "Compare with working files", "Compare two commits" }
+	local choices = { "Local changes", "Compare two commits" }
 	require("fzf-lua").fzf_exec(choices, {
 		prompt = "Review scope> ",
 		winopts = { width = 0.55, height = 0.3 },
@@ -84,7 +82,7 @@ local function scope()
 					if choice == choices[1] then
 						review.open(directory)
 					else
-						compare({ choice == choices[2] and "base" or "diff" })
+						compare({ "diff" })
 					end
 				end)
 			end,
@@ -142,7 +140,7 @@ local function details()
 		index and string.format("Comparison %d of %d", index, count) or "Comparison",
 		"",
 		"OLD  " .. comparison.base,
-		"NEW  " .. (comparison.head or "WORKTREE (saved staged, unstaged, and untracked files)"),
+		"NEW  " .. comparison.head,
 		"",
 		"Checkout: " .. git.reference(s.root),
 		"Worktree: " .. s.root,
@@ -171,7 +169,7 @@ local actions = {
 		run = compare,
 		arguments = true,
 		usage = "base [BASE|reset]",
-		description = "Compare a ref to working files, or reset to local Review",
+		description = "Change the comparison base, or reset to local Review",
 	},
 	diff = {
 		run = compare,

@@ -102,8 +102,8 @@ You can also type any expression that Git resolves to a commit.
 
 SCOPE AND HISTORY
 
-Space gs or :git scope chooses Local changes, a ref compared with working files,
-or two commits. Comparison choices open the same ref picker as :git base,
+Space gs or :git scope chooses Local changes or Compare two commits.
+Commit comparisons open the same ref picker as :git base,
 :git diff, and Space gh / :git history. :git diff BASE prefills the base.
 
 Type to fuzzy-find subjects, authors, dates, refs, or SHAs in the left results.
@@ -121,9 +121,8 @@ Ctrl-b assigns the browsed commit as BASE, Ctrl-t assigns TARGET, and Ctrl-y
 applies both choices. Gold rows mark the base, cyan rows mark the target, and a
 lavender underline marks the browsing cursor. If both endpoints are the same
 commit, its row uses both colors. Endpoint labels stay in the header.
-:git base keeps the target on Working files. History starts with the current
-comparison, or HEAD and Working files from Local changes. :git diff starts with
-the current commit endpoints, using HEAD when the target was Working files.
+The picker starts with the current comparison's commits, or HEAD for both
+endpoints from Local changes. Both endpoints can be changed in every picker.
 Escape cancels all pending choices. Browsing and choosing endpoints preserve the
 checkout, refs, index, and working files. The picker needs an 80×24 terminal.
 
@@ -188,14 +187,13 @@ to load updated PRs.
 
 BASE DIFF MODE
 
-:git base BASE compares a commit against the saved working tree, including
-staged, unstaged, and untracked changes in one WORKTREE group. For example,
-:git base HEAD~1 includes the last commit and your local changes. :git base HEAD
-shows local changes against HEAD. Save editor buffers to include their edits.
+:git base BASE changes the comparison's base while keeping its target commit.
+From Local changes, the target is HEAD. For example, :git base HEAD~1 reviews
+the last commit. Unfinished edits remain in Local changes.
 :git base without arguments opens the ref picker. Scripts use :Git base BASE.
 
-The base uses the commit resolved when opened. Live refresh and Space R update the
-working-tree side. Repeating :git base BASE resolves the base again and refreshes.
+Both endpoints stay pinned to their resolved commits. :git refresh-refs resolves
+their refs again. Repeating :git base BASE resolves only the base again.
 Split/merged views, navigation, filtering, and annotations work as in Review.
 :git base reset returns to Local changes, following HEAD with separate staged
 and unstaged groups, staging, and reverting. It has the same effect as :Review.
@@ -817,7 +815,7 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
 
   :Review / :ReviewLeave       Enter worktree Review / leave Review
   :Git diff [BASE [TARGET]]   Compare two refs, picking missing endpoints
-  :Git base [BASE|reset]      Compare working files, pick base, or return to Review
+  :Git base [BASE|reset]      Change/pick comparison base, or return to Review
   :Git comparison            Show refs, commit IDs, checkout, and harness
   :Git scope                 Choose Local changes or an explicit comparison
   :Git history               Browse commits and choose a comparison endpoint

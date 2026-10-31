@@ -67,10 +67,8 @@ Omit refs from `:git diff` or `:git base` to open the searchable commit graph.
 Typed **`:gd BASE TARGET`** is a shortcut for `:git diff`, both inside and outside
 Review. Normal-mode `gd` is unchanged. Scripts should use `:Git diff` directly.
 
-**`:git base BASE`** compares a commit against saved working-tree files, including
-staged, unstaged, and untracked changes. **`:git base HEAD`** shows local changes
-against HEAD. Save editor buffers to include their edits. Scripts use
-`:Git base BASE`.
+Use **`:git base BASE`** to change only the base of a commit comparison.
+See **`:help rediff` → Base diff mode** for its target and reset behavior.
 
 **Right-click a path** in either tree and choose **Copy Relative Path** from the
 context menu to copy its repository-relative path to the system clipboard.

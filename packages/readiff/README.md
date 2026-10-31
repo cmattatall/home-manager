@@ -211,7 +211,7 @@ ancestry is ambiguous. To supply every endpoint yourself, use
 **Space gu/gd** moves up/down its adjacent comparisons without checking out code.
 `:git stack` chooses a loaded comparison, **Space gc** shows its endpoints, and
 **Space gD** prompts for a new pair. Find these actions in **Space p**.
-See `:help rediff-review` for ref refresh, working-tree comparisons, and stack
+See `:help rediff-review` for ref refresh, commit comparisons, and stack
 lifetime. Notes and feedback are shared across comparisons in a worktree.
 
 For a live Amp session, `:harness install amp` installs the readiff and desloppify
