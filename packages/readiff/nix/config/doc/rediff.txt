@@ -77,20 +77,22 @@ The bottom bar shows the branch (or detached @short-SHA), harness and delivery.
 
 COMPARING GIT REFS
 
-:git diff BASE TARGET compares two commits, with BASE on the OLD side and
-TARGET on the NEW side. Use full/short SHAs, branches, tags, remote-tracking refs,
-or expressions like HEAD~2. Omit either argument to open the ref picker below.
+:git diff BASE TARGET compares two snapshots, with BASE on the left and
+TARGET on the right. The pane headings show the selected refs. Use full/short
+SHAs, branches, tags, remote-tracking refs, or expressions like HEAD~2.
+Index and Changes are also available, as described under Git refs below.
+Omit either argument to open the Git refs page.
 For example: :git diff main HEAD or :git diff a1b2c3d e4f5a6b.
 Typed :gd BASE TARGET is a shortcut, in Review or ordinary editing.
 Scripts should use :Git diff. Normal-mode gd still finds symbol definitions.
 This is an exact endpoint diff, not a merge-base (three-dot) comparison.
-Both refs are resolved to fixed SHAs when opened. Space R refreshes those same
+Commit refs are resolved to fixed SHAs when opened. Space R refreshes those same
 commits. :git refresh-refs resolves the current comparison's expressions again.
-Local staged, unstaged, and untracked changes are excluded. Renames appear as a
+Comparisons between two commits exclude local changes. Renames appear as a
 deletion and addition.
 Split/merged views, file/hunk navigation, filtering, and annotations work as in
-Review. Staging, reverting, and :fs/:fu are unavailable here. :Review returns to
-worktree changes; Space q leaves for editing. Notes retain their commit snapshots.
+Review. Historical comparisons disable staging, reverting, and :fs/:fu. :Review
+returns to worktree changes. Space q leaves for editing. Notes retain their snapshots.
 
 The file list shows Base and Target with pinned commit IDs and input refs.
 The statusline labels the checked-out branch separately.
@@ -100,10 +102,10 @@ Space p lists searchable Git actions with descriptions and keyboard shortcuts.
 Tab completes branches, tags, and remote-tracking refs in comparison commands.
 You can also type any expression that Git resolves to a commit.
 
-COMPARISON PICKER
+GIT REFS
 
-Space gs or :git scope opens the snapshot picker directly. :git base and
-:git diff use the same picker.
+Space gs or :git scope opens the Git refs page. :git base and :git diff use
+the same page when refs are missing.
 :git diff BASE prefills the base.
 
 Changes and Index appear as diamond nodes above the checked-out HEAD:
@@ -114,8 +116,11 @@ Choose Index → Changes to review unstaged edits and untracked files, or
 HEAD → Index to review staged changes. These views refresh live and support
 staging, unstaging, and reverting. :fs and :fu switch between them. :Review
 returns to the combined Staged/Unstaged sidebar.
-Choose two commits for a pinned historical comparison. Local comparisons use
-the two adjacent pairs above, keeping committed work separate from local edits.
+Any two snapshots can be compared in either direction, including commits
+against Index or Changes. Commit endpoints stay pinned, while Index and Changes
+refresh live. For example, :git diff main changes includes committed and local
+edits since main, and :git diff main index compares main with the staged snapshot.
+Staging and reverting are available only in the adjacent local views above.
 
 Type to fuzzy-find subjects, authors, dates, refs, or SHAs in the left results.
 The right graph keeps all history, including nonmatching commits and connectors.
@@ -129,19 +134,18 @@ The detail pane shows full refs, the complete commit message including its
 body, and changed files. Scroll over that pane to read longer messages.
 
 Ctrl-b assigns the browsed snapshot as BASE and Ctrl-t assigns TARGET. Each
-valid pair immediately updates the review's files and hunks. Escape closes the
+selection immediately updates the review's files and hunks. Escape closes the
 picker. In the graph, q also closes it. Gold rows mark the base, cyan rows mark
 the target, and a lavender underline marks the browsing cursor. If both endpoints
-are the same commit, its row has a neutral highlight. Endpoint labels stay in the
+are the same snapshot, its row has a neutral highlight. Endpoint labels stay in the
 header.
 Scope starts with the current comparison, defaulting to Index → Changes.
 :git base and :git diff retain an existing commit comparison. From local
 review they start at HEAD → HEAD, so choosing a base compares it with HEAD.
 Both endpoints can be changed in the picker.
-Browsing without assigning an endpoint leaves the review unchanged. Invalid
-pairs show guidance and keep the last valid diff. Browsing and choosing endpoints
-preserve the checkout, refs, index, and working files. The picker needs an 80×24
-terminal.
+Browsing without assigning an endpoint leaves the review unchanged.
+Browsing and choosing endpoints preserve the checkout, refs, index, and working
+files. The picker needs an 80×24 terminal.
 
 COMPARISON STACKS
 
@@ -834,7 +838,7 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
   :Git diff [BASE [TARGET]]   Compare two refs, picking missing endpoints
   :Git base [BASE|reset]      Change/pick comparison base, or return to Review
   :Git comparison            Show refs, commit IDs, checkout, and harness
-  :Git scope                 Choose local snapshots or commit endpoints
+  :Git scope                 Open Git refs to choose comparison endpoints
   :Git stack [REF REF ...]    Choose or define adjacent comparisons
   :Git branch-stack [BASE [TIP]] Discover branch tips by Git ancestry, or pick refs
   :Git pr-stack              Discover published GitHub PR stacks

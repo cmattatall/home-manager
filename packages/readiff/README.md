@@ -201,8 +201,8 @@ PATH precedence, and integration with an existing home configuration.
    files with unstaged edits must be unstaged first.
 
 Review starts with **Local changes**, grouped into Staged and Unstaged.
-Use **Space gs** or `:git scope` to browse commits and choose local snapshots
-or commit endpoints to review.
+Use **Space gs** or `:git scope` to open **Git refs** and compare commits,
+Index, or Changes in either direction. Each endpoint selection updates the diff viewer.
 Use **Space gS** or `:git pr-stack` to discover published GitHub PR stacks.
 For manually stacked branches, use `:git branch-stack main HEAD` to discover
 their order from Git ancestry, without GitHub. Choose a parent when merge

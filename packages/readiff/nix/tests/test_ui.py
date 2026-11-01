@@ -875,14 +875,10 @@ class EditorUI(unittest.TestCase):
         self.keys(editor, "=HEAD~1")
         self.keys(editor, "<C-b>")
         self.assertEqual("rediff-ref-search", editor.current.buffer.options["filetype"])
-        header = next(
-            buf for buf in editor.buffers
-            if buf.valid and buf.options["filetype"] == "rediff-ref-header"
-        )
-        self.assertIn("Choose Index", "\n".join(header[:]))
-        self.assertEqual(["unstaged"], self.lua(editor, "return s.groups"))
+        self.assertEqual([base, "changes"], self.lua(editor, "return {s.comparison.base, s.comparison.head}"))
+        self.assertEqual(5, self.lua(editor, "return #s.entries"))
         self.keys(editor, "<Esc>")
-        self.assertEqual(["unstaged"], self.lua(editor, "return s.groups"))
+        self.assertEqual(["branch"], self.lua(editor, "return s.groups"))
 
         self.keys(editor, " gs")
         self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
@@ -915,6 +911,158 @@ class EditorUI(unittest.TestCase):
         self.assertFalse(Path(self.root, "draft.txt").exists())
         self.keys(editor, ":Review<CR>")
         self.assertIsNone(self.lua(editor, "return s.comparison"))
+
+    def test_git_refs_compares_commit_index_and_working_snapshots(self):
+        def git(*args):
+            return subprocess.check_output(
+                ["git", "-C", self.root, *args], text=True
+            ).strip()
+
+        git("add", "-A")
+        Path(self.root, "sample.txt").write_text("base\n")
+        Path(self.root, "restored.txt").write_text("keep\n")
+        git("add", "sample.txt", "restored.txt")
+        git("commit", "-qm", "Comparison base")
+        git("tag", "snapshot-base")
+        base = git("rev-parse", "HEAD")
+        Path(self.root, "sample.txt").write_text("tip\n")
+        git("rm", "-q", "restored.txt")
+        git("add", "sample.txt")
+        git("commit", "-qm", "Comparison tip")
+        tip = git("rev-parse", "HEAD")
+        Path(self.root, "sample.txt").write_text("staged\n")
+        Path(self.root, "staged.txt").write_text("staged addition\n")
+        git("add", "sample.txt", "staged.txt")
+        Path(self.root, "sample.txt").write_text("working\nextra\n")
+        Path(self.root, "restored.txt").write_text("keep\n")
+        Path(self.root, ":(glob)draft.txt").write_text("untracked\n")
+        Path(self.root, "empty.txt").touch()
+        original = checkout_state(self.root)
+        editor = self.launch(self.root)
+
+        def select_sample():
+            self.lua(editor, """
+                for i, entry in ipairs(s.entries) do
+                    if entry.path == 'sample.txt' then r.show(i); return end
+                end
+                error('Missing sample.txt')
+            """)
+
+        snapshots = {
+            base: {"sample.txt": "base\n", "restored.txt": "keep\n"},
+            tip: {"sample.txt": "tip\n"},
+            "index": {"sample.txt": "staged\n", "staged.txt": "staged addition\n"},
+            "changes": {
+                "sample.txt": "working\nextra\n",
+                "staged.txt": "staged addition\n",
+                "restored.txt": "keep\n",
+                ":(glob)draft.txt": "untracked\n",
+                "empty.txt": "",
+            },
+        }
+        for old_ref, old_files in snapshots.items():
+            for new_ref, new_files in snapshots.items():
+                with self.subTest(base=old_ref, target=new_ref):
+                    expected = {}
+                    added, deleted = 0, 0
+                    for path in old_files.keys() | new_files.keys():
+                        old, new = old_files.get(path, ""), new_files.get(path, "")
+                        existence_changed = (path in old_files) != (path in new_files)
+                        if old != new or existence_changed:
+                            expected[path] = [old, new]
+                            deleted += len(old.splitlines())
+                            added += len(new.splitlines())
+                    actual = editor.exec_lua(
+                        """
+                        local git = require('rediff.git')
+                        local root, base, head = ...
+                        local comparison = {base=base, head=head}
+                        local entries = git.entries(root, comparison)
+                        local contents = vim.empty_dict()
+                        for _, entry in ipairs(entries) do
+                            local snapshot = git.snapshot(root, entry)
+                            contents[entry.path] = {snapshot.old, snapshot.new}
+                        end
+                        return {contents, git.line_totals(root, entries, comparison)}
+                    """,
+                        self.root,
+                        old_ref,
+                        new_ref,
+                    )
+                    self.assertEqual(
+                        [expected, {"added": added, "deleted": deleted}], actual
+                    )
+
+        self.keys(editor, " gs")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+        self.keys(editor, "=snapshot-base")
+        self.keys(editor, "<C-b>")
+        self.assertEqual(
+            [base, "changes"],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+        )
+        self.assertEqual(
+            [":(glob)draft.txt", "empty.txt", "sample.txt", "staged.txt"],
+            self.lua(
+                editor,
+                """
+            return vim.tbl_map(function(entry) return entry.path end, s.entries)
+        """,
+            ),
+        )
+        self.keys(editor, "<Esc>")
+        select_sample()
+        self.assertEqual(
+            ["base\n", "working\nextra\n"],
+            self.lua(editor, "return {s.current.old, s.current.new}"),
+        )
+        self.assertEqual(
+            " Changes ", self.lua(editor, "return vim.wo[s.new_win].winbar")
+        )
+        Path(self.root, "sample.txt").write_text("live worktree\n")
+        self.wait_for(editor, "s.current.new == 'live worktree\\n'")
+        self.keys(editor, " gs")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
+        self.keys(editor, "Index")
+        self.keys(editor, "<C-t>")
+        self.assertEqual(
+            [base, "index"],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+        )
+        select_sample()
+        self.assertEqual(
+            ["base\n", "staged\n"],
+            self.lua(editor, "return {s.current.old, s.current.new}"),
+        )
+        self.keys(editor, "<Esc>")
+        git("add", "sample.txt")
+        self.wait_for(editor, "s.current.new == 'live worktree\\n'")
+        self.keys(editor, ":git refresh-refs<CR>")
+        self.assertEqual(
+            [base, "index"],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+        )
+        self.keys(editor, ":ReviewStage file<CR>")
+        self.assertIn("Staging is unavailable", editor.vars["startup_notice"])
+        self.assertEqual(original["head"], checkout_state(self.root)["head"])
+        self.assertEqual("live worktree", git("show", ":sample.txt"))
+
+        self.keys(editor, ":git diff changes snapshot-base<CR>")
+        select_sample()
+        self.assertEqual(
+            ["changes", base],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+        )
+        self.assertEqual(
+            ["live worktree\n", "base\n"],
+            self.lua(editor, "return {s.current.old, s.current.new}"),
+        )
+        self.keys(editor, ":git base index<CR>")
+        self.assertEqual(
+            ["index", base],
+            self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
+        )
+        self.assertEqual(" Index ", self.lua(editor, "return vim.wo[s.old_win].winbar"))
 
     def test_scope_selects_pinned_endpoints_without_changing_checkout(self):
         def git(*args):
@@ -1386,7 +1534,7 @@ class EditorUI(unittest.TestCase):
             )
             self.assertIn("committed.txt", summary)
         self.assertEqual(
-            f" NEW · {head[:12]} ", self.lua(editor, "return vim.wo[s.new_win].winbar")
+            f" {head[:12]} (HEAD) ", self.lua(editor, "return vim.wo[s.new_win].winbar")
         )
         self.assertIn(base[:12], self.lua(editor, "return vim.wo[s.old_win].winbar"))
         self.keys(editor, ":ReviewStage file<CR>")
@@ -3761,6 +3909,14 @@ class EditorUI(unittest.TestCase):
         blame(4, "Second Author")
         full_blame([pending, pending, "First Author", "Second Author", pending])
         blame(1, "Not committed yet")
+        for local_ref, line in (("index", 3), ("changes", 4)):
+            editor.command(f"Git diff {committed} {local_ref}")
+            source("branch", "new")
+            blame(line, "Second Author")
+            blame(1, "Not committed yet")
+        editor.command("Review")
+        self.lua(editor, "require('rediff.live').stop(s)")
+        source("unstaged", "new")
         self.assertEqual(index, git("write-tree"))
         # A saved snapshot must retain its history even after HEAD moves.
         path.write_text("a completely different committed file\n")
@@ -4051,6 +4207,18 @@ class EditorUI(unittest.TestCase):
         copy_tree("auth.lua", url + base + "/auth.lua")
         copy_tree("plan.md", "unchanged")
         self.assertIn("no committed version", editor.vars["startup_notice"])
+
+        subprocess.run(["git", "-C", self.root, "add", "auth.lua"], check=True)
+        for local_ref in ("index", "changes"):
+            editor.command(f"Git diff {base} {local_ref}")
+            self.lua(editor, """
+                for i, entry in ipairs(s.entries) do
+                    if entry.path == 'auth.lua' then r.show(i); break end
+                end
+            """)
+            copy_line("old", url + base + "/auth.lua#L5")
+            copy_line("new", "unchanged", "uncommitted changes")
+            copy_tree("auth.lua", url + base + "/auth.lua")
 
         subprocess.run(["git", "-C", self.root, "add", "-A"], check=True)
         subprocess.run(
@@ -10793,8 +10961,8 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
                 for win in windows:
                     self.assertNotIn(Path(name).name, header(win))
                 if layout == "split":
-                    self.assertEqual(" NEW · WORKTREE ", header(windows[0]))
-                    self.assertEqual(" OLD · INDEX ", header(windows[1]))
+                    self.assertEqual(" Changes ", header(windows[0]))
+                    self.assertEqual(" Index ", header(windows[1]))
                 else:
                     self.assertEqual(
                         "", editor.api.get_option_value("winbar", {"win": windows[0]})

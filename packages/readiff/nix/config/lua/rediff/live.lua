@@ -73,7 +73,7 @@ end
 function M.start(s)
 	-- Replace timers so restarting cannot duplicate polling or queued event checks.
 	M.stop(s)
-	local commit_comparison = s.comparison and not require("rediff.git").local_group(s.comparison)
+	local commit_comparison = not require("rediff.git").is_live(s.comparison)
 	if commit_comparison or #api.nvim_list_uis() == 0 then
 		return
 	end

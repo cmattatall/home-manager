@@ -53,7 +53,8 @@ reason and leaves ordinary editing available. Startup never sends feedback.
 
 To compare two commits, enter **`:git diff BASE TARGET`**, for example
 `:git diff main HEAD` or `:git diff HEAD~3 HEAD~1`. Full and abbreviated SHAs,
-branches, and tags are accepted. OLD shows BASE; NEW shows TARGET. This compares
+branches, and tags are accepted. The panes show the selected ref names and SHAs.
+The left pane shows BASE and the right shows TARGET. This compares
 the two endpoints directly, not their merge base, and excludes local changes.
 Both refs are pinned to SHAs until you run `:git diff` again. Split/merged views,
 navigation, filtering, and annotations remain available; staging and reverting
@@ -61,8 +62,9 @@ are disabled. Renames appear as a deletion and addition. **`:Review`** returns
 to staged/unstaged worktree changes, preserving notes and their original snapshots.
 
 Omit refs from `:git diff` or `:git base` to open the searchable commit graph.
-**Space gs** opens the picker directly. See
-**`:help rediff` → Comparison picker** for local snapshots, selection keys, and
+**Space gs** opens the **Git refs** page directly. Choose commits, Index, or
+Changes for either endpoint. Each selection immediately updates the diff viewer.
+See **`:help rediff` → Git refs** for local snapshots, selection keys, and
 graph colors.
 
 Typed **`:gd BASE TARGET`** is a shortcut for `:git diff`, both inside and outside

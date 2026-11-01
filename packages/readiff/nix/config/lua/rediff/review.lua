@@ -607,17 +607,17 @@ function M.show(index, snapshot, keep_fold)
 		s.diff = assert(require("codediff.core.diff").compute_diff(old_lines, new_lines, renderer.diff_options()))
 		require("codediff.ui.inline").render_inline_diff(s.new_buf, s.diff, old_lines, new_lines, { filetype = ft })
 	else
-		local old_label, new_label = "INDEX", "WORKTREE"
+		local old_label, new_label = "Index", "Changes"
 		if snapshot.group == "branch" then
-			old_label = snapshot.base:sub(1, 12)
-			new_label = snapshot.head:sub(1, 12)
+			old_label = git.endpoint_label(snapshot.base, snapshot.base_ref)
+			new_label = git.endpoint_label(snapshot.head, snapshot.head_ref)
 		elseif buffer_snapshot then
 			old_label, new_label = "BUFFER", "BUFFER"
 		elseif snapshot.group == "staged" then
-			old_label, new_label = "HEAD", "INDEX"
+			old_label, new_label = "HEAD", "Index"
 		end
-		vim.wo[s.old_win].winbar = " OLD · " .. old_label .. " "
-		vim.wo[s.new_win].winbar = " NEW · " .. new_label .. " "
+		vim.wo[s.old_win].winbar = " " .. vim.fn.strtrans(old_label):gsub("%%", "%%%%") .. " "
+		vim.wo[s.new_win].winbar = " " .. vim.fn.strtrans(new_label):gsub("%%", "%%%%") .. " "
 		s.diff = renderer.compute_and_render(
 			s.old_buf,
 			s.new_buf,
@@ -801,6 +801,9 @@ function M.refresh(preferred, changes)
 			end
 		end
 		local label = group == "branch" and "COMMITS" or group:upper()
+		if group == "branch" and git.is_live(s.comparison) then
+			label = "FILES"
+		end
 		table.insert(lines, string.format(" ▾ %s (%d)", label, count))
 		s.group_rows[group] = #lines
 		for i, entry in ipairs(s.entries) do
@@ -894,7 +897,7 @@ function M.refresh(preferred, changes)
 				vim.wo[s.old_win].winbar = ""
 			end
 		elseif s.comparison and not git.local_group(s.comparison) then
-			vim.wo[s.new_win].winbar = " No differences between commits "
+			vim.wo[s.new_win].winbar = " No differences between selected refs "
 			if s.old_win then
 				vim.wo[s.old_win].winbar = ""
 			end

@@ -29,13 +29,24 @@ end
 local function blob(root, revision, path)
 	local text, code = M.run(root, { "show", revision .. ":" .. path }, nil, true)
 	if code ~= 0 then
-		return ""
+		return "", false
 	end
-	return text
+	return text, true
+end
+
+function M.is_local(ref)
+	return ref == "index" or ref == "changes"
+end
+
+function M.is_live(comparison)
+	return not comparison or M.is_local(comparison.base) or M.is_local(comparison.head)
 end
 
 function M.comparison(root, base, head)
 	local function resolve(ref)
+		if M.is_local(ref) then
+			return ref
+		end
 		return vim.trim(M.run(root, { "rev-parse", "--verify", "--end-of-options", ref .. "^{commit}" }))
 	end
 	head = head or "HEAD"
@@ -83,27 +94,94 @@ function M.refs(root, lead)
 	end, refs)
 end
 
+local function comparison_arguments(comparison)
+	local base, head = comparison.base, comparison.head
+	local args = {}
+	if base == "changes" or (base == "index" and head ~= "changes") then
+		base, head = head, base
+		table.insert(args, "-R")
+	end
+	if head == "changes" then
+		if base ~= "index" then
+			table.insert(args, base)
+		end
+	elseif head == "index" then
+		vim.list_extend(args, { "--cached", base })
+	else
+		vim.list_extend(args, { base, head })
+	end
+	return args
+end
+
+local function worktree(root, path)
+	local file = root .. "/" .. path
+	local stat = vim.uv.fs_lstat(file)
+	if not stat then
+		return "", false
+	end
+	assert(stat.type == "file", "Review currently supports regular files only: " .. path)
+	assert(stat.size <= 2 * 1024 * 1024, "File exceeds the 2 MiB review limit: " .. path)
+	local fd = assert(vim.uv.fs_open(file, "r", 0))
+	local data = assert(vim.uv.fs_read(fd, stat.size, 0))
+	assert(vim.uv.fs_close(fd))
+	return data, true
+end
+
+local function endpoint_content(root, ref, path)
+	if ref == "changes" then
+		return worktree(root, path)
+	end
+	return blob(root, ref == "index" and "" or ref, path)
+end
+
 function M.entries(root, comparison)
 	local local_group = M.local_group(comparison)
-	if not comparison or local_group then
+	if M.is_live(comparison) then
 		assert(
 			#paths(root, { "diff", "--name-only", "--diff-filter=U", "-z" }) == 0,
 			"Resolve merge conflicts before entering Review"
 		)
 	end
 	if comparison and not local_group then
-		local args = { "diff", "--name-status", "--no-renames", "-z", comparison.base, comparison.head, "--" }
+		if comparison.base == comparison.head then
+			return {}
+		end
+		local args = { "diff", "--name-status", "--no-renames", "-z" }
+		vim.list_extend(args, comparison_arguments(comparison))
+		table.insert(args, "--")
 		local fields = paths(root, args)
-		local result = {}
+		local statuses = {}
 		for i = 1, #fields, 2 do
-			local entry = {
-				path = fields[i + 1],
+			statuses[fields[i + 1]] = fields[i]
+		end
+		if comparison.base == "changes" or comparison.head == "changes" then
+			for _, path in ipairs(paths(root, { "ls-files", "--others", "--exclude-standard", "-z" })) do
+				local old, old_exists = endpoint_content(root, comparison.base, path)
+				local new, new_exists = endpoint_content(root, comparison.head, path)
+				if old == new and old_exists == new_exists then
+					statuses[path] = nil
+				elseif not old_exists then
+					statuses[path] = "A"
+				elseif not new_exists then
+					statuses[path] = "D"
+				else
+					statuses[path] = "M"
+				end
+			end
+		end
+		local names = vim.tbl_keys(statuses)
+		table.sort(names)
+		local result = {}
+		for _, path in ipairs(names) do
+			table.insert(result, {
+				path = path,
 				group = "branch",
-				status = fields[i],
+				status = statuses[path],
 				base = comparison.base,
 				head = comparison.head,
-			}
-			table.insert(result, entry)
+				base_ref = comparison.base_ref,
+				head_ref = comparison.head_ref,
+			})
 		end
 		return result
 	end
@@ -144,6 +222,19 @@ end
 
 function M.line_totals(root, entries, comparison)
 	local totals = { added = 0, deleted = 0 }
+	if comparison and M.is_live(comparison) and not M.local_group(comparison) then
+		for _, entry in ipairs(entries) do
+			local old = endpoint_content(root, comparison.base, entry.path)
+			local new = endpoint_content(root, comparison.head, entry.path)
+			if not old:find("\0", 1, true) and not new:find("\0", 1, true) then
+				for _, hunk in ipairs(vim.diff(old, new, { result_type = "indices" })) do
+					totals.added = totals.added + hunk[4]
+					totals.deleted = totals.deleted + hunk[2]
+				end
+			end
+		end
+		return totals
+	end
 	local function add_diff(revisions, untracked_path)
 		local args = { "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--numstat", "-z" }
 		if untracked_path then
@@ -186,20 +277,6 @@ function M.line_totals(root, entries, comparison)
 	return totals
 end
 
-local function worktree(root, path)
-	local file = root .. "/" .. path
-	local stat = vim.uv.fs_lstat(file)
-	if not stat then
-		return ""
-	end
-	assert(stat.type == "file", "Review currently supports regular files only: " .. path)
-	assert(stat.size <= 2 * 1024 * 1024, "File exceeds the 2 MiB review limit: " .. path)
-	local fd = assert(vim.uv.fs_open(file, "r", 0))
-	local data = assert(vim.uv.fs_read(fd, stat.size, 0))
-	assert(vim.uv.fs_close(fd))
-	return data
-end
-
 function M.lines(text)
 	local lines = vim.split(text, "\n", { plain = true })
 	if lines[#lines] == "" then
@@ -220,7 +297,8 @@ function M.snapshot(root, entry, buffer_text)
 		patch = vim.diff(old, new, { result_type = "unified", ctxlen = 3 })
 	else
 		if entry.group == "branch" then
-			old, new = blob(root, entry.base, entry.path), blob(root, entry.head, entry.path)
+			old = endpoint_content(root, entry.base, entry.path)
+			new = endpoint_content(root, entry.head, entry.path)
 		else
 			old = blob(root, entry.group == "staged" and "HEAD" or "", entry.path)
 			new = entry.group == "staged" and blob(root, "", entry.path) or worktree(root, entry.path)
@@ -233,7 +311,11 @@ function M.snapshot(root, entry, buffer_text)
 			table.insert(args, "--cached")
 		end
 		vim.list_extend(args, { "--", entry.path })
-		patch = M.run(root, args)
+		if entry.group == "branch" and M.is_live(entry) then
+			patch = vim.diff(old, new, { result_type = "unified", ctxlen = 3 })
+		else
+			patch = M.run(root, args)
+		end
 	end
 	assert(not old:find("\0", 1, true) and not new:find("\0", 1, true), "Binary files cannot be annotated")
 	assert(#old <= 2 * 1024 * 1024 and #new <= 2 * 1024 * 1024, "File exceeds the 2 MiB review limit")
@@ -250,6 +332,8 @@ function M.snapshot(root, entry, buffer_text)
 		group = entry.group,
 		base = entry.base,
 		head = head,
+		base_ref = entry.base_ref,
+		head_ref = entry.head_ref,
 		old = old,
 		new = new,
 		patch = patch,

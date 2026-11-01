@@ -115,19 +115,19 @@ local function details()
 	assert(s and s.comparison, "Open a comparison with :git diff or :git base first")
 	local comparison = s.comparison
 	local index, count = stack.position(s.root, comparison)
-	local local_group = git.local_group(comparison)
+	local live = git.is_live(comparison)
 	local lines = {
 		git.comparison_label(comparison),
 		index and string.format("Comparison %d of %d", index, count) or "Comparison",
 		"",
-		"OLD  " .. (local_group and git.endpoint_label(comparison.base) or comparison.base),
-		"NEW  " .. (local_group and git.endpoint_label(comparison.head) or comparison.head),
+		"OLD  " .. (git.is_local(comparison.base) and git.endpoint_label(comparison.base) or comparison.base),
+		"NEW  " .. (git.is_local(comparison.head) and git.endpoint_label(comparison.head) or comparison.head),
 		"",
 		"Checkout: " .. git.reference(s.root),
 		"Worktree: " .. s.root,
 		require("rediff.harness").statusline(s.root),
 		"",
-		local_group and "Local snapshots refresh as files and the index change."
+		live and "Local snapshots refresh as files and the index change."
 			or comparison.pr and ":git pr-stack reloads comparisons from GitHub."
 			or ":git refresh-refs resolves the input refs again.",
 		"Notes and feedback remain shared within this worktree.",
@@ -168,7 +168,7 @@ local actions = {
 	},
 	scope = {
 		run = scope,
-		description = "Choose local snapshots or commit endpoints",
+		description = "Open Git refs to choose comparison endpoints",
 		key = "gs",
 	},
 	["pr-stack"] = {

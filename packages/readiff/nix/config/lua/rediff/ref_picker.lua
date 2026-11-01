@@ -29,7 +29,7 @@ function M.open(root, opts)
 		active()
 	end
 	if vim.o.columns < 80 or vim.o.lines < 24 then
-		vim.notify("The ref picker needs at least 80 columns and 24 lines", vim.log.levels.WARN)
+		vim.notify("Git refs needs at least 80 columns and 24 lines", vim.log.levels.WARN)
 		return
 	end
 	local comparison = vim.deepcopy(opts.comparison)
@@ -147,7 +147,7 @@ function M.open(root, opts)
 		local content_height = height - 10
 		local results_height = math.max(3, math.min(#matches * 3, math.floor(content_height * 0.3)))
 		pane("background", "", 0, 0, vim.o.columns, vim.o.lines - 1)
-		pane("header", "", top, left, panel_width, 3)
+		pane("header", "Git refs", top, left, panel_width, 3)
 		pane("sidebar", "Find snapshots", content_row, left, sidebar_width, content_height)
 		pane("search", "", content_row + 2, left + 2, sidebar_width - 4, 1)
 		pane("results", "", content_row + 6, left + 2, sidebar_width - 2, results_height)
@@ -199,20 +199,6 @@ function M.open(root, opts)
 		jobs[job] = true
 	end
 
-	local function selection_error()
-		if comparison.base == "index" and comparison.head == "changes" then
-			return
-		end
-		if comparison.head == "index" and comparison.base == (checkout_head or "HEAD") then
-			return
-		end
-		for _, value in ipairs({ comparison.base, comparison.head }) do
-			if value == "index" or value == "changes" then
-				return "Choose Index → Changes, HEAD → Index, or two commits"
-			end
-		end
-	end
-
 	local function paint_endpoints()
 		local function label(sha, ref)
 			if sha == "index" or sha == "changes" then
@@ -228,14 +214,13 @@ function M.open(root, opts)
 		local target_badge = panel_width >= 100 and " NEW / TARGET " or " TARGET "
 		local base = fit(base_badge .. " " .. label(comparison.base, comparison.base_ref), half)
 		local target = fit(target_badge .. " " .. label(comparison.head, comparison.head_ref), half)
-		local message = selection_error()
-		local subtitle = message or ""
+		local subtitle = ""
 		if comparison.base == "index" and comparison.head == "changes" then
 			subtitle = "Unstaged edits and untracked files"
-		elseif comparison.head == "index" and not message then
+		elseif comparison.head == "index" and comparison.base == (checkout_head or "HEAD") then
 			subtitle = "Staged changes"
-		elseif comparison.base == comparison.head and not message then
-			subtitle = "Same commit — no differences"
+		elseif comparison.base == comparison.head then
+			subtitle = "Same snapshot — no differences"
 		end
 		write(buffers.header, { "", " " .. base .. " → " .. target, " " .. subtitle })
 		api.nvim_buf_clear_namespace(buffers.header, endpoints, 0, -1)
@@ -586,19 +571,13 @@ function M.open(root, opts)
 		comparison[endpoint] = selected.id
 		comparison[endpoint .. "_ref"] = not selected.local_state and selected.short or nil
 		paint_endpoints()
-		local message = selection_error()
-		if message then
-			return
-		end
 		local resolved = vim.deepcopy(comparison)
-		if comparison.head == "index" then
+		if comparison.head == "index" and comparison.base == (checkout_head or "HEAD") then
 			local output, code = git.run(root, { "rev-parse", "--verify", "HEAD" }, nil, true)
 			local current_head = code == 0 and vim.trim(output) or nil
-			if current_head ~= checkout_head then
-				vim.notify("HEAD changed. Reopen the picker to choose the staged comparison", vim.log.levels.WARN)
-				return
+			if current_head == checkout_head then
+				resolved.base, resolved.base_ref = "HEAD", nil
 			end
-			resolved.base, resolved.base_ref = "HEAD", nil
 		end
 		api.nvim_win_call(source_win, function()
 			opts.on_select(resolved)

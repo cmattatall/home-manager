@@ -19,6 +19,9 @@ local function context()
 		local snapshot = assert(s.current, "Select a file in Review first")
 		local side = buf == s.old_buf and "old" or "new"
 		local head = side == "old" and snapshot.base or snapshot.head
+		if require("rediff.git").is_local(head) then
+			head = vim.trim(git(s.root, { "rev-parse", "--verify", "HEAD" }).stdout)
+		end
 		c = { root = s.root, path = snapshot.path, head = head, text = snapshot[side], side = side }
 	else
 		assert(vim.bo[buf].buftype == "", "Focus a file or Review source pane first")
@@ -122,7 +125,10 @@ function M.copy_link(target)
 		or address:match("^ssh://git@github%.com/([%w_.%-]+/[%w_.%-]+)$")
 	assert(repository, "The origin remote must be a github.com HTTPS or SSH URL")
 
-	local head = c.head or vim.trim(git(c.root, { "rev-parse", "--verify", "HEAD" }).stdout)
+	local head = c.head
+	if not head or require("rediff.git").is_local(head) then
+		head = vim.trim(git(c.root, { "rev-parse", "--verify", "HEAD" }).stdout)
+	end
 	assert(head ~= "", "Commit this path before copying a permalink")
 	local path = c.path == "." and "" or c.path
 	local kind, fragment = "blob", ""
