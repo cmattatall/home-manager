@@ -104,9 +104,22 @@ You can also type any expression that Git resolves to a commit.
 
 GIT REFS
 
-Space gs or :git scope opens the Git refs page. :git base and :git diff use
-the same page when refs are missing.
+Space g or :git scope opens the Git refs page. Space gs remains an alias.
+Space g waits briefly for a suffix so shortcuts such as Space gu still work.
+:git base and :git diff use the same page when refs are missing.
 :git diff BASE prefills the base.
+
+Git refs opens in Normal mode. Use : for Neovim commands, including completion.
+Press / to search. Escape returns to the graph without leaving Git refs.
+
+These shortcuts work in both the search field and the graph:
+  Space r                 Return to the current Readiff review
+  Space p                 Open the command palette over Git refs
+  Space gl / :git local   Reset the comparison to Index → Changes
+  Space gu / Space gd     Move the comparison toward newer / older snapshots
+
+Commands update the comparison without closing Git refs. Cancelling the command
+line or palette leaves the page and comparison unchanged.
 
 Changes and Index appear as diamond nodes above the checked-out HEAD:
   Changes       Saved working files, including untracked files
@@ -122,7 +135,7 @@ refresh live. For example, :git diff main changes includes committed and local
 edits since main, and :git diff main index compares main with the staged snapshot.
 Staging and reverting are available only in the adjacent local views above.
 
-Type to fuzzy-find subjects, authors, dates, refs, or SHAs in the left results.
+Press / and type to fuzzy-find subjects, authors, dates, refs, or SHAs in the left results.
 The right graph keeps all history, including nonmatching commits and connectors.
 Prefix an exact Git expression with =, for example =HEAD~2. Up/Down or Ctrl-n/p
 select a result. Enter reveals it in the graph. Tab switches graph/search, and
@@ -134,8 +147,8 @@ The detail pane shows full refs, the complete commit message including its
 body, and changed files. Scroll over that pane to read longer messages.
 
 Ctrl-b assigns the browsed snapshot as BASE and Ctrl-t assigns TARGET. Each
-selection immediately updates the review's files and hunks. Escape closes the
-picker. In the graph, q also closes it. Gold rows mark the base, cyan rows mark
+selection immediately updates the review's files and hunks. Space r returns to
+review. In the graph, q also returns to review. Gold rows mark the base, cyan rows mark
 the target, and a lavender underline marks the browsing cursor. If both endpoints
 are the same snapshot, its row has a neutral highlight. Endpoint labels stay in the
 header.
@@ -163,6 +176,10 @@ in base-to-tip order. Escape or an empty answer keeps the current Review.
 
 Up/down stops at the ends and restores each comparison's selected file, layout,
 and position. Close the annotation composer before switching comparisons.
+Without a multi-comparison stack, up/down moves both endpoints one step along
+HEAD's first-parent history, followed by Index and Changes. It preserves their
+spacing and direction, and stops if either endpoint reaches an end. For refs
+outside that history, define their order with :git stack.
 The stack lasts for this editor session, separately for each worktree. Defining
 a new stack or opening :git diff/:git base replaces that worktree's stack.
 Returning to :Review leaves the stack available through :git stack.
@@ -839,10 +856,11 @@ Scripts use uppercase names below. Typed aliases: :harness = :Harness,
   :Git base [BASE|reset]      Change/pick comparison base, or return to Review
   :Git comparison            Show refs, commit IDs, checkout, and harness
   :Git scope                 Open Git refs to choose comparison endpoints
+  :Git local                 Reset to Index → Changes
   :Git stack [REF REF ...]    Choose or define adjacent comparisons
   :Git branch-stack [BASE [TIP]] Discover branch tips by Git ancestry, or pick refs
   :Git pr-stack              Discover published GitHub PR stacks
-  :Git up / :Git down         Move toward the tip / base of the comparison stack
+  :Git up / :Git down         Move the comparison toward newer / older snapshots
   :Git refresh-refs           Resolve the current comparison's refs again
   :Explorer / :FocusDiff       Focus tree / diff or editor
   :Files / :Search             Fuzzy file / text search

@@ -271,7 +271,7 @@ require("rediff.cmdline").setup()
 require("rediff.history").setup()
 require("rediff.git_commands").setup()
 require("fzf-lua").setup({
-	winopts = { width = 0.85, height = 0.8, preview = { hidden = true } },
+	winopts = { width = 0.85, height = 0.8, zindex = 80, preview = { hidden = true } },
 	keymap = { fzf = { ["esc"] = "abort" } },
 	files = { file_icons = false, git_icons = false },
 	grep = { file_icons = false, git_icons = false },

@@ -62,8 +62,11 @@ are disabled. Renames appear as a deletion and addition. **`:Review`** returns
 to staged/unstaged worktree changes, preserving notes and their original snapshots.
 
 Omit refs from `:git diff` or `:git base` to open the searchable commit graph.
-**Space gs** opens the **Git refs** page directly. Choose commits, Index, or
-Changes for either endpoint. Each selection immediately updates the diff viewer.
+**Space g** opens the **Git refs** page directly. **Space r** returns to the
+current review. Use **:** for Neovim commands and **/** to search the graph.
+**Escape** returns to graph navigation without leaving Git refs.
+Choose commits, Index, or Changes for either endpoint. Each selection immediately
+updates the diff viewer.
 See **`:help rediff` → Git refs** for local snapshots, selection keys, and
 graph colors.
 

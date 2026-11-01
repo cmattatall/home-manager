@@ -83,8 +83,39 @@ end
 function M.move(root, direction)
 	local review = require("rediff.review")
 	local s = review.state
-	local index = s and M.position(root, s.comparison)
-	assert(index, "Choose a comparison with :git stack first")
+	local index, count = M.position(root, s and s.comparison)
+	if not index or count == 1 then
+		local comparison = s and s.comparison or { base = "index", head = "changes" }
+		local chain = { "changes", "index" }
+		local commits = git.run(root, { "rev-list", "--first-parent", "HEAD", "--" })
+		vim.list_extend(chain, vim.split(commits, "\n", { trimempty = true }))
+		local shifted = {}
+		for _, endpoint in ipairs({ "base", "head" }) do
+			local ref = comparison[endpoint]
+			if ref == "HEAD" then
+				ref = chain[3]
+			end
+			local position
+			for i, snapshot in ipairs(chain) do
+				if snapshot == ref then
+					position = i
+					break
+				end
+			end
+			assert(position, "Choose a :git stack for refs outside HEAD's first-parent history")
+			local next_ref = chain[position - direction]
+			if not next_ref then
+				vim.notify(direction > 0 and "Newest snapshot reached" or "Oldest snapshot reached")
+				return
+			end
+			shifted[endpoint] = next_ref
+		end
+		if shifted.base == chain[3] and shifted.head == "index" then
+			shifted.base = "HEAD"
+		end
+		M.set(root, { shifted })
+		return
+	end
 	local stack = stacks[root]
 	local next_index = index + direction
 	if next_index < 1 or next_index > #stack then

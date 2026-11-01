@@ -170,13 +170,14 @@ function M.open(root, opts)
 		pane("footer", "", top + height - 3, left, panel_width, 1)
 		vim.wo[windows.results].winbar = "%#RediffRefMuted#" .. #matches .. " matches"
 		vim.wo[windows.details].winbar = "%#RediffRefTitle#Selected snapshot"
-		local hint = sidebar_width >= 32 and "Type to filter · =ref for exact" or "Fuzzy search / =ref"
+		local hint = sidebar_width >= 32 and "/ to search · =ref for exact" or "/ search · =ref exact"
 		write(buffers.sidebar, { " " .. hint })
 		api.nvim_buf_clear_namespace(buffers.sidebar, decoration, 0, -1)
 		highlight(buffers.sidebar, 0, 0, #hint + 1, "RediffRefMuted")
-		local keys = " Ctrl-b base  Ctrl-t target  Tab switch  Esc/q back"
+		local keys = " / search · : command · ^b/^t refs · Space: gu/gd move, gl local, r review"
 		if panel_width >= 100 then
-			keys = " Enter reveal · Ctrl-b base · Ctrl-t target · Tab graph/search · Esc/q back"
+			keys =
+				" / search · : command · Ctrl-b base · Ctrl-t target · Tab graph/search · Space: gu/gd move, gl local, r review"
 		end
 		write(buffers.footer, { keys })
 	end
@@ -613,12 +614,53 @@ function M.open(root, opts)
 		end
 	end
 
+	local focused = windows.graph
+	api.nvim_create_autocmd("WinEnter", {
+		group = group,
+		callback = function()
+			local current = api.nvim_get_current_win()
+			for _, win in pairs(windows) do
+				if current == win then
+					focused = win
+					break
+				end
+			end
+		end,
+	})
+	api.nvim_create_autocmd("User", {
+		group = group,
+		pattern = "ReviewComparisonChanged",
+		callback = function()
+			local s = require("rediff.review").state
+			comparison = vim.deepcopy(s.comparison or { base = "index", head = "changes" })
+			if comparison.base == "HEAD" then
+				comparison.base, comparison.base_ref = checkout_head or "HEAD", "HEAD"
+			end
+			paint_endpoints()
+			vim.schedule(function()
+				if closed then
+					return
+				end
+				local current = api.nvim_get_current_win()
+				if current == s.tree_win or current == s.old_win or current == s.new_win then
+					api.nvim_set_current_win(focused)
+				end
+			end)
+		end,
+	})
+
 	for name, buf in pairs(buffers) do
 		local function map(modes, key, action)
 			vim.keymap.set(modes, key, action, { buffer = buf, nowait = true, silent = true })
 		end
-		map({ "n", "i" }, "<Esc>", close)
+		map({ "n", "i" }, "<Esc>", reveal)
+		map("i", ":", "<C-o>:")
 		map("n", "q", close)
+		map({ "n", "i" }, "<leader>r", close)
+		map({ "n", "i" }, "<leader>p", "<Cmd>Commands<CR>")
+		for _, binding in ipairs({ { "gu", "up" }, { "gd", "down" }, { "gl", "local" } }) do
+			map({ "n", "i" }, "<leader>" .. binding[1], "<Cmd>Git " .. binding[2] .. "<CR>")
+		end
 		map({ "n", "i" }, "<C-b>", function()
 			assign("base")
 		end)
@@ -730,6 +772,7 @@ function M.open(root, opts)
 		end,
 	})
 	api.nvim_create_autocmd({ "TabLeave", "DirChanged" }, { group = group, callback = close })
+	api.nvim_create_autocmd("User", { group = group, pattern = "ReviewLeave", callback = close })
 	api.nvim_create_autocmd("WinClosed", {
 		group = group,
 		callback = function(event)
@@ -751,7 +794,7 @@ function M.open(root, opts)
 	load_history()
 	vim.schedule(function()
 		if not closed then
-			search()
+			reveal()
 		end
 	end)
 end

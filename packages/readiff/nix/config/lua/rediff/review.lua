@@ -2057,6 +2057,7 @@ function M.open(root, comparison)
 			if comparison and not M.state.composer then
 				M.refresh(M.state.current)
 			end
+			api.nvim_exec_autocmds("User", { pattern = "ReviewComparisonChanged" })
 			return
 		end
 	end
@@ -2074,6 +2075,7 @@ function M.open(root, comparison)
 		M.refresh(s.current)
 		api.nvim_set_current_win(s.tree_win)
 		require("rediff.live").start(s)
+		api.nvim_exec_autocmds("User", { pattern = "ReviewComparisonChanged" })
 		return
 	end
 	local target = harness.get(root).target

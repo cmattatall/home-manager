@@ -169,7 +169,14 @@ local actions = {
 	scope = {
 		run = scope,
 		description = "Open Git refs to choose comparison endpoints",
-		key = "gs",
+		key = "g",
+	},
+	["local"] = {
+		run = function()
+			stack.set(root(), { { base = "index", head = "changes" } })
+		end,
+		description = "Reset to Index → Changes",
+		key = "gl",
 	},
 	["pr-stack"] = {
 		run = function()
@@ -188,14 +195,14 @@ local actions = {
 		run = function()
 			stack.move(root(), 1)
 		end,
-		description = "Next comparison toward the tip",
+		description = "Move comparison toward newer snapshots",
 		key = "gu",
 	},
 	down = {
 		run = function()
 			stack.move(root(), -1)
 		end,
-		description = "Previous comparison toward the base",
+		description = "Move comparison toward older snapshots",
 		key = "gd",
 	},
 	comparison = { run = details, description = "Show comparison refs, commits, and checkout", key = "gc" },
@@ -285,6 +292,7 @@ function M.palette()
 	local header = s and s.comparison and ("Comparing " .. git.comparison_label(s.comparison)) or "Commands"
 	require("fzf-lua").commands({
 		header = header,
+		winopts = { backdrop = false },
 		flatten = {
 			Git = function()
 				local rows = {}
@@ -351,6 +359,7 @@ function M.setup()
 			vim.keymap.set("n", "<leader>" .. action.key, "<Cmd>Git " .. name .. "<CR>", { desc = action.description })
 		end
 	end
+	vim.keymap.set("n", "<leader>gs", "<Cmd>Git scope<CR>", { desc = actions.scope.description })
 end
 
 return M
