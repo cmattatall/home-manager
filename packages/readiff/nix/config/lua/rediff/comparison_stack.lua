@@ -143,7 +143,7 @@ function M.choose(root)
 	end
 	require("fzf-lua").fzf_exec(rows, {
 		prompt = "Comparisons> ",
-		header = "base → target · Enter select · Space gu up / Space gd down in Review",
+		header = "base → target · Enter select · u/d in Git refs · :git up / :git down in Review",
 		fzf_opts = { ["--no-sort"] = true },
 		actions = {
 			["default"] = function(selected)

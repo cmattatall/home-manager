@@ -14,6 +14,7 @@ function M.open(title, footer, wrap)
 		height = 4,
 		style = "minimal",
 		border = "single",
+		zindex = 80,
 		title = " " .. vim.fn.strtrans(title) .. " ",
 	})
 	vim.wo[p.win].wrap = wrap ~= false

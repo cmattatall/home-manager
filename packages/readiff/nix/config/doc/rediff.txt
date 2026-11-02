@@ -96,7 +96,7 @@ returns to worktree changes. Space q leaves for editing. Notes retain their snap
 
 The file list shows Base and Target with pinned commit IDs and input refs.
 The statusline labels the checked-out branch separately.
-Space gc opens full comparison details, including commit IDs and the feedback
+:git comparison opens full comparison details, including commit IDs and the feedback
 harness.
 Space p lists searchable Git actions with descriptions and keyboard shortcuts.
 Tab completes branches, tags, and remote-tracking refs in comparison commands.
@@ -104,8 +104,8 @@ You can also type any expression that Git resolves to a commit.
 
 GIT REFS
 
-Space g or :git scope opens the Git refs page. Space gs remains an alias.
-Space g waits briefly for a suffix so shortcuts such as Space gu still work.
+Space g or :git scope opens the Git refs page immediately. History loads inside
+the page, with a loading message while Git runs.
 :git base and :git diff use the same page when refs are missing.
 :git diff BASE prefills the base.
 
@@ -115,8 +115,16 @@ Press / to search. Escape returns to the graph without leaving Git refs.
 These shortcuts work in both the search field and the graph:
   Space r                 Return to the current Readiff review
   Space p                 Open the command palette over Git refs
-  Space gl / :git local   Reset the comparison to Index → Changes
-  Space gu / Space gd     Move the comparison toward newer / older snapshots
+
+In Git refs Normal mode:
+  u / d                   Move toward newer / older comparisons
+  l                       Reset to Index → Changes
+  s                       Choose or define a comparison stack
+  S                       Discover GitHub PR stacks
+  c                       Show comparison details
+  D                       Choose a new pair of refs
+
+Press Escape to leave search before using these single-key actions.
 
 Commands update the comparison without closing Git refs. Cancelling the command
 line or palette leaves the page and comparison unchanged.
@@ -168,11 +176,11 @@ comparisons. Each pair is resolved when the stack is defined.
 With no stack defined, :git stack prompts for space-separated refs
 in base-to-tip order. Escape or an empty answer keeps the current Review.
 
-  Space gu / :git up       Next comparison toward the tip
-  Space gd / :git down     Previous comparison toward the base
+  :git up                 Next comparison toward the tip
+  :git down               Previous comparison toward the base
   :git stack              Choose a comparison from the loaded stack
-  Space gD / :git diff     Prompt for a new pair of refs
-  Space gc                Show current comparison details
+  :git diff               Prompt for a new pair of refs
+  :git comparison         Show current comparison details
 
 Up/down stops at the ends and restores each comparison's selected file, layout,
 and position. Close the annotation composer before switching comparisons.
@@ -199,16 +207,16 @@ The base must be an ancestor of the tip. To choose every endpoint yourself, use
 :git stack REF REF ... instead. This also works for rebased or divergent branches
 whose intended order cannot be inferred from ancestry.
 
-Use Space gu/gd and :git stack to navigate the discovered comparisons. Discovery
+Use :git up, :git down, and :git stack to navigate the discovered comparisons. Discovery
 preserves your checkout, refs, index, and working files. It uses locally available
 refs without fetching. Rerun :git branch-stack after branch tips change to
 rediscover the whole sequence.
 
 GITHUB PR STACKS
 
-Space gS or :git pr-stack discovers published, open GitHub stacks in the current
+:git pr-stack discovers published, open GitHub stacks in the current
 repository. Choose a stack to review its PRs in base-to-tip order, then use
-Space gu/gd to move between PRs and :git stack to choose a comparison. Space gc
+:git up/down to move between PRs and :git stack to choose a comparison. :git comparison
 shows the PR title, status, URL, and full commit IDs. The discovery action is
 also available in Space p.
 
@@ -338,10 +346,10 @@ Untracked files get green dashed marks. Review snapshots keep their own diff
 rendering; Gitsigns does not attach to them.
 
 :git provides comparisons, blame, and links in ordinary files and Review:
-  Space g b / :git blame-line     Show author, date and commit for this line
-  Space g B / :git blame          Browse blame for every source line
-  Space g i / :git toggle         Toggle inline blame for the focused line
-  Space g p / :git pr             Show this line's associated PR links
+  :git blame-line     Show author, date and commit for this line
+  :git blame          Browse blame for every source line
+  :git toggle         Toggle inline blame for the focused line
+  :git pr             Show this line's associated PR links
 
 Right-click a source line and choose "Git: open pr" for its PR links or
 "Git: blame" for its author, date and commit. In Review, these actions use
@@ -378,7 +386,7 @@ editing includes unsaved buffer contents. New/uncommitted lines have no commit
 or PR. Merged-view red deletions are virtual lines: switch to split view and use
 the OLD pane to blame them. Closing a loading popup discards late results.
 
-Inline blame is on by default. Use Space g i or :git toggle to toggle it. It follows
+Inline blame is on by default. Use :git toggle to toggle it. It follows
 the focused source line after CursorHold, clears when you move/edit, and discards
 stale asynchronous results. It annotates the end of the line without replacing
 source text.

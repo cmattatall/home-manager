@@ -142,7 +142,7 @@ local function details()
 		})
 	end
 	require("rediff.git_popup")
-		.open("Comparison · OLD → NEW", "q/Esc close · Space gu up · Space gd down")
+		.open("Comparison · OLD → NEW", "q/Esc close · :git up / :git down to navigate")
 		.show(lines)
 end
 
@@ -158,13 +158,14 @@ local actions = {
 		arguments = true,
 		usage = "diff [BASE [TARGET]]",
 		description = "Compare two Git refs",
-		key = "gD",
+		refs_key = "D",
 	},
 	stack = {
 		run = comparisons,
 		arguments = true,
 		usage = "stack [REF REF ...]",
 		description = "Choose or define a comparison stack",
+		refs_key = "s",
 	},
 	scope = {
 		run = scope,
@@ -176,14 +177,14 @@ local actions = {
 			stack.set(root(), { { base = "index", head = "changes" } })
 		end,
 		description = "Reset to Index → Changes",
-		key = "gl",
+		refs_key = "l",
 	},
 	["pr-stack"] = {
 		run = function()
 			require("rediff.pr_stack").discover(root())
 		end,
 		description = "Discover GitHub PR stacks",
-		key = "gS",
+		refs_key = "S",
 	},
 	["branch-stack"] = {
 		run = compare,
@@ -196,39 +197,37 @@ local actions = {
 			stack.move(root(), 1)
 		end,
 		description = "Move comparison toward newer snapshots",
-		key = "gu",
+		refs_key = "u",
 	},
 	down = {
 		run = function()
 			stack.move(root(), -1)
 		end,
 		description = "Move comparison toward older snapshots",
-		key = "gd",
+		refs_key = "d",
 	},
-	comparison = { run = details, description = "Show comparison refs, commits, and checkout", key = "gc" },
+	comparison = { run = details, description = "Show comparison refs, commits, and checkout", refs_key = "c" },
 	["refresh-refs"] = {
 		run = function()
 			stack.refresh(root())
 		end,
 		description = "Resolve current comparison refs again",
 	},
-	blame = { run = history.blame, description = "Browse blame for every source line", key = "gB" },
+	blame = { run = history.blame, description = "Browse blame for every source line" },
 	["blame-line"] = {
 		run = function()
 			history.blame_line(false)
 		end,
 		description = "Show this line's author, date and commit",
-		key = "gb",
 	},
 	["blame-toggle"] = { run = history.toggle_inline, description = "Toggle inline blame" },
-	toggle = { run = history.toggle_inline, description = "Toggle inline blame", key = "gi" },
+	toggle = { run = history.toggle_inline, description = "Toggle inline blame" },
 	["copy-link"] = { run = history.copy_link, description = "Copy a permalink to this line" },
 	pr = {
 		run = function()
 			history.blame_line(true)
 		end,
 		description = "Show this line's associated GitHub PR links",
-		key = "gp",
 	},
 }
 
@@ -254,6 +253,13 @@ local function help()
 	end
 	table.sort(shortcuts)
 	vim.list_extend(lines, #shortcuts > 0 and shortcuts or { "  No shortcuts configured" })
+	vim.list_extend(lines, { "", "Git refs shortcuts · Normal mode" })
+	for _, name in ipairs(vim.fn.sort(vim.tbl_keys(actions))) do
+		local action = actions[name]
+		if action.refs_key then
+			table.insert(lines, "  " .. action.refs_key .. "  →  " .. name)
+		end
+	end
 	vim.list_extend(lines, {
 		"",
 		"Right-click menu · source lines",
@@ -299,6 +305,9 @@ function M.palette()
 				for _, name in ipairs(vim.fn.sort(vim.tbl_keys(actions))) do
 					local action = actions[name]
 					local key = action.key and (" [Space " .. action.key .. "]") or ""
+					if action.refs_key then
+						key = " [" .. action.refs_key .. " in Git refs]"
+					end
 					table.insert(rows, name .. "  · " .. action.description .. key)
 				end
 				return rows
@@ -356,10 +365,26 @@ function M.setup()
 	)
 	for name, action in pairs(actions) do
 		if action.key then
-			vim.keymap.set("n", "<leader>" .. action.key, "<Cmd>Git " .. name .. "<CR>", { desc = action.description })
+			vim.keymap.set("n", "<leader>" .. action.key, "<Cmd>Git " .. name .. "<CR>", {
+				desc = action.description,
+				nowait = true,
+			})
 		end
 	end
-	vim.keymap.set("n", "<leader>gs", "<Cmd>Git scope<CR>", { desc = actions.scope.description })
+	api.nvim_create_autocmd("FileType", {
+		pattern = "rediff-ref-*",
+		callback = function(event)
+			for name, action in pairs(actions) do
+				if action.refs_key then
+					vim.keymap.set("n", action.refs_key, "<Cmd>Git " .. name .. "<CR>", {
+						buffer = event.buf,
+						desc = action.description,
+						nowait = true,
+					})
+				end
+			end
+		end,
+	})
 end
 
 return M

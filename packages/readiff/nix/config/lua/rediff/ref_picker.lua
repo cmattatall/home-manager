@@ -175,10 +175,10 @@ function M.open(root, opts)
 		write(buffers.sidebar, { " " .. hint })
 		api.nvim_buf_clear_namespace(buffers.sidebar, decoration, 0, -1)
 		highlight(buffers.sidebar, 0, 0, #hint + 1, "RediffRefMuted")
-		local keys = " / search · : command · ^b/^t refs · Space: gu/gd move, gl local, r review"
-		if panel_width >= 100 then
+		local keys = " / search · : command · ^b/^t refs · u/d move · l local · Space r review"
+		if panel_width >= 120 then
 			keys =
-				" / search · : command · Ctrl-b base · Ctrl-t target · Tab graph/search · Space: gu/gd move, gl local, r review"
+				" / search · : command · Ctrl-b base · Ctrl-t target · u/d move · l local · s stack · S GitHub · c details · Space r review"
 		end
 		write(buffers.footer, { keys })
 	end
@@ -659,9 +659,6 @@ function M.open(root, opts)
 		map("n", "q", close)
 		map({ "n", "i" }, "<leader>r", close)
 		map({ "n", "i" }, "<leader>p", "<Cmd>Commands<CR>")
-		for _, binding in ipairs({ { "gu", "up" }, { "gd", "down" }, { "gl", "local" } }) do
-			map({ "n", "i" }, "<leader>" .. binding[1], "<Cmd>Git " .. binding[2] .. "<CR>")
-		end
 		map({ "n", "i" }, "<C-b>", function()
 			assign("base")
 		end)

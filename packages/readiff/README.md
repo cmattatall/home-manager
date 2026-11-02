@@ -205,14 +205,15 @@ Use **Space g** or `:git scope` to open **Git refs** and compare commits,
 Index, or Changes in either direction. Each endpoint selection updates the diff viewer.
 **Space r** returns to review. **:** opens Neovim's command line in either view.
 In Git refs, **/** searches and **Escape** returns to graph navigation.
-Use **Space gS** or `:git pr-stack` to discover published GitHub PR stacks.
+Use `:git pr-stack` to discover published GitHub PR stacks.
 For manually stacked branches, use `:git branch-stack main HEAD` to discover
 their order from Git ancestry, without GitHub. Choose a parent when merge
 ancestry is ambiguous. To supply every endpoint yourself, use
 `:git stack v1.0 origin/topic HEAD~1 HEAD`.
-**Space gu/gd** moves up/down its adjacent comparisons without checking out code.
-`:git stack` chooses a loaded comparison, **Space gc** shows its endpoints, and
-**Space gD** prompts for a new pair. Find these actions in **Space p**.
+`:git up` and `:git down` move through adjacent comparisons without checking out code.
+In Git refs Normal mode, **u/d** navigates comparisons, **l** resets to Index → Changes,
+**s** chooses a stack, **S** discovers GitHub stacks, **c** shows comparison details,
+and **D** chooses a new pair. Find these actions in **Space p**.
 See `:help rediff-review` for ref refresh, commit comparisons, and stack
 lifetime. Notes and feedback are shared across comparisons in a worktree.
 
