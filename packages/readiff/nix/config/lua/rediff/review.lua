@@ -2210,14 +2210,13 @@ function M.statusline()
 	local directory = vim.fn.strtrans(vim.fn.fnamemodify(root, ":~")):gsub("%%", "%%%%")
 	if s then
 		local selection_status = s.current and "" or (#s.entries > 0 and "No file selected" or "No changes")
-		local mode = "REVIEW"
-		if s.comparison then
-			mode = "COMPARE"
-		end
+		local refs = require("rediff.ref_picker").comparison_label()
+		local mode = refs and "GIT REFS" or "REVIEW"
+		local reference = refs or s.reference or ""
 		return "%#RediffMode# "
 			.. mode
 			.. " %*· "
-			.. vim.fn.strtrans(s.reference or ""):gsub("%%", "%%%%")
+			.. vim.fn.strtrans(reference):gsub("%%", "%%%%")
 			.. (s.checkout and (" · checkout: " .. vim.fn.strtrans(s.checkout):gsub("%%", "%%%%")) or "")
 			.. " · "
 			.. directory

@@ -1691,7 +1691,7 @@ class EditorUI(unittest.TestCase):
             [base, head],
             self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
         )
-        self.assertIn("COMPARE", self.lua(editor, "return r.statusline()"))
+        self.assertIn("REVIEW", self.lua(editor, "return r.statusline()"))
         select("committed.txt")
         self.assertEqual(
             ["previous\n", "committed\n"],
@@ -1817,7 +1817,7 @@ class EditorUI(unittest.TestCase):
                 "return {s.current.base, s.current.head, s.current.old, s.current.new, s.live_refresh == true}",
             ),
         )
-        self.assertIn("COMPARE", self.lua(editor, "return r.statusline()"))
+        self.assertIn("REVIEW", self.lua(editor, "return r.statusline()"))
         self.assertIn(
             " Total  +4  −4",
             self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false)"),
@@ -9304,7 +9304,7 @@ func greeting() string {
             self.root,
         )
 
-        def check(mode):
+        def check(mode, refs=None):
             columns, lines = editor.options["columns"], editor.options["lines"]
             status_row = lines - editor.options["cmdheight"] - 1
             cells = [" "] * columns
@@ -9331,7 +9331,9 @@ func greeting() string {
             editor.run_loop(None, redraw)
             timer.join()
             status = "".join(cells)
-            self.assertIn(mode, status)
+            self.assertTrue(status.lstrip().startswith(mode + " "), status)
+            if refs:
+                self.assertIn(refs, status)
             self.assertIn("~/open%project", status)
             self.assertIn("harness: amp-live", status)
             for banner in ("agent:", "difftastic", "feedback:", "failed"):
@@ -9342,21 +9344,34 @@ func greeting() string {
         check("ANNOTATE")
         self.keys(editor, " r")
         check("REVIEW")
-        self.keys(editor, ":git diff HEAD HEAD<CR>")
-        check("COMPARE")
         self.keys(editor, " g")
         self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-graph'")
-        check("COMPARE")
-        self.keys(editor, "/")
-        check("COMPARE")
-        self.keys(editor, ":git local<CR>")
-        check("COMPARE")
-        editor.ui_try_resize(100, 28)
-        check("COMPARE")
-        editor.ui_try_resize(200, 60)
-        check("COMPARE")
+        check("GIT REFS", "Index → Changes")
         self.keys(editor, " r")
-        check("COMPARE")
+        check("REVIEW")
+
+        head = subprocess.check_output(
+            ["git", "-C", self.root, "rev-parse", "HEAD"], text=True
+        ).strip()
+        refs = f"{head[:12]} (HEAD) → Changes"
+        self.keys(editor, ":git diff HEAD changes<CR>")
+        check("REVIEW", refs)
+        self.keys(editor, " g")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-graph'")
+        check("GIT REFS", refs)
+        self.keys(editor, "c")
+        check("GIT REFS", refs)
+        self.keys(editor, "q")
+        self.keys(editor, "/")
+        check("GIT REFS", refs)
+        self.keys(editor, ":git local<CR>")
+        check("GIT REFS", "Index → Changes")
+        editor.ui_try_resize(100, 28)
+        check("GIT REFS", "Index → Changes")
+        editor.ui_try_resize(200, 60)
+        check("GIT REFS", "Index → Changes")
+        self.keys(editor, " r")
+        check("REVIEW", "Index → Changes")
 
     def test_review_keeps_file_path_in_header_without_tab_labels(self):
         editor = self.launch(self.root)

@@ -24,9 +24,13 @@ local function fit(text, width)
 	return text .. string.rep(" ", math.max(0, width - vim.fn.strdisplaywidth(text)))
 end
 
+function M.comparison_label()
+	return active and active.comparison_label()
+end
+
 function M.open(root, opts)
 	if active then
-		active()
+		active.close()
 	end
 	if vim.o.columns < 80 or vim.o.lines < 24 then
 		vim.notify("Git refs needs at least 80 columns and 24 lines", vim.log.levels.WARN)
@@ -76,7 +80,12 @@ function M.open(root, opts)
 			api.nvim_set_current_win(source_win)
 		end
 	end
-	active = close
+	active = {
+		close = close,
+		comparison_label = function()
+			return git.comparison_label(comparison)
+		end,
+	}
 
 	api.nvim_set_hl(0, "RediffRefBase", { fg = "#f6c177", bg = "#393126" })
 	api.nvim_set_hl(0, "RediffRefTarget", { fg = "#9ccfd8", bg = "#23353e" })

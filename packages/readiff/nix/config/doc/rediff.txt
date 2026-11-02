@@ -95,7 +95,8 @@ Review. Historical comparisons disable staging, reverting, and :fs/:fu. :Review
 returns to worktree changes. Space q leaves for editing. Notes retain their snapshots.
 
 The file list shows Base and Target with pinned commit IDs and input refs.
-The statusline labels the checked-out branch separately.
+The statusline badge names the view: GIT REFS or REVIEW. Selected refs appear
+beside the badge, with the checked-out branch labeled separately.
 :git comparison opens full comparison details, including commit IDs and the feedback
 harness.
 Space p lists searchable Git actions with descriptions and keyboard shortcuts.
