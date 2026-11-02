@@ -62,6 +62,33 @@ local function tree_focus(focused)
 	end
 end
 
+local function clamp_tree_scroll(s)
+	api.nvim_win_call(s.tree_win, function()
+		local view = vim.fn.winsaveview()
+		if view.topline == 1 and view.skipcol == 0 then
+			return
+		end
+		local height = vim.fn.getwininfo(s.tree_win)[1].height
+		local remaining = api.nvim_win_text_height(s.tree_win, {
+			start_row = view.topline - 1,
+			start_vcol = view.skipcol,
+			max_height = height,
+		}).all
+		if remaining >= height then
+			return
+		end
+
+		-- Native bottom alignment accounts for wrapped paths and closed groups.
+		local scrolloff = vim.wo.scrolloff
+		vim.wo.scrolloff = 0
+		vim.cmd("keepjumps normal! Gzb")
+		local bottom = vim.fn.winsaveview()
+		view.topline, view.skipcol = bottom.topline, bottom.skipcol
+		vim.fn.winrestview(view)
+		vim.wo.scrolloff = scrolloff
+	end)
+end
+
 local function notify(message, level)
 	vim.notify(message, level or vim.log.levels.INFO, { title = "rediff" })
 end
@@ -2336,6 +2363,17 @@ function M.setup()
 		})
 	end
 	api.nvim_create_autocmd("ColorScheme", { callback = review_highlights })
+	api.nvim_create_autocmd({ "WinScrolled", "WinResized" }, {
+		callback = function()
+			-- Clamp after Neovim has finished updating its scroll-event bookkeeping.
+			vim.schedule(function()
+				local s = M.active()
+				if s and api.nvim_win_is_valid(s.tree_win) then
+					clamp_tree_scroll(s)
+				end
+			end)
+		end,
+	})
 	api.nvim_create_autocmd({ "WinEnter", "TabEnter", "WinResized", "VimResized" }, {
 		callback = function()
 			vim.schedule(function()

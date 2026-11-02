@@ -2093,6 +2093,56 @@ class EditorUI(unittest.TestCase):
         self.assertIn("Filter paths…", filter_header())
         self.assertEqual("", self.lua(editor, "return s.file_filter"))
 
+    def test_tree_wheel_stops_at_bottom_of_content(self):
+        editor = self.launch(self.root)
+        self.lua(editor, "require('rediff.live').stop(s)")
+        tree = editor.current.window
+
+        def scroll(direction):
+            row, column = editor.api.win_get_position(tree)
+            for _ in range(40):
+                editor.api.input_mouse("wheel", direction, "", 0, row + 3, column + 4)
+            pump(editor)
+
+        def view():
+            return editor.funcs.getwininfo(tree.handle)[0]
+
+        scroll("down")
+        self.assertEqual(1, view()["topline"])
+
+        for index in range(45):
+            Path(self.root, f"long-file-name-for-wrapping-{index:02}.txt").write_text(
+                "new file\n"
+            )
+        self.keys(editor, ":ReviewRefresh<CR>")
+        tree.options["wrap"] = False
+        self.keys(editor, "<Tab>")
+        focused = editor.current.window.handle
+        scroll("down")
+        self.assertEqual(focused, editor.current.window.handle)
+        self.assertEqual(len(tree.buffer) - view()["height"] + 1, view()["topline"])
+        self.assertEqual(len(tree.buffer), view()["botline"])
+        scroll("up")
+        self.assertEqual(1, view()["topline"])
+
+        tree.options["wrap"] = True
+        scroll("down")
+        last = editor.funcs.screenpos(tree.handle, len(tree.buffer), 1)
+        bottom = editor.api.win_get_position(tree)[0] + tree.height
+        self.assertIn(last["row"], (bottom - 1, bottom))
+        self.assertGreater(view()["topline"], 1)
+
+        editor.current.window = tree
+        self.keys(editor, "zM")
+        scroll("down")
+        self.assertEqual(1, view()["topline"])
+        self.keys(editor, "zR")
+        scroll("down")
+        self.assertGreater(view()["topline"], 1)
+        editor.ui_try_resize(132, 160)
+        pump(editor)
+        self.assertEqual(1, view()["topline"])
+
     def test_file_summary_counts_offscreen_changes_and_follows_scrolling(self):
         path = Path(self.root, "aaa-summary.lua")
         original = [f"local value_{line} = {line}\n" for line in range(1, 141)]
