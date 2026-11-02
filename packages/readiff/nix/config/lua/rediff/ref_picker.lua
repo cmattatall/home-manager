@@ -138,15 +138,16 @@ function M.open(root, opts)
 
 	local function layout()
 		panel_width = math.min(176, vim.o.columns - 6)
-		local height = math.min(44, vim.o.lines - 3)
-		local top = math.max(1, math.floor((vim.o.lines - height) / 2))
+		local available_height = vim.o.lines - vim.o.cmdheight - 1
+		local height = math.min(44, available_height - 1)
+		local top = math.max(1, math.floor((available_height - height) / 2))
 		local left = math.floor((vim.o.columns - panel_width - 2) / 2)
 		sidebar_width = math.max(26, math.floor(panel_width * 0.29))
 		graph_width = panel_width - sidebar_width - 3
 		local content_row = top + 5
 		local content_height = height - 10
 		local results_height = math.max(3, math.min(#matches * 3, math.floor(content_height * 0.3)))
-		pane("background", "", 0, 0, vim.o.columns, vim.o.lines - 1)
+		pane("background", "", 0, 0, vim.o.columns, available_height)
 		pane("header", "Git refs", top, left, panel_width, 3)
 		pane("sidebar", "Find snapshots", content_row, left, sidebar_width, content_height)
 		pane("search", "", content_row + 2, left + 2, sidebar_width - 4, 1)

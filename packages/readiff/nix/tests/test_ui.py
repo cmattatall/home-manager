@@ -9296,9 +9296,32 @@ func greeting() string {
         )
 
         def check(mode):
-            editor.command("redrawstatus")
-            pump(editor)
-            status = editor.api.eval_statusline(editor.options["statusline"], {})["str"]
+            columns, lines = editor.options["columns"], editor.options["lines"]
+            status_row = lines - editor.options["cmdheight"] - 1
+            cells = [" "] * columns
+
+            def redraw(method, events):
+                if method != "redraw":
+                    return
+                for event, *updates in events:
+                    if event != "grid_line":
+                        continue
+                    for grid, row, column, changes, *_ in updates:
+                        if grid != 1 or row != status_row:
+                            continue
+                        for change in changes:
+                            repeat = change[2] if len(change) > 2 else 1
+                            cells[column : column + repeat] = [change[0]] * repeat
+                            column += repeat
+
+            editor.ui_detach()
+            editor.ui_attach(columns, lines, rgb=True, ext_linegrid=True)
+            editor.command("redraw!")
+            timer = threading.Timer(0.15, lambda: editor.async_call(editor.stop_loop))
+            timer.start()
+            editor.run_loop(None, redraw)
+            timer.join()
+            status = "".join(cells)
             self.assertIn(mode, status)
             self.assertIn("~/open%project", status)
             self.assertIn("harness: amp-live", status)
@@ -9312,7 +9335,18 @@ func greeting() string {
         check("REVIEW")
         self.keys(editor, ":git diff HEAD HEAD<CR>")
         check("COMPARE")
+        self.keys(editor, " gs")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-graph'")
+        check("COMPARE")
+        self.keys(editor, "/")
+        check("COMPARE")
+        self.keys(editor, ":git local<CR>")
+        check("COMPARE")
         editor.ui_try_resize(100, 28)
+        check("COMPARE")
+        editor.ui_try_resize(200, 60)
+        check("COMPARE")
+        self.keys(editor, " r")
         check("COMPARE")
 
     def test_review_keeps_file_path_in_header_without_tab_labels(self):
