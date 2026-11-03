@@ -1,6 +1,13 @@
 # Re-read Home Manager session variables as well as the login shell's startup files.
 alias reload-shell='unset __HM_SESS_VARS_SOURCED; exec "$SHELL" -l'
 
+# Nix can put GNU ls ahead of the system ls on macOS.
+if command ls --color=auto -d . >/dev/null 2>&1; then
+    alias ls='ls --color=auto'
+elif [ "$(uname -s)" = "Darwin" ]; then
+    alias ls='ls -G'
+fi
+
 if [ "$(uname -s)" = "Darwin" ]; then
 nproc(){
     sysctl -n hw.logicalcpu

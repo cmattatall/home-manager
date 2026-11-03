@@ -438,6 +438,36 @@ class HomeManagerAliasTest(StartupTestBase):
                 ])
 
 
+class LsColorsTest(StartupTestBase):
+    def test_color_option_matches_ls_implementation_in_both_shells(self) -> None:
+        for system, gnu in (("Linux", True), ("Darwin", True), ("Darwin", False)):
+            _write_stub(self.stub_dir, "uname", f"echo {system}")
+            reject_color = "" if gnu else (
+                'for arg in "$@"; do\n'
+                '    [ "$arg" != --color=auto ] || exit 2\n'
+                'done\n'
+            )
+            _write_stub(self.stub_dir, "ls", reject_color + 'printf "<%s>\\n" "$@"')
+            for shell in filter(None, [BASH, ZSH]):
+                with self.subTest(system=system, gnu=gnu, shell=shell):
+                    result = self.run_shell(
+                        shell,
+                        self.ordinary_dir,
+                        shell,
+                        'if [ -n "${BASH_VERSION:-}" ]; then shopt -s expand_aliases; fi\n'
+                        'alias ls="ls -G"\n'
+                        'source "$SHELLRC_DIR/index.sh"\n'
+                        'eval \'ls "directory with spaces"\'\n',
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stderr, "")
+                    option = "--color=auto" if gnu else "-G"
+                    self.assertEqual(
+                        [f"<{option}>", "<directory with spaces>"],
+                        result.stdout.splitlines(),
+                    )
+
+
 class ReloadShellTest(StartupTestBase):
     def test_reload_replaces_shell_and_refreshes_session_variables(self) -> None:
         _write_stub(

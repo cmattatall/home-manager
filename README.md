@@ -365,6 +365,9 @@ can still use `nxd`. Explicit `-c`/`--command` commands use the default devshell
 and are passed through unchanged. With direnv already loaded, neither helper
 is needed to use the project tools.
 
+The Mac profile manages both Bash and Zsh. Back up conflicting unmanaged
+`.bashrc` and `.bash_profile` files before activation, as reported by Home Manager.
+
 On Macs migrating existing Zsh configuration, keep machine-local additions
 in `~/.zshrc.local`, `~/.zshenv.local`, and `~/.zprofile.local`. The managed startup files source
 these without putting personal machine settings or credentials in this repo.
@@ -392,6 +395,9 @@ need those tools installed separately: for example Git, fzf, CMake, AWS CLI,
 and Python 3 for `shell/bin/each`. Nix-related aliases do not install Nix.
 Some development helpers use Bash-specific features; use a modern Bash when
 calling those helpers rather than macOS's old Bash 3.2.
+
+`ls` colors file types in terminal output, using the option supported by the
+installed GNU or macOS `ls`. Output redirected to files or pipes stays uncolored.
 
 Home Manager sources the same files through `~/.config/shellrc.d`; it does
 not replace the old editable checkout at `~/.local/shellrc.d`. Shell aliases
