@@ -409,7 +409,7 @@ class EditorUI(unittest.TestCase):
         self.keys(editor, ":git up<CR>:git up<CR>")
         self.assertEqual([], self.lua(editor, "return s.entries"))
         self.assertIn("COMPARE 3/3", "\n".join(self.lua(editor, """
-            return vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false)
+            return vim.api.nvim_buf_get_lines(s.tree_header_buf, 0, -1, false)
         """)))
         self.keys(editor, ":git up<CR>")
         self.assertIn("Top of comparison stack", editor.vars["startup_notice"])
@@ -985,13 +985,15 @@ class EditorUI(unittest.TestCase):
 
         def sidebar():
             return self.lua(
-                editor, "return vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false)"
+                editor, "return vim.list_extend("
+                "vim.api.nvim_buf_get_lines(s.tree_header_buf, 0, -1, false), "
+                "vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false))"
             )
 
         self.assertEqual(" Local changes", sidebar()[0])
         self.assertIn(" ▾ STAGED (1)", sidebar())
         self.assertIn(" ▾ UNSTAGED (2)", sidebar())
-        self.assertEqual(4, split_count(editor))
+        self.assertEqual(5, split_count(editor))
         self.keys(editor, " g")
         self.search_refs(editor)
         header = next(
@@ -1312,7 +1314,7 @@ class EditorUI(unittest.TestCase):
         self.assertEqual(tip, self.lua(editor, "return s.comparison.head"))
         self.keys(editor, ":git base reset<CR>")
         self.assertIsNone(self.lua(editor, "return s.comparison"))
-        self.assertEqual(4, split_count(editor))
+        self.assertEqual(5, split_count(editor))
         self.assertEqual(original, checkout_state(self.root))
 
     def test_ref_picker_searches_graph_and_updates_review_on_each_endpoint(self):
@@ -1820,7 +1822,7 @@ class EditorUI(unittest.TestCase):
         self.assertIn("REVIEW", self.lua(editor, "return r.statusline()"))
         self.assertIn(
             " Total  +4  −4",
-            self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false)"),
+            self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_header_buf, 0, -1, false)"),
         )
         for layout in ("merged", "split"):
             self.keys(editor, f":View {layout}<CR>")
@@ -1955,15 +1957,37 @@ class EditorUI(unittest.TestCase):
         Path(self.root, "odd\tname\n.txt").write_text("one\ntwo\nthree")
         Path(self.root, "empty.txt").touch()
         Path(self.root, "untracked.bin").write_bytes(b"\0binary\n")
+        for index in range(45):
+            Path(self.root, f"empty-{index:02}.txt").touch()
         editor = self.launch(self.root)
 
         def assert_totals(added, deleted):
             self.assertEqual(
                 f" Total  +{added}  −{deleted}",
-                self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_buf, 1, 2, false)[1]"),
+                self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_header_buf, 1, 2, false)[1]"),
             )
 
         assert_totals(8, 5)
+        tree = editor.current.window
+        row, column = editor.api.win_get_position(tree)
+        for _ in range(40):
+            editor.api.input_mouse("wheel", "down", "", 0, row + 2, column + 4)
+        pump(editor)
+        self.assertGreater(editor.funcs.getwininfo(tree.handle)[0]["topline"], 1)
+        for _ in range(10):
+            editor.api.input_mouse("wheel", "down", "", 0, 1, column + 4)
+        pump(editor)
+        self.assertEqual(
+            [1, 2, 3],
+            self.lua(editor, """
+                local header = s.tree_header_win
+                return {
+                    vim.fn.getwininfo(header)[1].topline,
+                    vim.fn.screenpos(header, 1, 1).row,
+                    vim.fn.screenpos(header, 2, 1).row,
+                }
+            """),
+        )
         for reload_theme in (False, True):
             if reload_theme:
                 editor.command("colorscheme rose-pine")
@@ -1972,9 +1996,9 @@ class EditorUI(unittest.TestCase):
                 cell = editor.exec_lua(
                     """
                     local s = require('rediff.review').state
-                    local line = vim.api.nvim_buf_get_lines(s.tree_buf, 1, 2, false)[1]
+                    local line = vim.api.nvim_buf_get_lines(s.tree_header_buf, 1, 2, false)[1]
                     local column = line:find(..., 1, true)
-                    local position = vim.fn.screenpos(s.tree_win, 2, column)
+                    local position = vim.fn.screenpos(s.tree_header_win, 2, column)
                     return vim.api.nvim__inspect_cell(1, position.row - 1, position.col - 1)
                     """,
                     text,
@@ -1988,7 +2012,7 @@ class EditorUI(unittest.TestCase):
         Path(self.root, "plan.md").write_text("first\nsecond\nthird\nfourth\n")
         self.wait_for(
             editor,
-            "vim.api.nvim_buf_get_lines(s.tree_buf, 1, 2, false)[1] == ' Total  +10  −5'",
+            "vim.api.nvim_buf_get_lines(s.tree_header_buf, 1, 2, false)[1] == ' Total  +10  −5'",
         )
         self.keys(editor, "/<C-u>no-matching-path<CR>")
         self.assertEqual(0, self.lua(editor, "return #s.entries"))
@@ -2007,14 +2031,16 @@ class EditorUI(unittest.TestCase):
 
         def tree():
             return self.lua(
-                editor, "return vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false)"
+                editor, "return vim.list_extend("
+                "vim.api.nvim_buf_get_lines(s.tree_header_buf, 0, -1, false), "
+                "vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false))"
             )
 
         def filter_header():
             return self.lua(
                 editor,
-                "return vim.api.nvim_eval_statusline(vim.wo[s.tree_win].winbar, "
-                "{winid=s.tree_win, use_winbar=true}).str",
+                "return vim.api.nvim_eval_statusline(vim.wo[s.tree_header_win].winbar, "
+                "{winid=s.tree_header_win, use_winbar=true}).str",
             )
 
         def filter_to(query):
@@ -7132,10 +7158,10 @@ func greeting() string {
         self.wait_for(editor, "vim.fn.filereadable(vim.env.HARNESS_TEST_LOG) == 1")
         self.assertEqual([self.root], log.read_text().splitlines())
         self.assertEqual("t", editor.api.get_mode()["mode"])
-        self.assertEqual(5, split_count(editor))
+        self.assertEqual(6, split_count(editor))
         job = editor.current.buffer.vars["terminal_job_id"]
         self.keys(editor, "<Esc>:hide<CR><Space>r<Space>r")
-        self.assertEqual(4, split_count(editor))
+        self.assertEqual(5, split_count(editor))
         self.keys(editor, ":ho<CR>")
         self.assertEqual(job, editor.current.buffer.vars["terminal_job_id"])
         self.assertEqual([self.root], log.read_text().splitlines())
@@ -7274,7 +7300,7 @@ func greeting() string {
                 editor, "return vim.api.nvim_buf_get_lines(s.new_buf, 0, -1, false)"
             ),
         )
-        self.assertEqual(4, split_count(editor))
+        self.assertEqual(5, split_count(editor))
         self.assertTrue(
             self.lua(editor, 'return require("rediff.harness").get(s.root).last == nil')
         )
@@ -7984,11 +8010,11 @@ func greeting() string {
 
         def assert_area(mode):
             cells = screen()
-            tree, old, new = self.lua(
-                editor, "return {s.tree_win, s.old_win or false, s.new_win}"
+            header, old, new = self.lua(
+                editor, "return {s.tree_header_win, s.old_win or false, s.new_win}"
             )
-            tree_row, _ = editor.api.win_get_position(tree)
-            edge = editor.api.win_get_width(tree)
+            tree_row, _ = editor.api.win_get_position(header)
+            edge = editor.api.win_get_width(header)
             diff_row, diff_col = editor.api.win_get_position(old or new)
 
             def foreground(row, col):
@@ -9227,7 +9253,7 @@ func greeting() string {
         path.write_text(path.read_text() + "-- newer worktree edit, not refreshed\n")
         index = subprocess.check_output(["git", "-C", self.root, "write-tree"])
         self.keys(editor, ":view merged<CR>")
-        self.assertEqual(3, split_count(editor))
+        self.assertEqual(4, split_count(editor))
         self.assertEqual(
             ["merged", 2],
             self.lua(
@@ -9251,7 +9277,7 @@ func greeting() string {
             "Keep this note", self.lua(editor, "return s.comments[1].text")
         )
         self.keys(editor, ":view<CR>")
-        self.assertEqual(4, split_count(editor))
+        self.assertEqual(5, split_count(editor))
         self.assertEqual(
             ["split", 1],
             self.lua(
@@ -10413,7 +10439,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         self.assertEqual("terminal", editor.current.buffer.options["buftype"])
         self.assertEqual("hide", editor.current.buffer.options["bufhidden"])
         self.assertEqual(tabs, len(editor.api.list_tabpages()))
-        self.assertEqual(5, split_count(editor))
+        self.assertEqual(6, split_count(editor))
         self.assertEqual(self.root, log.read_text().split("|")[0])
         self.keys(editor, "hello pane<CR>")
         self.wait_for(
@@ -10442,8 +10468,8 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         self.assertEqual("n", editor.api.get_mode()["mode"])
         self.keys(editor, ":ho<CR>")
         self.assertEqual(buf, editor.current.buffer.number)
-        self.assertEqual(5, split_count(editor))
-        for layout, count in (("merged", 4), ("split", 5)):
+        self.assertEqual(6, split_count(editor))
+        for layout, count in (("merged", 5), ("split", 6)):
             self.keys(
                 editor, f"<C-\\><C-n>:hide<CR>:view {layout}<CR>:harness open<CR>"
             )
@@ -10492,7 +10518,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
                 "Entering Review keeps the harness visible without :ho",
             )
             self.assertEqual(1, len(editor.funcs.win_findbuf(buf)))
-            self.assertEqual(5, split_count(editor))
+            self.assertEqual(6, split_count(editor))
             self.keys(editor, ":ho<CR>")
             self.assertEqual(job, editor.current.buffer.vars["terminal_job_id"])
         # Hiding in Review carries through both directions of the toggle.
@@ -10767,7 +10793,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         self.assertEqual(str(other) + "|session-b", log.read_text().splitlines()[1])
         other_job = editor.current.buffer.vars["terminal_job_id"]
         self.assertNotEqual(other_job, local_job)
-        self.assertEqual(5, split_count(editor))
+        self.assertEqual(6, split_count(editor))
         self.keys(editor, "<Esc>:worktree switch main<CR>:ho<CR>")
         self.assertEqual(local_job, editor.current.buffer.vars["terminal_job_id"])
         self.keys(editor, "<Esc>:worktree switch other<CR>:ho<CR>")
@@ -11092,7 +11118,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         )
         self.assertEqual(
             " Total  +0  −0",
-            self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_buf, 1, 2, false)[1]"),
+            self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_header_buf, 1, 2, false)[1]"),
         )
         self.keys(editor, ":fs<CR>")
         self.assertEqual(
@@ -11111,9 +11137,9 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
             self.lua(editor, "return vim.api.nvim_get_current_win() == s.tree_win")
         )
         self.keys(editor, ":view merged<CR>")
-        self.assertEqual(3, split_count(editor))
-        self.keys(editor, ":view split<CR>")
         self.assertEqual(4, split_count(editor))
+        self.keys(editor, ":view split<CR>")
+        self.assertEqual(5, split_count(editor))
 
     def test_tree_staging_advances_and_combines_untracked(self):
         editor = self.launch(self.root)

@@ -112,7 +112,10 @@ local function test()
 	equal(baseline, vim.api.nvim_buf_get_lines(s.old_buf, 0, -1, false), "Old pane is index")
 	equal(changed, vim.api.nvim_buf_get_lines(s.new_buf, 0, -1, false), "New pane is disk snapshot")
 	local function sidebar()
-		return vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false)
+		return vim.list_extend(
+			vim.api.nvim_buf_get_lines(s.tree_header_buf, 0, -1, false),
+			vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false)
+		)
 	end
 	keys(" e")
 	equal(s.tree_win, vim.api.nvim_get_current_win(), "Space e focuses Review explorer")
@@ -290,14 +293,14 @@ local function test()
 	equal(path, s.last_submission, "Annotation write does not submit a batch")
 	equal(nil, s.composer, "Writing closes the annotation")
 	equal(s.new_win, vim.api.nvim_get_current_win(), "Write returns focus to the source pane")
-	equal(4, #vim.api.nvim_tabpage_list_wins(0), "Write leaves files, source panes, and summary open")
+	equal(5, #vim.api.nvim_tabpage_list_wins(0), "Write leaves files, source panes, and headers open")
 	equal("Check the expiry boundary too.", s.comments[2].text, "Write saves the annotation in this editor session")
 	equal(changed, vim.fn.readfile(root .. "/auth.lua"), "Composer never modifies source")
 	equal(index_before, run({ "write-tree" }), "Writing composer never stages source")
 	keys("i<Esc>:wq<CR>")
 	equal(nil, s.composer, "Native wq closes the reopened annotation")
 	equal(2, #s.comments, "Editing an existing note does not duplicate it")
-	equal(4, #vim.api.nvim_tabpage_list_wins(0), "Deferred close after wq preserves files, source panes, and summary")
+	equal(5, #vim.api.nvim_tabpage_list_wins(0), "Deferred close after wq preserves files, source panes, and headers")
 	equal(written, s.last_submission, "Annotation wq never submits")
 
 	-- Source edit commands continue as native operators inside the annotation.

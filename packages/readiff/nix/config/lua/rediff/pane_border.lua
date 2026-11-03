@@ -17,7 +17,8 @@ function M.update(review)
 	elseif win == review.old_win or win == review.new_win or win == review.composer_win then
 		review.focus_mode = "review"
 	end
-	local windows = review.focus_mode == "review" and { review.new_win, review.old_win } or { review.tree_win }
+	local windows = review.focus_mode == "review" and { review.new_win, review.old_win }
+		or { review.tree_win, review.tree_header_win }
 	local row, col = math.huge, math.huge
 	local end_row, end_col = 0, 0
 	for _, pane in ipairs(windows) do

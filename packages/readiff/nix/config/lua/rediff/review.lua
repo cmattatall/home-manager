@@ -791,33 +791,48 @@ function M.refresh(preferred, changes)
 	s.line_totals = changes.line_totals
 	local additions = "+" .. s.line_totals.added
 	local deletions = "−" .. s.line_totals.deleted
-	local lines = { " Local changes" }
+	local header_lines = { " Local changes" }
 	if s.comparison then
 		local index, count = require("rediff.comparison_stack").position(s.root, s.comparison)
-		lines[1] = " COMPARE" .. (index and (" " .. index .. "/" .. count) or "")
+		header_lines[1] = " COMPARE" .. (index and (" " .. index .. "/" .. count) or "")
 		for _, endpoint in ipairs({
 			{ label = "Base", commit = s.comparison.base, ref = s.comparison.base_ref },
 			{ label = "Target", commit = s.comparison.head, ref = s.comparison.head_ref },
 		}) do
 			local label = git.endpoint_label(endpoint.commit)
-			table.insert(lines, " " .. endpoint.label .. ": " .. label)
+			table.insert(header_lines, " " .. endpoint.label .. ": " .. label)
 			if endpoint.ref and not vim.startswith(endpoint.commit, endpoint.ref) then
-				table.insert(lines, "   " .. vim.fn.strtrans(endpoint.ref))
+				table.insert(header_lines, "   " .. vim.fn.strtrans(endpoint.ref))
 			end
 		end
 	end
-	table.insert(lines, " Total  " .. additions .. "  " .. deletions)
-	local totals_row = #lines
+	table.insert(header_lines, " Total  " .. additions .. "  " .. deletions)
+	local totals_row = #header_lines
 	if s.file_filter and s.file_filter ~= "" then
-		vim.wo[s.tree_win].winbar = " / %<"
+		vim.wo[s.tree_header_win].winbar = " / %<"
 			.. vim.fn.strtrans(s.file_filter):gsub("%%", "%%%%")
 			.. string.format(" %%=%d/%d ", #s.entries, #s.all_entries)
-		table.insert(lines, string.format(" %d of %d changes", #s.entries, #s.all_entries))
-		table.insert(lines, " / edit · Esc clear")
+		table.insert(header_lines, string.format(" %d of %d changes", #s.entries, #s.all_entries))
+		table.insert(header_lines, " / edit · Esc clear")
 	else
-		vim.wo[s.tree_win].winbar = " / Filter paths…"
-		table.insert(lines, string.format(" %d changes", #s.all_entries))
+		vim.wo[s.tree_header_win].winbar = " / Filter paths…"
+		table.insert(header_lines, string.format(" %d changes", #s.all_entries))
 	end
+	set_lines(s.tree_header_buf, header_lines)
+	api.nvim_win_set_height(s.tree_header_win, #header_lines + 1)
+	api.nvim_buf_clear_namespace(s.tree_header_buf, tree_ns, 0, -1)
+	for _, chunk in ipairs({
+		{ "Total", "ReviewTotal" },
+		{ additions, "ReviewAdded" },
+		{ deletions, "ReviewDeleted" },
+	}) do
+		local first, last = header_lines[totals_row]:find(chunk[1], 1, true)
+		api.nvim_buf_set_extmark(s.tree_header_buf, tree_ns, totals_row - 1, first - 1, {
+			end_col = last,
+			hl_group = chunk[2],
+		})
+	end
+	local lines = {}
 	local rows = {}
 	s.group_rows = {}
 	for _, group in ipairs(s.groups) do
@@ -849,18 +864,6 @@ function M.refresh(preferred, changes)
 	api.nvim_buf_clear_namespace(s.tree_buf, tree_ns, 0, -1)
 	api.nvim_buf_clear_namespace(s.tree_buf, filter_ns, 0, -1)
 	api.nvim_buf_clear_namespace(s.tree_buf, active_ns, 0, -1)
-	for id, chunk in ipairs({
-		{ "Total", "ReviewTotal" },
-		{ additions, "ReviewAdded" },
-		{ deletions, "ReviewDeleted" },
-	}) do
-		local first, last = lines[totals_row]:find(chunk[1], 1, true)
-		api.nvim_buf_set_extmark(s.tree_buf, tree_ns, totals_row - 1, first - 1, {
-			id = id,
-			end_col = last,
-			hl_group = chunk[2],
-		})
-	end
 	for row, index in pairs(rows) do
 		local entry = s.entries[index]
 		local highlight = status_highlights[entry.status]
@@ -1019,7 +1022,7 @@ function M.filter_files()
 	api.nvim_buf_set_lines(buf, 0, -1, false, { s.file_filter or "" })
 	s.filter_win = api.nvim_open_win(buf, true, {
 		relative = "win",
-		win = s.tree_win,
+		win = s.tree_header_win,
 		row = -1,
 		col = 3,
 		width = math.max(1, api.nvim_win_get_width(s.tree_win) - 4),
@@ -2063,7 +2066,7 @@ function M.leave()
 		api.nvim_set_current_tabpage(s.tab)
 		vim.cmd("tabclose!")
 	end
-	for _, buf in ipairs({ s.old_buf, s.new_buf, s.tree_buf, s.composer }) do
+	for _, buf in ipairs({ s.old_buf, s.new_buf, s.tree_buf, s.tree_header_buf, s.composer }) do
 		if api.nvim_buf_is_valid(buf) then
 			api.nvim_buf_delete(buf, { force = true })
 		end
@@ -2170,6 +2173,29 @@ function M.open(root, comparison)
 	end)
 	api.nvim_win_set_width(s.tree_win, math.min(28, math.floor(vim.o.columns / 5)))
 	vim.cmd("wincmd =")
+	s.tree_header_buf = owned_buffer("review://" .. s.id .. "/header", {})
+	vim.bo[s.tree_header_buf].filetype = "rediff-tree-header"
+	s.tree_header_win = api.nvim_open_win(s.tree_header_buf, false, {
+		split = "above",
+		win = s.tree_win,
+		height = 4,
+		mouse = false,
+	})
+	for name, value in pairs({
+		winfixheight = true,
+		number = false,
+		relativenumber = false,
+		signcolumn = "no",
+		foldcolumn = "0",
+		foldenable = false,
+		wrap = false,
+		cursorline = false,
+		scrolloff = 0,
+		winhighlight = "WinBar:ReviewInactivePane,WinBarNC:ReviewInactivePane",
+	}) do
+		vim.wo[s.tree_header_win][name] = value
+	end
+	vim.wo[s.tree_win].winbar = ""
 	map(s.tree_buf, "n", "q", M.leave, "Leave Review")
 	map(s.tree_buf, "n", "/", M.filter_files, "Filter changed file paths")
 	map(s.tree_buf, "n", "<Esc>", M.clear_file_filter, "Clear file filter")
@@ -2371,6 +2397,11 @@ function M.setup()
 				if s and api.nvim_win_is_valid(s.tree_win) then
 					clamp_tree_scroll(s)
 				end
+				if s and api.nvim_win_is_valid(s.tree_header_win) then
+					api.nvim_win_call(s.tree_header_win, function()
+						vim.fn.winrestview({ topline = 1, leftcol = 0, skipcol = 0, lnum = 1, col = 0 })
+					end)
+				end
 			end)
 		end,
 	})
@@ -2398,6 +2429,11 @@ function M.setup()
 	api.nvim_create_autocmd({ "WinEnter", "BufEnter" }, {
 		callback = function()
 			local s = M.state
+			-- Horizontal window navigation may land at the sidebar's header height.
+			if s and api.nvim_get_current_win() == s.tree_header_win then
+				vim.cmd("wincmd p")
+				api.nvim_set_current_win(s.tree_win)
+			end
 			tree_focus(
 				s ~= nil and api.nvim_get_current_win() == s.tree_win and api.nvim_get_current_buf() == s.tree_buf
 			)
@@ -2647,6 +2683,7 @@ function M.setup()
 					(s.old_win and not api.nvim_win_is_valid(s.old_win))
 					or not api.nvim_win_is_valid(s.new_win)
 					or not api.nvim_win_is_valid(s.tree_win)
+					or not api.nvim_win_is_valid(s.tree_header_win)
 				then
 					M.leave()
 				end
