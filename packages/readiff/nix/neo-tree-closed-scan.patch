@@ -1,0 +1,14 @@
+diff --git a/lua/neo-tree/sources/filesystem/lib/fs_scan.lua b/lua/neo-tree/sources/filesystem/lib/fs_scan.lua
+--- a/lua/neo-tree/sources/filesystem/lib/fs_scan.lua
++++ b/lua/neo-tree/sources/filesystem/lib/fs_scan.lua
+@@ -201,6 +201,10 @@ end
+ ---@param context neotree.sources.filesystem.Context
+ local render_context = function(context)
+   local state = context.state
++  if not renderer.window_exists(state) then
++    return
++  end
++
+   local root = context.root
+   local parent_id = context.parent_id
+   fs_watch.updated_watched()

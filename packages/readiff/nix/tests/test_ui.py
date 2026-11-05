@@ -7545,6 +7545,98 @@ func greeting() string {
                 self.assertNotEqual(tree, explorer.current.window.handle)
                 click(explorer, tree, row, expected)
 
+    def test_explorer_reveals_and_marks_the_active_file(self):
+        root = Path(self.root)
+        first = root / "services" / "inventory" / "stock.txt"
+        second = root / "clients" / "request.txt"
+        for path in (first, second):
+            path.parent.mkdir(parents=True)
+            path.write_text("Active file fixture\n")
+        for index in range(35):
+            (root / f"archive-{index:02}").mkdir()
+
+        editor = self.launch(self.root)
+        self.keys(editor, " r")
+        self.wait_for(editor, "vim.bo.filetype == 'neo-tree'")
+        tree = editor.current.window
+        tree_buffer = editor.current.buffer
+        editor.command("wincmd l")
+        source = editor.current.window
+        self.keys(editor, " f")
+        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+        self.keys(editor, "stock.txt")
+        pump(editor)
+        self.keys(editor, "<CR>")
+        self.wait_for(editor, "vim.bo.filetype ~= 'fzf'")
+        self.assertEqual(str(first), editor.current.buffer.name)
+        self.assertEqual(source.handle, editor.current.window.handle)
+
+        def assert_active(path):
+            self.wait_for(
+                editor,
+                f"table.concat(vim.api.nvim_buf_get_lines({tree_buffer.number},0,-1,false),'\\n')"
+                f":find('{path.name}',1,true) ~= nil",
+            )
+            pump(editor)
+            row = next(
+                i for i, line in enumerate(tree_buffer[:], 1) if path.name in line
+            )
+            line = tree_buffer[row - 1]
+            column = len(line[:line.index(path.name)].encode()) + 1
+            position = editor.funcs.screenpos(tree.handle, row, column)
+            self.assertGreater(position["row"], 0, "Active file must be scrolled into view")
+            cell = editor.exec_lua(
+                "local row,col=...; return vim.api.nvim__inspect_cell(1,row-1,col-1)",
+                position["row"], position["col"],
+            )
+            self.assertEqual(path.name[0], cell[0])
+            self.assertEqual(0x302E3F, cell[1]["background"])
+            self.assertEqual(0xE0DEF4, cell[1]["foreground"])
+            self.assertTrue(cell[1]["bold"])
+            marker = editor.exec_lua(
+                "local row,col=...; return vim.api.nvim__inspect_cell(1,row-1,col)",
+                position["row"], tree.col,
+            )
+            self.assertEqual("▎", marker[0])
+            self.assertEqual(0xC4A7E7, marker[1]["foreground"])
+            return row
+
+        assert_active(first)
+        editor.command(f"vsplit {second}")
+        other_source = editor.current.window
+        assert_active(second)
+        self.assertIn("stock.txt", "\n".join(tree_buffer[:]))
+        editor.command(f"buffer {first}")
+        assert_active(first)
+        editor.command(f"buffer {second}")
+        assert_active(second)
+
+        position = editor.funcs.screenpos(source.handle, 1, 1)
+        for action in ("press", "release"):
+            editor.api.input_mouse(
+                "left", action, "", 0, position["row"] - 1, position["col"] - 1
+            )
+        pump(editor)
+        self.assertEqual(source.handle, editor.current.window.handle)
+        first_row = assert_active(first)
+        self.assertIn("request.txt", "\n".join(tree_buffer[:]))
+
+        editor.api.set_current_win(tree.handle)
+        self.keys(editor, "k")
+        assert_active(first)
+        self.assertNotEqual(first_row, tree.cursor[0])
+        editor.command("colorscheme rose-pine")
+        pump(editor)
+        assert_active(first)
+
+        editor.api.set_current_win(other_source.handle)
+        assert_active(second)
+        editor.command("Neotree close")
+        editor.api.set_current_win(source.handle)
+        pump(editor)
+        self.assertEqual(2, split_count(editor))
+        self.assertTrue(all(win.buffer.options["filetype"] != "neo-tree" for win in editor.windows))
+
     def test_directory_argument_explorer_git_markers(self):
         root = Path(self.root)
         (root / "modified-dir").mkdir()

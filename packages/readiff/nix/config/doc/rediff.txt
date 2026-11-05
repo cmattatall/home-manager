@@ -844,6 +844,13 @@ Ctrl-a / Ctrl-e moves to line start/end in Insert and command/search input.
 Option+Left/Up/h/k moves a word backward; Option+Right/Down/l/j moves forward.
 Set your terminal's Option key to Alt/Meta; Esc-b/Esc-f sequences also work.
 
+During ordinary editing, the filesystem sidebar follows the focused file.
+Space f, buffer switches, and clicks into another file pane expand its path and
+scroll it into view while keeping focus in the editor. The active file has a
+lavender row, a bright filename, and a left-edge marker that stays visible while
+you browse the tree. Other expanded folders stay open. A closed sidebar stays
+closed until you open it again with Space e.
+
 For native navigation/editing, see :help motion, :help editing, :help undo,
 :help registers and :help windows. File-tree actions: |neo-tree-mappings|.
 

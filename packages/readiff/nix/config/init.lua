@@ -150,6 +150,22 @@ require("neo-tree").setup({
 	filesystem = {
 		hijack_netrw_behavior = "open_current",
 		use_libuv_file_watcher = true,
+		follow_current_file = { enabled = true, leave_dirs_open = true },
+		components = {
+			name = function(config, node, state)
+				local name = require("neo-tree.sources.common.components").name(config, node, state)
+				if node.type == "file" and node.path == state.rediff_active_file then
+					name.highlight = {
+						hl_group = "RediffActiveFileName",
+						line_hl_group = "RediffActiveFile",
+						virt_text = { { "▎", "RediffActiveFileMarker" } },
+						virt_text_win_col = 0,
+						hl_mode = "combine",
+					}
+				end
+				return name
+			end,
+		},
 		renderers = {
 			directory = {
 				{ "indent" },
@@ -175,6 +191,27 @@ require("neo-tree").setup({
 		},
 	},
 })
+vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
+	callback = function(event)
+		vim.schedule(function()
+			if vim.bo.buftype ~= "" or vim.api.nvim_win_get_config(0).relative ~= "" then
+				return
+			end
+			local path = vim.api.nvim_buf_get_name(0)
+			if not require("neo-tree.utils").is_real_file(path) then
+				return
+			end
+			local state = require("neo-tree.sources.manager").get_state("filesystem")
+			if state.rediff_active_file ~= path then
+				state.rediff_active_file = path
+				require("neo-tree.ui.renderer").redraw(state)
+			end
+			if event.event == "WinEnter" then
+				require("neo-tree.sources.filesystem").follow()
+			end
+		end)
+	end,
+})
 -- Git ref/index changes need not produce a watched worktree file event.
 -- Reconcile cached markers when returning from Review, another terminal, or
 -- an editor pane; Neo-tree refreshes in place and marks hidden trees dirty.
@@ -199,6 +236,9 @@ local function explorer_highlights()
 	vim.api.nvim_set_hl(0, "NeoTreeGitAdded", { fg = "#4ade80", bold = true })
 	vim.api.nvim_set_hl(0, "NeoTreeGitUntracked", { fg = "#4ade80", bold = true })
 	vim.api.nvim_set_hl(0, "NeoTreeGitModified", { fg = "#facc15", bold = true })
+	vim.api.nvim_set_hl(0, "RediffActiveFile", { bg = "#302e3f" })
+	vim.api.nvim_set_hl(0, "RediffActiveFileName", { fg = "#e0def4", bold = true })
+	vim.api.nvim_set_hl(0, "RediffActiveFileMarker", { fg = "#c4a7e7" })
 end
 explorer_highlights()
 vim.api.nvim_create_autocmd("ColorScheme", { callback = explorer_highlights })

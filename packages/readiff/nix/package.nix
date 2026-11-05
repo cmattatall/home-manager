@@ -67,7 +67,10 @@ let
     codediff
     review
     vimPlugins.nui-nvim
-    vimPlugins.neo-tree-nvim
+    (vimPlugins.neo-tree-nvim.overrideAttrs (old: {
+      # Following a file can leave a directory scan pending when the sidebar closes.
+      patches = (old.patches or [ ]) ++ [ ./neo-tree-closed-scan.patch ];
+    }))
     vimPlugins.fzf-lua
     vimPlugins.telescope-nvim
     vimPlugins.nvim-lspconfig
