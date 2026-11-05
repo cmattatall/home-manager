@@ -390,7 +390,8 @@ the OLD pane to blame them. Closing a loading popup discards late results.
 Inline blame is on by default. Use :git toggle to toggle it. It follows
 the focused source line after CursorHold, clears when you move/edit, and discards
 stale asynchronous results. It annotates the end of the line without replacing
-source text.
+source text. Inline hints show the change's age, such as "3 days ago" or
+"2 months ago". Blame popups retain the exact date.
 
 STAGED compares HEAD/index; UNSTAGED compares index/worktree and includes untracked
 files. Badges: M modified, U untracked, R rename, A added, D deleted. Partially

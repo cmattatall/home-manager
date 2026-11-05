@@ -4266,6 +4266,50 @@ class EditorUI(unittest.TestCase):
         editor.command("edit " + editor.funcs.fnameescape(str(outside)))
         self.assertNotRegex(header(), r"[+−]\d")
 
+    def test_git_inline_blame_shows_relative_age(self):
+        authored_at = int(subprocess.check_output(
+            ["git", "-C", self.root, "show", "-s", "--format=%at", "HEAD"], text=True
+        ))
+        editor = self.launch(self.root, file="auth.lua")
+        day = 24 * 60 * 60
+        cases = [
+            (0, "just now"),
+            (1, "1 second ago"),
+            (59, "59 seconds ago"),
+            (60, "1 minute ago"),
+            (3599, "59 minutes ago"),
+            (3600, "1 hour ago"),
+            (day - 1, "23 hours ago"),
+            (day, "1 day ago"),
+            (3 * day, "3 days ago"),
+            (30 * day - 1, "29 days ago"),
+            (30 * day, "1 month ago"),
+            (75 * day, "2 months ago"),
+            (365 * day - 1, "12 months ago"),
+            (365 * day, "1 year ago"),
+            (800 * day, "2 years ago"),
+            (-2 * day, "in 2 days"),
+        ]
+        for elapsed, expected in cases:
+            with self.subTest(age=expected):
+                editor.exec_lua("""
+                    local now = ...
+                    os.time = function() return now end
+                """, authored_at + elapsed)
+                editor.command("doautocmd CursorHold")
+                self.wait_for(editor, """(function()
+                    local namespace = vim.api.nvim_get_namespaces()['rediff-inline-blame']
+                    local marks = vim.api.nvim_buf_get_extmarks(0, namespace, 0, -1, {details=true})
+                    local text = marks[1] and marks[1][4].virt_text[1][1] or ''
+                    return text:find(%s, 1, true) ~= nil
+                end)()""" % json.dumps(" · " + expected + " · ", ensure_ascii=False))
+
+        editor.command("Git blame-line")
+        date = time.strftime("%Y-%m-%d", time.localtime(authored_at))
+        self.wait_for(editor, """table.concat(
+            vim.api.nvim_buf_get_lines(0, 0, -1, false), '\\n'
+        ):find(%s, 1, true) ~= nil""" % json.dumps(" · " + date + " · ", ensure_ascii=False))
+
     def test_git_inline_blame_discards_stale_results(self):
         editor = self.launch(self.root, file="auth.lua")
         visible = """(function()

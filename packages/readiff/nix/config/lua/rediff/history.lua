@@ -103,11 +103,33 @@ local function blame(c, all, done)
 	end)
 end
 
-local function description(row)
+local function relative_age(timestamp)
+	local elapsed = os.time() - timestamp
+	local seconds = math.abs(elapsed)
+	local units = {
+		{ "year", 365 * 24 * 60 * 60 },
+		{ "month", 30 * 24 * 60 * 60 },
+		{ "day", 24 * 60 * 60 },
+		{ "hour", 60 * 60 },
+		{ "minute", 60 },
+		{ "second", 1 },
+	}
+	for _, unit in ipairs(units) do
+		local count = math.floor(seconds / unit[2])
+		if count >= 1 then
+			local age = count .. " " .. unit[1] .. (count == 1 and "" or "s")
+			return elapsed < 0 and "in " .. age or age .. " ago"
+		end
+	end
+	return "just now"
+end
+
+local function description(row, relative)
 	if row.uncommitted then
 		return "Not committed yet"
 	end
-	local date = os.date("%Y-%m-%d", tonumber(row["author-time"]))
+	local timestamp = tonumber(row["author-time"])
+	local date = relative and relative_age(timestamp) or os.date("%Y-%m-%d", timestamp)
 	return row.sha:sub(1, 12) .. " · " .. row.author .. " · " .. date .. " · " .. row.summary
 end
 
@@ -308,7 +330,7 @@ local function update_inline()
 			return vim.notify(err, vim.log.levels.WARN)
 		end
 		api.nvim_buf_set_extmark(c.buf, inline, c.line - 1, 0, {
-			virt_text = { { "  " .. vim.fn.strtrans(description(rows[c.line])), "Comment" } },
+			virt_text = { { "  " .. vim.fn.strtrans(description(rows[c.line], true)), "Comment" } },
 			virt_text_pos = "eol",
 			hl_mode = "combine",
 		})
