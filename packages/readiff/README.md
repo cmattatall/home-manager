@@ -235,6 +235,10 @@ changes can branch from the target or a shared prerequisite. Reviewability
 determines the boundaries, without a line-count limit. Both commands require an
 active thread and work without an editor connection.
 
+You can also request “stacked PRs” in an ordinary Amp prompt. The readiff plugin
+supplies the same GitHub publication and PR-description guidance on every turn,
+including follow-ups after branches have been pushed.
+
 The independent desloppify plugin supplies readable-code and plain-English guidance on every
 turn, including the first, without requiring an editor connection. Run
 `code: desloppify` in Amp's command palette to simplify the current work without

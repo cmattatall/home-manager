@@ -55,6 +55,12 @@ type Outcome = { content: string; result: Promise<Set<ThreadMessageID>>; confirm
 const HEARTBEAT_MS = 15_000
 const MAX_STREAM_BUFFER = 64 * 1024
 
+const stackedPrPublicationGuidance = `When preparing or publishing stacked PRs on GitHub, including requests phrased as "stacked PR" or "stacked PRs", use gh stack to create or update the GitHub stack. This includes branches or PRs that already exist. Keep planning requests read-only and obtain any required publication approval before changing remote state.
+
+Inspect gh stack --help and the relevant subcommand help before use. After pushing the branches to the GitHub remote, complete the remote stacking with gh stack. For a locally tracked stack, gh stack submit pushes the branches before creating or updating the GitHub stack. For already-pushed branches or existing PRs, use gh stack link with the branches or PRs in bottom-to-top dependency order. Verify the remote stack membership and PR bases before reporting publication complete. Pushed branches or chained PR bases alone are not a completed GitHub stack. If gh stack is unavailable, report the blocker rather than substituting a manual GitHub PR workflow.`
+
+const stackedPrDescriptionGuidance = `PR descriptions must explain that PR's purpose, approach, and validation. They may describe the overarching goal and how this PR contributes to it, while distinguishing what this PR delivers from future work. For stacked PRs, never say that a PR is stacked or reference the stack, its size or order, or other PRs as predecessors or successors. This applies to generated descriptions as well as descriptions you write. Let gh stack supply the relationships in GitHub's stack UI. Read existing descriptions before editing them and preserve others' unrelated edits.`
+
 const branchSplitGuidance = `Optimize for human reviewability, not diff size. There is no line-count cap.
 
 Use any explicitly named scope. Otherwise identify this thread's work, including relevant uncommitted changes and commits relative to the appropriate base. Inspect repository guidance, Git state, and publication status. Do not assume all changes in a shared checkout belong to this task. Ask if ownership or the base is ambiguous.
@@ -63,7 +69,7 @@ Shape the stack around actual dependencies. Orthogonal changes may form independ
 
 Give every branch in the stack, including all branches based directly on the target, a common task-specific prefix so the branches are easy to search and filter. For example: auth-refresh/foundation, auth-refresh/api, and auth-refresh/ui. Keep the target branch's existing name, such as main.
 
-PR descriptions must explain that PR's purpose, approach, and validation. They may describe the overarching goal and how this PR contributes to it, while distinguishing what this PR delivers from future work. Never mention that it is part of a PR stack, its position in the stack, or how large the stack is. Let gh stack supply the stack relationships in GitHub's UI.
+${stackedPrDescriptionGuidance}
 
 Each PR should have one coherent purpose. Order by actual dependencies, not mandatory architectural layers. Put necessary, behavior-preserving preparatory refactors before the changes they enable and keep them separate from behavior changes. Do not add unrelated cleanup or force a split that makes the work harder to understand. One PR is acceptable when further splitting would be artificial.
 
@@ -83,7 +89,7 @@ const branchSplitPushRequest = `Split the current work into reviewable branches 
 
 ${branchSplitGuidance}
 
-When the repository remote is hosted on GitHub, use gh stack to create and manage the stack. Inspect gh stack --help and the relevant subcommand help before use. If it is unavailable, report the blocker rather than substituting a manual GitHub PR workflow.
+${stackedPrPublicationGuidance}
 
 Split interleaved hunks and reconstruct intermediate versions as needed to implement the boundaries.
 
@@ -93,7 +99,7 @@ At every proposed PR tip, run the applicable build/type checks, formatting check
 
 Finish stack preparation in the user's active checkout. Temporary worktrees may be used for reconstruction and validation, but the final handoff must leave the active checkout on a stack tip with no duplicate in-scope changes. For a linear stack, use its top branch. For a branched stack, select one tip and report which in-scope work is on the other tips. Before switching, verify that every in-scope staged, unstaged, and untracked change is represented across the final stack branches. If preserving unrelated changes and their staging prevents switching safely, report the specific blocker.
 
-Separate local preparation from publication. Local completion requires registered gh stack branches for GitHub repositories, validated incremental boundaries, and a reconciled active checkout. If publication approval is missing, finish local preparation and ask for approval to publish to the specific remote. Open PRs as ready for review unless the user explicitly requests draft PRs. Select submission options accordingly rather than relying on tool defaults. After publication approval, submit with gh stack and verify the remote PR bases, descriptions, and draft status. Correct any newly opened PR whose draft status differs from the requested state.
+Separate local preparation from publication. Local completion requires registered gh stack branches for GitHub repositories, validated incremental boundaries, and a reconciled active checkout. If publication approval is missing, finish local preparation and ask for approval to publish to the specific remote. Open PRs as ready for review unless the user explicitly requests draft PRs. Select submission options accordingly rather than relying on tool defaults. After publication, verify PR descriptions and draft status. Correct any newly opened PR whose draft status differs from the requested state.
 
 Report measured diff sizes for the completed branches in the table, validation results at each boundary, any blockers, and published PR links when available. Include the active branch, remaining staged, unstaged, and untracked changes and their ownership, and whether the stack is local or published.`
 
@@ -462,7 +468,15 @@ export default async function readiffPlugin(amp: PluginAPI): Promise<void> {
     if (existing) await remember(ctx.thread.id, existing.root).catch((error) => amp.logger.log('readiff session history failed', error))
   })
   // Also registers after reloading the plugin in an already-open session.
-  amp.on('agent.start', autoConnect)
+  amp.on('agent.start', async (event, ctx) => {
+    await autoConnect(event, ctx)
+    return {
+      message: {
+        content: `${stackedPrPublicationGuidance}\n\n${stackedPrDescriptionGuidance}`,
+        display: false,
+      },
+    }
+  })
   amp.on('tool.call', (event) => {
     connections.get(event.thread.id)?.activity.call(event.toolUseID, event.tool)
     return { action: 'allow' }
