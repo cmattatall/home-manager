@@ -72,21 +72,28 @@ class EditorUI(unittest.TestCase):
             "local root = dofile(...).create(); return root", FIXTURE
         )
 
+    def stop_language_servers(self, editor):
+        # Short UI tests can finish while a language server is still initializing.
+        self.assertTrue(
+            editor.exec_lua("""
+                local clients = vim.lsp.get_clients({_uninitialized = true})
+                for _, client in ipairs(clients) do
+                    client:stop(true)
+                end
+                return vim.wait(5000, function()
+                    return #vim.lsp.get_clients({_uninitialized = true}) == 0
+                end)
+            """),
+            "Language servers did not exit before fixture cleanup",
+        )
+
     def tearDown(self):
         for editor in reversed(self.editors):
             try:
                 if editor.api.get_mode()["blocking"]:
                     editor.input("<C-c><CR>")
                 editor.input("<Esc>")
-                self.assertTrue(
-                    editor.exec_lua("""
-                        vim.lsp.stop_client(vim.lsp.get_clients())
-                        return vim.wait(5000, function()
-                            return #vim.lsp.get_clients() == 0
-                        end)
-                    """),
-                    "Language servers did not exit before fixture cleanup",
-                )
+                self.stop_language_servers(editor)
                 editor.command("qa!")
             except EOFError:
                 pass
@@ -148,6 +155,38 @@ class EditorUI(unittest.TestCase):
         editor.input(keys)
         pump(editor)
 
+    def screen(self, editor):
+        cells, highlights = {}, {0: {}}
+
+        def redraw(method, events):
+            if method != "redraw":
+                return
+            for event in events:
+                for values in event[1:]:
+                    if event[0] == "hl_attr_define":
+                        highlights[values[0]] = values[1]
+                    elif event[0] == "grid_line":
+                        _, row, col, updates = values[:4]
+                        highlight = 0
+                        for update in updates:
+                            if len(update) > 1:
+                                highlight = update[1]
+                            repeats = update[2] if len(update) > 2 else 1
+                            for _ in range(repeats):
+                                cells[row, col] = (update[0], highlights[highlight])
+                                col += 1
+
+        columns, lines = editor.options["columns"], editor.options["lines"]
+        editor.ui_detach()
+        pump(editor)
+        editor.ui_attach(columns, lines, rgb=True, ext_linegrid=True, ext_hlstate=True)
+        editor.command("redraw!")
+        timer = threading.Timer(0.15, lambda: editor.async_call(editor.stop_loop))
+        timer.start()
+        editor.run_loop(None, redraw)
+        timer.join()
+        return cells
+
     def copy_permalink(self, editor, window, line):
         position = editor.funcs.screenpos(window, line, 1)
         self.assertGreater(position["row"], 0)
@@ -182,6 +221,7 @@ class EditorUI(unittest.TestCase):
         self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-search'")
 
     def quit_editor(self, editor, command, choice=None):
+        self.stop_language_servers(editor)
         if command.split()[-1] in ("q", "q!"):
             editor.command("only")
         if choice:
@@ -315,7 +355,9 @@ class EditorUI(unittest.TestCase):
         )
         editor = self.launch(self.root)
         self.keys(editor, "<Tab>5GiMain note<Esc>:w<CR>")
+        self.wait_for(editor, "s.composer == nil")
         self.keys(editor, ":worktree switch other<CR>")
+        self.wait_for(editor, f"s and s.root == {json.dumps(str(target))}")
         self.keys(editor, ":ReviewSave<CR>")
         with self.assertRaisesRegex(Exception, "No write since last change"):
             editor.command("qa")
@@ -324,6 +366,7 @@ class EditorUI(unittest.TestCase):
         editor = self.launch(str(target))
         self.assertEqual([], self.lua(editor, "return s.comments"))
         self.keys(editor, ":worktree switch main<CR>")
+        self.wait_for(editor, f"s and s.root == {json.dumps(self.root)}")
         self.assertEqual("Main note", self.lua(editor, "return s.comments[1].text"))
         self.quit_editor(editor, "qa")
 
@@ -1840,7 +1883,9 @@ class EditorUI(unittest.TestCase):
             self.assertIn("Reverting is unavailable", editor.vars["startup_notice"])
             self.assertEqual(index, git("write-tree"))
         self.keys(editor, ":fu<CR>")
-        self.assertIn("groups are unavailable", editor.vars["startup_notice"])
+        self.assertIn(
+            "Use :Review to focus staged/unstaged changes", editor.vars["startup_notice"]
+        )
         # The existing path filter also works in the new branch group.
         self.keys(editor, " e/auth<CR>")
         self.assertEqual(
@@ -2869,12 +2914,7 @@ class EditorUI(unittest.TestCase):
                         editor, "return #require('rediff.connections').connected()"
                     ),
                 )
-                try:
-                    editor.command("qa!")
-                except EOFError:
-                    pass
-                editor.close()
-                self.editors.remove(editor)
+                self.quit_editor(editor, "qa!")
 
                 editor = self.launch(self.root, file="auth.lua", before_init=bridge)
                 self.keys(editor, ":harness open<CR>")
@@ -3091,6 +3131,11 @@ class EditorUI(unittest.TestCase):
         """,
         )
         self.wait_for(editor, "vim.bo.buftype == 'terminal'")
+        self.wait_for(
+            editor,
+            "table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\\n')"
+            ":find('Resumed harness ready', 1, true) ~= nil",
+        )
         self.wait_for(editor, "reconnect_reply ~= nil")
         self.keys(editor, "<Esc>")
         self.lua(
@@ -5645,19 +5690,16 @@ func greeting() string {
         pump(editor)
         self.keys(editor, "iUnsaved edit<Esc>")
         self.assertIsNotNone(self.lua(editor, "return s.composer"))
-        editor.command("redraw!")
+        cells = self.screen(editor)
+        composer = self.lua(editor, "return s.composer_win")
+        composer_row, _ = editor.api.win_get_position(composer)
+        saved_note_row = composer_row + editor.api.win_get_height(composer) + 2
+        saved_note_text = "".join(
+            cells[saved_note_row, col][0] for col in range(editor.options["columns"])
+        )
         self.assertIn(
             "Saved note",
-            self.lua(
-                editor,
-                """
-                local cfg = vim.api.nvim_win_get_config(s.composer_win)
-                local row = vim.api.nvim_win_get_position(s.composer_win)[1] + cfg.height + 3
-                local text = ''
-                for col = 1, vim.o.columns do text = text .. vim.fn.screenstring(row, col) end
-                return text
-                """,
-            ),
+            saved_note_text,
             "Reopening a note must push its saved text below the panel too",
         )
         self.keys(editor, ":q<CR>")
@@ -7105,12 +7147,7 @@ func greeting() string {
             self.wait_for(editor, f"vim.fn.jobwait({{{job}}},0)[1] == -3")
             self.keys(editor, "<Esc>")
             if restart:
-                try:
-                    editor.command("qa!")
-                except EOFError:
-                    pass
-                editor.close()
-                self.editors.remove(editor)
+                self.quit_editor(editor, "qa!")
                 editor = self.launch(self.root, file="auth.lua")
                 self.lua(editor, "vim.fn.confirm=function() return 1 end")
             self.keys(editor, ":harness open<CR>")
@@ -8110,42 +8147,8 @@ func greeting() string {
         editor = self.launch(self.root)
         self.lua(editor, "require('rediff.live').stop(s)")
 
-        def screen():
-            cells, highlights = {}, {0: {}}
-
-            def redraw(method, events):
-                if method != "redraw":
-                    return
-                for event in events:
-                    for values in event[1:]:
-                        if event[0] == "hl_attr_define":
-                            highlights[values[0]] = values[1]
-                        elif event[0] == "grid_line":
-                            _, row, col, updates = values[:4]
-                            highlight = 0
-                            for update in updates:
-                                if len(update) > 1:
-                                    highlight = update[1]
-                                repeats = update[2] if len(update) > 2 else 1
-                                for _ in range(repeats):
-                                    cells[row, col] = (update[0], highlights[highlight])
-                                    col += 1
-
-            columns, lines = editor.options["columns"], editor.options["lines"]
-            editor.ui_detach()
-            pump(editor)
-            editor.ui_attach(
-                columns, lines, rgb=True, ext_linegrid=True, ext_hlstate=True
-            )
-            editor.command("redraw!")
-            timer = threading.Timer(0.15, lambda: editor.async_call(editor.stop_loop))
-            timer.start()
-            editor.run_loop(None, redraw)
-            timer.join()
-            return cells
-
         def assert_area(mode):
-            cells = screen()
+            cells = self.screen(editor)
             header, old, new = self.lua(
                 editor, "return {s.tree_header_win, s.old_win or false, s.new_win}"
             )
@@ -8774,12 +8777,7 @@ func greeting() string {
     def test_local_discard_notifications_survive_restart(self):
         editor = self.launch(self.root)
         self.keys(editor, "<Tab>r")
-        try:
-            editor.command("qa!")
-        except EOFError:
-            pass
-        editor.close()
-        self.editors.remove(editor)
+        self.quit_editor(editor, "qa!")
         editor = self.launch(self.root)
         self.lua(
             editor,
@@ -9802,6 +9800,7 @@ func greeting() string {
         index = subprocess.check_output(["git", "-C", self.root, "write-tree"])
         path = Path(self.root, "auth.lua")
         self.keys(editor, "]")
+        self.wait_for(editor, "s.selected_hunk == 2")
         self.keys(editor, " e")
         self.assertEqual(2, self.lua(editor, "return s.selected_hunk"))
         path.write_text(path.read_text().replace("return nil", "return 123"))
