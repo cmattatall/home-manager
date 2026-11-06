@@ -44,22 +44,24 @@ local function context()
 	return c
 end
 
-local function request(argv, c, input, done)
-	vim.system(
-		argv,
-		{ cwd = c.root, stdin = input, text = true, timeout = 15000 },
-		vim.schedule_wrap(function(result)
-			if result.code ~= 0 then
-				local message = vim.trim(result.stderr or "")
-				done(nil, message ~= "" and message or "Command failed or timed out")
-			else
-				done(result.stdout or "")
-			end
-		end)
-	)
+local function request(argv, c, input, done, owner)
+	local options = { cwd = c.root, stdin = input, text = true, timeout = 15000 }
+	local function complete(result)
+		if result.code ~= 0 then
+			local message = vim.trim(result.stderr or "")
+			done(nil, message ~= "" and message or "Command failed or timed out")
+		else
+			done(result.stdout or "")
+		end
+	end
+	if owner then
+		owner.run(argv, options, complete)
+	else
+		vim.system(argv, options, vim.schedule_wrap(complete))
+	end
 end
 
-local function blame(c, all, done)
+local function blame(c, all, done, owner)
 	if c.head == "" or git(c.root, { "cat-file", "-e", c.head .. ":" .. c.path }).code ~= 0 then
 		local rows = {}
 		local lines = vim.split(c.text, "\n", { plain = true })
@@ -100,7 +102,7 @@ local function blame(c, all, done)
 			return done(nil, "Git returned no blame information for this line")
 		end
 		done(rows)
-	end)
+	end, owner)
 end
 
 local function relative_age(timestamp)
@@ -221,7 +223,8 @@ local function pull_requests(c, row, p)
 					or vim.split(vim.trim(output), "\n")
 			)
 			p.show(lines)
-		end
+		end,
+		p
 	)
 end
 
@@ -243,7 +246,7 @@ function M.blame_line(with_pr)
 		p.map("p", function()
 			pull_requests(c, row)
 		end, "Show this line's PR links")
-	end)
+	end, p)
 end
 
 function M.blame()
@@ -292,7 +295,7 @@ function M.blame()
 			api.nvim_set_current_win(c.win)
 			api.nvim_win_set_cursor(c.win, { row, 0 })
 		end, "Return to source line")
-	end)
+	end, p)
 end
 
 local function clear_inline()

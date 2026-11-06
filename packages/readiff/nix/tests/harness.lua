@@ -280,6 +280,24 @@ return function(root, equal, fails, keys)
 		end
 	end
 	harness.select(root, amp_target)
+	for _, stale_rows in ipairs({ matches, {} }) do
+		local completed = false
+		connections.discover(function(err)
+			assert(not err, err)
+			completed = true
+		end)
+		local selected = vim.tbl_extend("force", amp_target, { connection = "/fresh/connection.json" })
+		harness.select(root, selected)
+		respond(stale_rows)
+		assert(vim.wait(1000, function()
+			return completed
+		end))
+		local connected = connections.connected()[1]
+		equal(selected.connection, connected.connection, "Explicit connection survives an older discovery snapshot")
+		equal(true, connected.online, "Older discovery cannot mark a newer selection offline")
+		equal(selected.connection, s.harness.connection, "Feedback retains the explicitly selected endpoint")
+	end
+	harness.select(root, amp_target)
 	vim.system, panel.open = system, panel_open
 	vim.api.nvim_set_current_tabpage(s.previous_tab)
 	equal(

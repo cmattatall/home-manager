@@ -7,6 +7,7 @@ local listeners = {}
 local deleted = {} -- Suppress deleted instances until explicit rediscovery or a new connection.
 local discovering
 local closed = false
+local selection_generation = 0
 local MAX_LINE = 65536
 
 local alias_path = vim.fn.stdpath("state") .. "/rediff/connection-aliases.json"
@@ -245,6 +246,7 @@ function M.connect(target)
 	if active_key and active_key ~= key then
 		M.disconnect(active_key)
 	end
+	selection_generation = selection_generation + 1
 	local entry = merge(target)
 	active_key = entry.key
 	deleted[entry.key] = nil
@@ -260,6 +262,7 @@ end
 function M.disconnect(key)
 	local entry = assert(entries[key], "Unknown connection: " .. tostring(key))
 	assert(not feedback.busy(entry.root), "Wait for the current feedback delivery before disconnecting")
+	selection_generation = selection_generation + 1
 	stop(key)
 	if active_key == key then
 		active_key = nil
@@ -318,6 +321,7 @@ function M.discover(callback, restore_deleted)
 		return
 	end
 	discovering = { callback }
+	local generation = selection_generation
 	local function finish(err)
 		local callbacks = discovering
 		discovering = nil
@@ -332,6 +336,10 @@ function M.discover(callback, restore_deleted)
 		function(result)
 			vim.schedule(function()
 				if closed then
+					return
+				end
+				if generation ~= selection_generation then
+					finish(nil)
 					return
 				end
 				if result.code ~= 0 then

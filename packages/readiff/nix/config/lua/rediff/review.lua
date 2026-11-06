@@ -1118,8 +1118,6 @@ end
 function M.refresh_live()
 	local s = state()
 	local snapshot, entries = s.current, s.entries
-	-- Git reads yield to input. Do not apply results after the user changed views,
-	-- opened a composer/picker, or left this worktree while the reads were running.
 	local changes = read_changes(s, snapshot)
 	if not require("rediff.live").ready(s) or s.current ~= snapshot or s.entries ~= entries then
 		return false
@@ -1654,16 +1652,17 @@ function M.compose(visual, keys, comment)
 		pattern = tostring(s.composer_win),
 		once = true,
 		callback = function()
-			local refocus = api.nvim_get_current_win() == s.composer_win
+			if s.composer == composer and api.nvim_get_current_win() == s.composer_win then
+				local source = s.draft.anchor.side == "old" and s.old_win or s.new_win
+				if source and api.nvim_win_is_valid(source) then
+					api.nvim_set_current_win(source)
+				end
+			end
 			vim.schedule(function()
 				if s.composer ~= composer then
 					return
 				end
-				local source = s.draft.anchor.side == "old" and s.old_win or s.new_win
 				release_composer(s)
-				if refocus and source and api.nvim_win_is_valid(source) then
-					api.nvim_set_current_win(source)
-				end
 			end)
 		end,
 	})

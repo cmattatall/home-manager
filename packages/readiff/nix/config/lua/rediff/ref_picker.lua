@@ -460,7 +460,10 @@ function M.open(root, opts)
 	end
 
 	local filter
+	local history_generation = 0
 	local function load_history(extra)
+		history_generation = history_generation + 1
+		local generation = history_generation
 		loading = true
 		local args = {
 			"log",
@@ -485,6 +488,9 @@ function M.open(root, opts)
 		end
 		table.insert(args, "--")
 		run(args, function(result)
+			if generation ~= history_generation then
+				return
+			end
 			loading = false
 			if result.code ~= 0 and checkout_head then
 				write(buffers.graph, { "Could not load history", vim.fn.strtrans(result.stderr or "Git failed") })

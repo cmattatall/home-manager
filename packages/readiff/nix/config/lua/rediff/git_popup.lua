@@ -4,6 +4,7 @@ local links = api.nvim_create_namespace("rediff-git-links")
 
 function M.open(title, footer, wrap)
 	local p = { buf = api.nvim_create_buf(false, true) }
+	local jobs = {}
 	vim.bo[p.buf].bufhidden = "wipe"
 	local width = math.max(1, math.min(110, vim.o.columns - 4))
 	p.win = api.nvim_open_win(p.buf, true, {
@@ -22,6 +23,27 @@ function M.open(title, footer, wrap)
 	function p.alive()
 		return api.nvim_buf_is_valid(p.buf) and api.nvim_win_is_valid(p.win)
 	end
+	function p.run(argv, options, callback)
+		local job
+		job = vim.system(argv, options, vim.schedule_wrap(function(result)
+			jobs[job] = nil
+			if p.alive() then
+				callback(result)
+			end
+		end))
+		jobs[job] = true
+	end
+	api.nvim_create_autocmd("WinClosed", {
+		pattern = tostring(p.win),
+		once = true,
+		callback = function()
+			for job in pairs(jobs) do
+				if not job:is_closing() then
+					job:kill(15)
+				end
+			end
+		end,
+	})
 	function p.show(lines, err)
 		if not p.alive() then
 			return

@@ -35,13 +35,10 @@ function M.discover(root)
 	end
 
 	local function run(argv, done)
-		vim.system(
+		popup.run(
 			argv,
 			{ cwd = root, text = true, timeout = 60000 },
-			vim.schedule_wrap(function(result)
-				if not popup.alive() then
-					return
-				end
+			function(result)
 				if not current() then
 					popup.show({ "Review changed. Run :git pr-stack again." })
 					return
@@ -55,7 +52,7 @@ function M.discover(root)
 				if not ok then
 					fail(err)
 				end
-			end)
+			end
 		)
 	end
 

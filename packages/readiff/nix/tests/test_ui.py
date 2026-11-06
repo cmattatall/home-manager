@@ -57,7 +57,10 @@ class EditorUI(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory(
             dir=Path(tempfile.gettempdir()).resolve()
         )
+        self.addCleanup(self.directory.cleanup)
         self.environment = os.environ.copy()
+        self.addCleanup(os.environ.update, self.environment)
+        self.addCleanup(os.environ.clear)
         os.environ["HOME"] = self.directory.name
         for name in (
             "XDG_CONFIG_HOME",
@@ -87,21 +90,25 @@ class EditorUI(unittest.TestCase):
             "Language servers did not exit before fixture cleanup",
         )
 
-    def tearDown(self):
-        for editor in reversed(self.editors):
+    def close_editor(self, editor):
+        if editor not in self.editors:
+            return
+        try:
+            if editor.api.get_mode()["blocking"]:
+                editor.input("<C-c><CR>")
+            editor.input("<Esc>")
             try:
-                if editor.api.get_mode()["blocking"]:
-                    editor.input("<C-c><CR>")
-                editor.input("<Esc>")
                 self.stop_language_servers(editor)
-                editor.command("qa!")
-            except EOFError:
-                pass
             finally:
-                editor.close()
-        os.environ.clear()
-        os.environ.update(self.environment)
-        self.directory.cleanup()
+                try:
+                    editor.command("qa!")
+                except EOFError:
+                    pass
+        except EOFError:
+            pass
+        finally:
+            editor.close()
+            self.editors.remove(editor)
 
     def launch(
         self, directory, headless=False, file=None, columns=132, before_init=None
@@ -132,6 +139,7 @@ class EditorUI(unittest.TestCase):
         finally:
             os.chdir(previous)
         self.editors.append(editor)
+        self.addCleanup(self.close_editor, editor)
         if not headless:
             # Keep highlight IDs stable when tests inspect rendered grid cells.
             editor.ui_attach(columns, 32, rgb=True, ext_linegrid=True, ext_hlstate=True)
@@ -744,15 +752,18 @@ class EditorUI(unittest.TestCase):
         response_file.write_text(json.dumps(responses))
         mode_file = Path(self.directory.name, "github-mode")
         mode_file.write_text("ok")
+        pid_file = Path(self.directory.name, "github-pid")
         bin_dir = Path(self.directory.name, "bin")
         bin_dir.mkdir()
         fake_gh = bin_dir / "gh"
         fake_gh.write_text(
             f"#!{sys.executable}\n"
-            "import json, pathlib, sys, time\n"
+            "import json, os, pathlib, sys, time\n"
             f"mode = pathlib.Path({str(mode_file)!r}).read_text()\n"
             "if mode == 'error': sys.stderr.write('GitHub authentication required'); sys.exit(1)\n"
-            "if mode == 'delay': time.sleep(1)\n"
+            "if mode == 'delay':\n"
+            f"    pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+            "    time.sleep(60)\n"
             f"responses = json.loads(pathlib.Path({str(response_file)!r}).read_text())\n"
             "if sys.argv[1:3] == ['repo', 'view']: key = 'repo'\n"
             "elif sys.argv[1] == 'api':\n"
@@ -767,13 +778,17 @@ class EditorUI(unittest.TestCase):
 
         def discover():
             self.keys(editor, ":git pr-stack<CR>")
-            self.wait_for(editor, "vim.bo.filetype == 'fzf'")
+            self.wait_for(editor, """
+                vim.bo.filetype == 'fzf' and vim.api.nvim_get_mode().mode == 't'
+                and table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\\n')
+                    :find('#42 foundation', 1, true) ~= nil
+            """)
 
         discover()
         self.keys(editor, "<Esc>")
         self.assertTrue(self.lua(editor, "return s.comparison == nil"))
         discover()
-        self.keys(editor, "19<CR>")
+        self.keys(editor, "<CR>")
         self.wait_for(editor, "s.comparison and s.comparison.pr ~= nil")
         self.assertEqual(
             [base, middle, 42],
@@ -803,7 +818,7 @@ class EditorUI(unittest.TestCase):
         responses["7"]["head"]["sha"] = "1" * 40
         response_file.write_text(json.dumps(responses))
         discover()
-        self.keys(editor, "19<CR>")
+        self.keys(editor, "<CR>")
         self.wait_for(editor, """
             table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\\n')
                 :find('Lookup failed', 1, true) ~= nil
@@ -840,9 +855,11 @@ class EditorUI(unittest.TestCase):
         self.assertEqual([base, base], self.lua(editor, "return {s.comparison.base, s.comparison.head}"))
         selected = self.lua(editor, "return s.comparison")
         mode_file.write_text("delay")
-        self.keys(editor, ":git pr-stack<CR>q")
-        time.sleep(1.2)
-        pump(editor)
+        self.keys(editor, ":git pr-stack<CR>")
+        self.wait_for(editor, f"vim.fn.getfsize({json.dumps(str(pid_file))}) > 0")
+        pid = int(pid_file.read_text())
+        self.keys(editor, "q")
+        self.wait_for(editor, f"vim.uv.kill({pid}, 0) == nil")
         self.assertNotEqual("fzf", editor.current.buffer.options["filetype"])
         self.assertEqual(selected, self.lua(editor, "return s.comparison"))
         self.assertEqual(original, checkout_state(self.root))
@@ -1529,6 +1546,59 @@ class EditorUI(unittest.TestCase):
             )
         )
         self.assertEqual(original, checkout_state(self.root))
+
+    def test_ref_picker_keeps_newer_exact_ref_history(self):
+        tree = subprocess.check_output(
+            ["git", "-C", self.root, "rev-parse", "HEAD^{tree}"], text=True
+        ).strip()
+        target = subprocess.check_output(
+            ["git", "-C", self.root, "commit-tree", tree, "-m", "Unreferenced commit"],
+            text=True,
+        ).strip()
+        editor = self.launch(self.root)
+        self.lua(editor, """
+            local system = vim.system
+            _G.history_requests = {}
+            vim.system = function(argv, options, callback)
+                if argv[1] ~= 'git' or not vim.tbl_contains(argv, '--graph') then
+                    return system(argv, options, callback)
+                end
+                local request = {complete = callback}
+                table.insert(history_requests, request)
+                return system(argv, options, function(result)
+                    request.result = result
+                end)
+            end
+        """)
+        self.keys(editor, ":git diff<CR>")
+        self.search_refs(editor)
+        self.wait_for(editor, "#history_requests == 1 and history_requests[1].result ~= nil")
+        self.keys(editor, "=" + target)
+        self.wait_for(editor, "#history_requests == 2 and history_requests[2].result ~= nil")
+        self.lua(editor, "history_requests[2].complete(history_requests[2].result)")
+        graph = next(
+            buf for buf in editor.buffers
+            if buf.valid and buf.options["filetype"] == "rediff-ref-graph"
+        )
+        results = next(
+            buf for buf in editor.buffers
+            if buf.valid and buf.options["filetype"] == "rediff-ref-results"
+        )
+        self.wait_for(
+            editor,
+            f"table.concat(vim.api.nvim_buf_get_lines({results.number}, 0, -1, false), '\\n')"
+            f":find('{target[:8]}', 1, true) ~= nil",
+        )
+        expected = graph[:]
+        self.lua(editor, """
+            history_requests[1].complete(history_requests[1].result)
+            vim.schedule(function() vim.g.old_history_delivered = true end)
+        """)
+        self.wait_for(editor, "vim.g.old_history_delivered == true")
+        self.assertEqual(expected, graph[:])
+        self.keys(editor, "<C-t>")
+        self.wait_for(editor, f"s.comparison and s.comparison.head == '{target}'")
+        self.keys(editor, " r")
 
     def test_ref_picker_bounds_horizontal_scroll_and_keeps_headers_aligned(self):
         editor = self.launch(self.root)
@@ -4232,10 +4302,7 @@ class EditorUI(unittest.TestCase):
             ["git", "-C", self.root, "commit", "-m", "Gutter fixture"],
             check=True, capture_output=True,
         )
-        editor = self.launch(self.directory.name, file=self.root)
-        self.wait_for(editor, "vim.bo.filetype == 'neo-tree'")
-        self.assertGreater(editor.funcs.search(r"gutter\.txt", "w"), 0)
-        self.keys(editor, "<CR>")
+        editor = self.launch(self.root, file="gutter.txt")
 
         def header(win=0):
             return editor.api.eval_statusline(
@@ -4659,6 +4726,7 @@ class EditorUI(unittest.TestCase):
         response.write_text(
             "#42 Fix authentication\nhttps://github.com/example/project/pull/42\n\n#81 Backport fix\nhttps://github.com/example/project/pull/81\n"
         )
+        pid_file = Path(self.directory.name, "github-pid")
         fake_gh = bin_dir / "gh"
         fake_gh.write_text(
             f"#!{sys.executable}\n"
@@ -4668,7 +4736,10 @@ class EditorUI(unittest.TestCase):
             "assert sys.argv[1] == 'api'\n"
             f"assert 'repos/{{owner}}/{{repo}}/commits/{sha}/pulls' in sys.argv\n"
             f"value = pathlib.Path({str(response)!r}).read_text()\n"
-            "if value == 'delay': time.sleep(1); value = 'https://github.com/example/project/pull/99'\n"
+            "if value == 'delay':\n"
+            f"    pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
+            "    time.sleep(60)\n"
+            "    value = 'https://github.com/example/project/pull/99'\n"
             "if value == 'error': sys.stderr.write('GitHub authentication required'); sys.exit(1)\n"
             "print(value)\n"
         )
@@ -4772,15 +4843,30 @@ class EditorUI(unittest.TestCase):
         response.write_text("delay")
         window = editor.current.window.handle
         popup("Git pr", "Looking up pull requests")
+        self.wait_for(editor, f"vim.fn.getfsize({json.dumps(str(pid_file))}) > 0")
+        pid = int(pid_file.read_text())
         self.keys(editor, "q")
-        time.sleep(1.1)
-        pump(editor)
+        self.wait_for(editor, f"vim.uv.kill({pid}, 0) == nil")
         self.assertEqual(window, editor.current.window.handle)
         self.assertFalse(
             any(
                 editor.api.win_get_config(w)["relative"] for w in editor.api.list_wins()
             )
         )
+
+    def test_closing_annotation_preserves_new_help_focus(self):
+        editor = self.launch(self.root)
+        self.keys(editor, "<Tab>iKeep this draft<Esc>")
+        self.wait_for(editor, "s.composer ~= nil")
+        help_window = editor.exec_lua("""
+            vim.cmd.quit()
+            vim.cmd('help rediff')
+            return vim.api.nvim_get_current_win()
+        """)
+        self.wait_for(editor, "s.composer == nil")
+        self.assertEqual(help_window, editor.current.window.handle)
+        self.assertEqual("help", editor.current.buffer.options["filetype"])
+        self.assertEqual("Keep this draft", self.lua(editor, "return s.drafts[1].text"))
 
     def test_help_pages_like_man_without_changing_workspace_keys(self):
         editor = self.launch(self.root, file="auth.lua")
@@ -8820,12 +8906,15 @@ func greeting() string {
         baseline = subprocess.check_output(
             ["git", "-C", self.root, "show", "HEAD:auth.lua"]
         )
+        partial = baseline.replace(b"  return token\n", b"  return nil\n")
+        index_contents = "require('rediff.git').run(s.root, {'show', ':auth.lua'})"
         changed = Path(self.root, "auth.lua").read_bytes()
         for layout in ("split", "merged"):
             self.keys(editor, f":view {layout}<CR>")
             self.keys(editor, "]")
             self.keys(editor, " e")
             self.keys(editor, "<Tab>")
+            self.wait_for(editor, "vim.api.nvim_get_current_win() == s.new_win")
             self.assertEqual(
                 [True, "table", 2],
                 self.lua(
@@ -8841,14 +8930,18 @@ func greeting() string {
                 )
             )
             self.keys(editor, "s")
+            self.wait_for(editor, index_contents + " == " + json.dumps(partial.decode()))
             self.assertEqual(
-                baseline.replace(b"  return token\n", b"  return nil\n"),
+                partial,
                 subprocess.check_output(["git", "-C", self.root, "show", ":auth.lua"]),
             )
             self.keys(editor, ":fs<CR>")
+            self.wait_for(editor, "s.current.group == 'staged'")
             self.keys(editor, " e")
             self.keys(editor, "<Tab>")
+            self.wait_for(editor, "vim.api.nvim_get_current_win() == s.new_win")
             self.keys(editor, "s")
+            self.wait_for(editor, index_contents + " == " + json.dumps(baseline.decode()))
             self.assertEqual(
                 baseline,
                 subprocess.check_output(["git", "-C", self.root, "show", ":auth.lua"]),
@@ -8887,9 +8980,12 @@ func greeting() string {
         path.write_text("".join(changed))
         editor = self.launch(self.root)
         self.keys(editor, "<Tab>")
+        self.wait_for(editor, "vim.api.nvim_get_current_win() == s.new_win")
         self.keys(editor, "s")
         partial = baseline.copy()
         partial[5] = changed[5]
+        index_contents = "require('rediff.git').run(s.root, {'show', ':auth.lua'})"
+        self.wait_for(editor, index_contents + " == " + json.dumps("".join(partial)))
         self.assertEqual(
             "".join(partial),
             subprocess.check_output(
@@ -8897,7 +8993,9 @@ func greeting() string {
             ),
         )
         self.keys(editor, ":fs<CR>")
+        self.wait_for(editor, "s.current.group == 'staged'")
         self.keys(editor, "s")
+        self.wait_for(editor, index_contents + " == " + json.dumps("".join(baseline)))
         self.assertEqual(
             "".join(baseline),
             subprocess.check_output(
@@ -10847,7 +10945,10 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
             return ids
             """,
         )
-        self.keys(editor, "<Esc>:hl<CR>C")
+        self.wait_for(editor, "vim.api.nvim_get_mode().mode == 't'")
+        self.keys(editor, "<Esc>:hl<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-harness-panel'")
+        self.keys(editor, "C")
         self.assertIn("[open]", "\n".join(editor.current.buffer[:]))
         self.keys(editor, "jC")
         self.assertNotIn("[open]", "\n".join(editor.current.buffer[:]))
@@ -10857,10 +10958,13 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         )
         self.assertEqual([-1, -1], editor.funcs.jobwait([first, second], 0))
         self.keys(editor, "o")
+        self.wait_for(editor, "vim.api.nvim_get_mode().mode == 't'")
         self.assertEqual(second, editor.current.buffer.vars["terminal_job_id"])
         self.keys(editor, "<Esc>:hC<CR>:hc<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-harness-panel'")
         self.assertNotIn("[open]", "\n".join(editor.current.buffer[:]))
         self.keys(editor, "o")
+        self.wait_for(editor, "vim.api.nvim_get_mode().mode == 't'")
         self.assertEqual(first, editor.current.buffer.vars["terminal_job_id"])
         self.assertEqual([-1, -1], editor.funcs.jobwait([first, second], 0))
         # Closing an external terminal returns the panel to the underlying review;
@@ -10878,7 +10982,9 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
             """,
             str(external),
         )
+        self.wait_for(editor, "vim.api.nvim_get_mode().mode == 't'")
         self.keys(editor, "<Esc>:hl<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-harness-panel'")
         self.keys(editor, "jjC")
         self.assertNotIn("[open]", "\n".join(editor.current.buffer[:]))
         self.keys(editor, "o")
