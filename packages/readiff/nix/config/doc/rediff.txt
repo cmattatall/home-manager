@@ -459,7 +459,9 @@ And to tmux.conf:
   bind-key -n C-S-] send-keys -l "\033[93;6u"
 <
 
-s in a source pane toggles its Git hunk; S toggles the selected/displayed file.
+s in a source pane toggles the highlighted hunk marked by the orange arrow.
+Nearby highlighted hunks stay separate in both split and merged layouts.
+S toggles the selected/displayed file.
 UNSTAGED stages; STAGED unstages. These actions apply immediately, change only
 the index, and reject stale snapshots. Inside ordinary files/notes, s/S still
 edit text. An all-green new file is one hunk: s stages it and advances to the next

@@ -426,7 +426,7 @@ automatic display is disabled.
 | @ / `:annotations list` / `:al` | Fuzzy-search annotations; Enter jumps, i edits |
 | } / { or `:annotations next` / `prev` | Next/previous saved annotation; accepts counts |
 | `:annotations new` | Create a separate note at the cursor |
-| s in a source pane | Stage/unstage the Git hunk containing the cursor |
+| s in a source pane | Stage/unstage the highlighted hunk at the cursor |
 | S in sidebar or source pane | Stage/unstage selected file or entire displayed diff |
 | `:ReviewStage hunk` / `:ReviewStage file` | Explicitly stage; rejects STAGED entries |
 | `:ReviewUnstage hunk` / `:ReviewUnstage file` | Explicitly unstage; requires STAGED entry |
@@ -441,9 +441,10 @@ automatic display is disabled.
 | `:ReviewArchive` | Archive all drafts locally and begin a new round |
 | Space q / `:ReviewLeave` (also q in sidebar) | Return to editing, retaining drafts |
 
-Git hunks include Git's context lines and can group nearby edits differently
-from Codediff's highlighted ranges. An all-green new file is one hunk, so **s**
-stages it and advances to the next unstaged hunk. Empty/deleted files require **S**. Renames
+The orange arrow identifies the hunk that **s** stages or unstages in either
+layout. Nearby highlighted hunks remain separate. An all-green new file is one
+hunk, so **s** stages it and advances to the next unstaged hunk.
+Empty/deleted files require **S**. Renames
 are shown as deletion/addition pairs. Stage before commenting if possible:
 staging changes the index comparison and can make existing anchors stale.
 

@@ -375,7 +375,7 @@ local function test()
 	equal(s.comments, stale_payload.comments, "Stale feedback keeps exact comment coordinates and selected text")
 	equal(mutated, vim.fn.readfile(root .. "/auth.lua"), "Submitting stale feedback leaves agent edits untouched")
 	fails(function()
-		git.stage(root, s.current, "new", 5, false)
+		git.stage(root, s.current, s.diff.changes[1])
 	end, "Reviewed content changed")
 	equal(index_before, run({ "write-tree" }), "Stale staging leaves index unchanged")
 	equal(changed, vim.api.nvim_buf_get_lines(s.new_buf, 0, -1, false), "External edits do not mutate snapshot")
@@ -667,11 +667,13 @@ local function test()
 	local deleted = git.snapshot(root, { path = "removed.lua", group = "unstaged" })
 	equal("local obsolete = true\nreturn obsolete\n", deleted.old, "Deleted lines remain reviewable")
 	equal("", deleted.new, "Deleted new side is empty")
+	review.refresh({ path = "removed.lua", group = "unstaged" })
+	vim.api.nvim_set_current_win(s.old_win)
 	fails(function()
-		git.stage(root, deleted, "old", 1, false)
+		review.stage(false)
 	end, "Deleted files")
-	git.stage(root, deleted, "old", 1, true)
-	git.stage(root, git.snapshot(root, { path = "removed.lua", group = "staged" }), "old", 1, true)
+	git.stage(root, deleted)
+	git.stage(root, git.snapshot(root, { path = "removed.lua", group = "staged" }))
 	equal(index_before, run({ "write-tree" }), "Whole-file deletion can be unstaged")
 
 	-- Different side coordinates must not be treated as identical line numbers.
@@ -706,7 +708,7 @@ local function test()
 	-- Leave only a hunkless file in UNSTAGED in this disposable fixture.
 	for _, entry in ipairs(git.entries(root)) do
 		if entry.group ~= "staged" and entry.path ~= "zzz-empty.txt" then
-			git.stage(root, git.snapshot(root, entry), "new", 1, true)
+			git.stage(root, git.snapshot(root, entry))
 		end
 	end
 	review.refresh()

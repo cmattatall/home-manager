@@ -9156,7 +9156,7 @@ func greeting() string {
             )
         )
 
-    def test_staging_uses_git_hunk_boundary_in_merged_view(self):
+    def test_staging_uses_highlighted_hunks_in_merged_view(self):
         baseline = [f"-- original line {i}\n" for i in range(1, 61)]
         path = Path(self.root, "auth.lua")
         path.write_text("".join(baseline))
@@ -9174,7 +9174,16 @@ func greeting() string {
         self.assertEqual(3, self.lua(editor, "return #s.diff.changes"))
         self.keys(editor, "s")
         partial = baseline.copy()
-        partial[4], partial[7] = changed[4], changed[7]
+        partial[4] = changed[4]
+        index_contents = "require('rediff.git').run(s.root, {'show', ':auth.lua'})"
+        self.wait_for(editor, index_contents + " == " + json.dumps("".join(partial)))
+        self.assertEqual(
+            ["unstaged", 8],
+            self.lua(editor, "return {s.current.group, vim.api.nvim_win_get_cursor(s.new_win)[1]}"),
+        )
+        self.keys(editor, "s")
+        partial[7] = changed[7]
+        self.wait_for(editor, index_contents + " == " + json.dumps("".join(partial)))
         self.assertEqual(
             "".join(partial),
             subprocess.check_output(
@@ -9216,6 +9225,82 @@ func greeting() string {
         )
         self.keys(editor, ":fs<CR>")
         self.assertEqual("staged", self.lua(editor, "return s.current.group"))
+
+    def test_split_staging_separates_nearby_deletion_and_insertion(self):
+        baseline = [
+            "package example\n",
+            "\n",
+            "import (\n",
+            '\t"os/exec"\n',
+            '\t"slices"\n',
+            '\t"strings"\n',
+            '\t"sync"\n',
+            '\t"time"\n',
+            ")",
+        ]
+        additions = ['\t"example.test/client"\n', '\t"example.test/state"\n']
+        changed = baseline[:3] + baseline[4:8] + additions + baseline[8:]
+        path = Path(self.root, 'imports "quoted".go')
+        path.write_text("".join(baseline))
+        subprocess.run(["git", "-C", self.root, "add", "--", path.name], check=True)
+        subprocess.run(
+            ["git", "-C", self.root, "commit", "-qm", "Nearby import edits"], check=True
+        )
+        path.write_text("".join(changed))
+        editor = self.launch(self.root)
+
+        def show(group, pane, line=4):
+            self.lua(editor, f"""
+                r.refresh({{path={json.dumps(path.name)}, group='{group}'}})
+                vim.api.nvim_set_current_win(s.{pane}_win)
+            """)
+            self.keys(editor, f"{line}G")
+            self.wait_for(editor, "s.selected_hunk == 1")
+
+        def assert_index(expected):
+            index_contents = (
+                "require('rediff.git').run(s.root, {'show', "
+                + json.dumps(":" + path.name) + "})"
+            )
+            self.wait_for(editor, index_contents + " == " + json.dumps("".join(expected)))
+            self.assertEqual(
+                "".join(expected),
+                subprocess.check_output(
+                    ["git", "-C", self.root, "show", ":" + path.name], text=True
+                ),
+            )
+            self.assertEqual("".join(changed), path.read_text())
+
+        for pane in ("new", "old"):
+            with self.subTest(pane=pane):
+                show("unstaged", pane)
+                self.assertEqual(2, self.lua(editor, "return #s.diff.changes"))
+                self.keys(editor, "s")
+                assert_index(baseline[:3] + baseline[4:])
+                show("staged", pane)
+                self.keys(editor, "s")
+                assert_index(baseline)
+
+                show("unstaged", pane)
+                self.keys(editor, "]")
+                self.wait_for(editor, "s.selected_hunk == 2")
+                self.keys(editor, "s")
+                assert_index(baseline[:8] + additions + baseline[8:])
+                show("staged", pane, line=9)
+                self.keys(editor, "s")
+                assert_index(baseline)
+
+                show("unstaged", pane)
+                self.keys(editor, "S")
+                assert_index(changed)
+                show("staged", pane)
+                self.keys(editor, "]")
+                self.wait_for(editor, "s.selected_hunk == 2")
+                self.keys(editor, "s")
+                assert_index(baseline[:3] + baseline[4:])
+                show("staged", pane)
+                self.keys(editor, "s")
+                assert_index(baseline)
 
     def test_lowercase_s_toggles_only_current_hunk(self):
         editor = self.launch(self.root)

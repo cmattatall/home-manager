@@ -204,7 +204,7 @@ local function map_staging(buf)
 	if buf ~= state().tree_buf then
 		map(buf, "n", "s", function()
 			M.stage(false)
-		end, "Stage/unstage Git hunk at cursor")
+		end, "Stage/unstage highlighted hunk at cursor")
 		map(buf, "n", "r", function()
 			M.revert()
 		end, "Revert Git hunk at cursor")
@@ -1303,12 +1303,12 @@ function M.jump_hunk(direction, unseen_only)
 	notify(unseen_only and "No unseen hunks in this Git group" or "No hunks in this Git group")
 end
 
-local function advance_staged_hunk(snapshot, hunk, entries, index)
+local function advance_staged_hunk(snapshot, staged_change, entries, index)
 	local s = state()
 	-- Worktree coordinates survive staging, even when the old side shifts.
 	if s.current and entry_key(s.current) == entry_key(snapshot) then
 		for i, change in ipairs(s.diff.changes) do
-			if change.modified.start_line >= hunk.new_start + hunk.new_count then
+			if change.modified.start_line >= staged_change.modified.end_line then
 				focus_hunk(i)
 				return true
 			end
@@ -1356,7 +1356,7 @@ function M.stage(whole_file, unstage)
 	)
 	assert(not s.annotation_id, "Press Space R to return to current files before staging")
 	local win = api.nvim_get_current_win()
-	local snapshot, side, line = s.current, "new", 1
+	local snapshot, change = s.current, nil
 	local index = s.index
 	local next_entry, tree_group
 	if win == s.tree_win then
@@ -1365,7 +1365,18 @@ function M.stage(whole_file, unstage)
 		local entry = assert(s.entries[index], "Select a changed file")
 		snapshot = index == s.index and s.current or git.snapshot(s.root, entry)
 	else
-		side, line = side_at_cursor(), api.nvim_win_get_cursor(win)[1]
+		local side, buf = side_at_cursor()
+		if not whole_file then
+			local line = api.nvim_win_get_cursor(win)[1]
+			for _, candidate in ipairs(s.diff.changes) do
+				local first, last = hunk_range(candidate, side, buf)
+				if line >= first and line <= last then
+					change = candidate
+					break
+				end
+			end
+			assert(change, "Move the cursor into a highlighted hunk to stage it. Use S for the whole file")
+		end
 	end
 	assert(snapshot, "No changed file selected")
 	if whole_file then
@@ -1393,7 +1404,7 @@ function M.stage(whole_file, unstage)
 		)
 	end
 	local entries = s.entries
-	local hunk = git.stage(s.root, snapshot, side, line, whole_file)
+	git.stage(s.root, snapshot, change)
 	local ok, err = pcall(awareness.acknowledge, s.root, snapshot)
 	if not ok then
 		notify("Index updated, but change indicators could not be cleared: " .. tostring(err), vim.log.levels.WARN)
@@ -1404,7 +1415,7 @@ function M.stage(whole_file, unstage)
 	else
 		M.refresh(snapshot)
 	end
-	if hunk and snapshot.group ~= "staged" and not advance_staged_hunk(snapshot, hunk, entries, index) then
+	if change and snapshot.group ~= "staged" and not advance_staged_hunk(snapshot, change, entries, index) then
 		win = s.tree_win
 	end
 	api.nvim_set_current_win(win)

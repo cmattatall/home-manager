@@ -379,38 +379,53 @@ function M.hunks(patch)
 	return header, hunks
 end
 
-function M.stage(root, snapshot, side, line, whole_file)
+local function highlighted_patch(snapshot, change)
+	local ranges, body = {}, {}
+	-- Earlier unselected edits can shift the worktree relative to the index.
+	local index_range = snapshot.group == "staged" and change.modified or change.original
+	for _, side in ipairs({
+		{ text = snapshot.old, range = change.original, prefix = "-" },
+		{ text = snapshot.new, range = change.modified, prefix = "+" },
+	}) do
+		local lines = M.lines(side.text)
+		local finish = math.min(side.range.end_line, #lines + 1)
+		local count = finish - side.range.start_line
+		local start = count == 0 and index_range.start_line - 1 or index_range.start_line
+		table.insert(ranges, string.format("%s%d,%d", side.prefix, start, count))
+		for line = side.range.start_line, finish - 1 do
+			table.insert(body, side.prefix .. lines[line])
+			if line == #lines and side.text:sub(-1) ~= "\n" then
+				table.insert(body, "\\ No newline at end of file")
+			end
+		end
+	end
+	local header = M.hunks(snapshot.patch)
+	table.insert(header, "@@ " .. table.concat(ranges, " ") .. " @@")
+	vim.list_extend(header, body)
+	return table.concat(header, "\n") .. "\n"
+end
+
+function M.stage(root, snapshot, change)
 	assert(not snapshot.base, "Staging is unavailable in base/commit comparisons; use :Review for staging")
 	M.validate(root, snapshot)
 	if snapshot.group == "untracked" then
-		local _, hunks = M.hunks(snapshot.patch)
-		assert(whole_file or hunks[1], "Empty new files must be staged with S")
 		M.run(root, { "add", "--", snapshot.path })
-		return not whole_file and hunks[1] or nil
+		return
 	end
 	local patch = snapshot.patch
-	local chosen
-	if not whole_file then
+	if change then
 		assert(not patch:find("\ndeleted file mode ", 1, true), "Deleted files must be staged or unstaged with S")
-		local header, hunks = M.hunks(patch)
-		for _, hunk in ipairs(hunks) do
-			local start = hunk[side .. "_start"]
-			local count = hunk[side .. "_count"]
-			if line >= math.max(start, 1) and line < math.max(start, 1) + math.max(count, 1) then
-				chosen = hunk
-				break
-			end
-		end
-		assert(chosen, "Move the cursor into a Git hunk to stage it")
-		patch = table.concat(header, "\n") .. "\n" .. table.concat(chosen.lines, "\n") .. "\n"
+		patch = highlighted_patch(snapshot, change)
 	end
 	assert(patch ~= "", "No patch to stage")
 	local args = { "apply", "--cached", "--whitespace=nowarn" }
+	if change then
+		table.insert(args, "--unidiff-zero")
+	end
 	if snapshot.group == "staged" then
 		table.insert(args, "--reverse")
 	end
 	M.run(root, args, patch)
-	return chosen
 end
 
 -- Reverse only the selected Git hunks, never replace a whole-file snapshot.
