@@ -6,10 +6,12 @@ trap 'rm -rf "$temporary"' EXIT
 export HOME="$temporary/home with spaces"
 plugins="$HOME/.config/amp/plugins"
 installer="$source_dir/install.sh"
+skill_dir="$HOME/.config/agents/skills/stacked-prs"
 
 bash "$installer"
 cmp "$source_dir/readiff.ts" "$plugins/readiff.ts"
 cmp "$source_dir/desloppify.ts" "$plugins/desloppify.ts"
+cmp "$source_dir/skills/stacked-prs/SKILL.md" "$skill_dir/SKILL.md"
 settings="$HOME/.config/amp/settings.json"
 python3 - "$settings" <<'PY'
 import json, sys
@@ -23,9 +25,11 @@ PY
 printf 'another plugin\n' > "$plugins/other.ts"
 printf 'old plugin with local edits\n' > "$plugins/rediff.ts"
 printf 'old guidance\n' > "$plugins/desloppify.ts"
+printf 'old skill\n' > "$skill_dir/SKILL.md"
 bash "$installer"
 cmp "$source_dir/readiff.ts" "$plugins/readiff.ts"
 cmp "$source_dir/desloppify.ts" "$plugins/desloppify.ts"
+cmp "$source_dir/skills/stacked-prs/SKILL.md" "$skill_dir/SKILL.md"
 test ! -e "$plugins/rediff.ts"
 backups=("$HOME"/.config/amp/plugin-backups/readiff-migration.*/rediff.ts)
 test "${#backups[@]}" -eq 1
@@ -74,6 +78,20 @@ for name in readiff rediff desloppify; do
     test -d "$plugins/$name.ts"
     rmdir "$plugins/$name.ts"
 done
+rm "$skill_dir/SKILL.md"
+ln -s "$source_dir/skills/stacked-prs/SKILL.md" "$skill_dir/SKILL.md"
+if bash "$installer"; then echo 'Unexpected skill file symlink replacement'; exit 1; fi
+test -L "$skill_dir/SKILL.md"
+rm "$skill_dir/SKILL.md"
+rmdir "$skill_dir"
+for target in "$source_dir/skills/stacked-prs" "$temporary/missing"; do
+    ln -s "$target" "$skill_dir"
+    if bash "$installer"; then echo 'Unexpected skill directory symlink replacement'; exit 1; fi
+    test -L "$skill_dir"
+    rm "$skill_dir"
+done
+mkdir "$skill_dir"
+printf 'existing skill\n' > "$skill_dir/SKILL.md"
 printf 'existing plugin\n' > "$plugins/readiff.ts"
 printf 'existing guidance\n' > "$plugins/desloppify.ts"
 for invalid in '{broken' '[]' '{"amp.keymap": []}'; do
@@ -82,6 +100,7 @@ for invalid in '{broken' '[]' '{"amp.keymap": []}'; do
     test "$(cat "$settings")" = "$invalid"
     test "$(cat "$plugins/readiff.ts")" = 'existing plugin'
     test "$(cat "$plugins/desloppify.ts")" = 'existing guidance'
+    test "$(cat "$skill_dir/SKILL.md")" = 'existing skill'
 done
 rm "$settings"
 ln -s "$temporary/expected-settings" "$settings"

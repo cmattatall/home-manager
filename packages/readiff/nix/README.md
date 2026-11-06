@@ -650,7 +650,7 @@ interrupt work. Standalone Amp retains single Ctrl-L interruption. Invalid JSON 
 managed settings symlinks are left untouched and installation stops.
 Cancel is the default. No Git
 repository is required. With a selected live Amp target, the confirmation also
-authorizes a small request to that thread to call `reload_plugins` after a
+authorizes a small request to that thread to call `reload_plugins` and `reload_skills` after a
 successful installation. Amp's plugin API has no direct reload method, so this
 is agent-mediated: queued does not mean reloaded. It never sends annotations,
 changes the binding, or replaces the last feedback retry target.
@@ -669,7 +669,7 @@ It refuses symlinks (including Home Manager-owned files) or non-files at either
 name. Update Home Manager-managed plugins through Home Manager instead; it removes
 the old managed filename when switching to the new one. The installer sets up
 the plugin and interrupt shortcut; use Nix for the editor. Shell and Home Manager installations
-still require a manual plugin reload. Reload invalidates the live connection;
+still require a manual reload of plugins and skills. Reload invalidates the live connection;
 use `:harness connect amp` again once Amp has registered the new endpoint.
 In Amp's command palette, **readiff: connect** shows connection instructions;
 **readiff: disconnect** stops this thread's endpoint. Session/agent start

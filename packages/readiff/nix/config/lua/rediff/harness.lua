@@ -1320,12 +1320,13 @@ function M.install(provider)
 		.. directory
 		.. "?\n"
 		.. "Desloppify adds coding guidance on every turn and a cleanup command.\n"
+		.. "Install the stacked-prs skill in ~/.config/agents/skills/.\n"
 		.. "Enable Ctrl+L and Esc Esc to interrupt Amp in ~/.config/amp/settings.json.\n"
 		.. "In the Amp pane, Ctrl+L sends Escape: once to go back, twice to interrupt.\n"
 		.. "This does not install the Amp CLI.\n"
 		.. (
-			reload and ("Ask Amp thread " .. target.session .. " to reload its plugins after installation?")
-			or "No live Amp target selected; reload plugins manually once, then :harness connect amp."
+			reload and ("Ask Amp thread " .. target.session .. " to reload its plugins and skills after installation?")
+			or "No live Amp target selected; reload plugins and skills manually once, then :harness connect amp."
 		)
 	if provider == "omp" then
 		prompt = "Install the bundled rediff.ts extension for oh-my-pi?\n"

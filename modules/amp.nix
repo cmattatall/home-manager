@@ -11,6 +11,10 @@
         source = ../packages/readiff/plugins/amp/readiff.ts;
         force = true;
       };
+      home.file.".config/agents/skills/stacked-prs" = {
+        source = ../packages/readiff/plugins/amp/skills/stacked-prs;
+        force = true;
+      };
       home.file.".config/amp/plugins/desloppify.ts" = {
         source = ../packages/readiff/plugins/amp/desloppify.ts;
         force = true;

@@ -219,7 +219,7 @@ lifetime. Notes and feedback are shared across comparisons in a worktree.
 
 For a live Amp session, `:harness install amp` installs the readiff and desloppify
 plugins. Alternatively, enable `programs.rediff.ampPlugin.enable` in Home Manager. Reload Amp's
-plugins, then run `:harness connect amp`. `:harness list` shows available and
+plugins and skills, then run `:harness connect amp`. `:harness list` shows available and
 connected sessions, their worktrees, and activity.
 
 Amp's command palette provides two branch-splitting commands:
@@ -235,9 +235,12 @@ changes can branch from the target or a shared prerequisite. Reviewability
 determines the boundaries, without a line-count limit. Both commands require an
 active thread and work without an editor connection.
 
-You can also request “stacked PRs” in an ordinary Amp prompt. The readiff plugin
-supplies the same GitHub publication and PR-description guidance on every turn,
-including follow-ups after branches have been pushed.
+Both commands use the `stacked-prs` skill, installed alongside the plugins at
+`~/.config/agents/skills/stacked-prs/`. You can also request “stacked PR”
+or “stacked PRs” in an ordinary Amp prompt to trigger a reminder to load it.
+The skill covers GitHub publication with `gh stack`, including already-pushed
+branches and existing PRs, and PR descriptions focused on each PR's own change.
+You can explicitly ask Amp to use `stacked-prs` for a follow-up.
 
 The independent desloppify plugin supplies readable-code and plain-English guidance on every
 turn, including the first, without requiring an editor connection. Run

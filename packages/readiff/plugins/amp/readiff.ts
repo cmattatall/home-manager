@@ -55,21 +55,17 @@ type Outcome = { content: string; result: Promise<Set<ThreadMessageID>>; confirm
 const HEARTBEAT_MS = 15_000
 const MAX_STREAM_BUFFER = 64 * 1024
 
-const stackedPrPublicationGuidance = `When preparing or publishing stacked PRs on GitHub, including requests phrased as "stacked PR" or "stacked PRs", use gh stack to create or update the GitHub stack. This includes branches or PRs that already exist. Keep planning requests read-only and obtain any required publication approval before changing remote state.
-
-Inspect gh stack --help and the relevant subcommand help before use. After pushing the branches to the GitHub remote, complete the remote stacking with gh stack. For a locally tracked stack, gh stack submit pushes the branches before creating or updating the GitHub stack. For already-pushed branches or existing PRs, use gh stack link with the branches or PRs in bottom-to-top dependency order. Verify the remote stack membership and PR bases before reporting publication complete. Pushed branches or chained PR bases alone are not a completed GitHub stack. If gh stack is unavailable, report the blocker rather than substituting a manual GitHub PR workflow.`
-
-const stackedPrDescriptionGuidance = `PR descriptions must explain that PR's purpose, approach, and validation. They may describe the overarching goal and how this PR contributes to it, while distinguishing what this PR delivers from future work. For stacked PRs, never say that a PR is stacked or reference the stack, its size or order, or other PRs as predecessors or successors. This applies to generated descriptions as well as descriptions you write. Let gh stack supply the relationships in GitHub's stack UI. Read existing descriptions before editing them and preserve others' unrelated edits.`
+const stackedPrSkillRequest = 'Load the stacked-prs skill before handling this request. Keep the requested scope and approval boundaries.'
 
 const branchSplitGuidance = `Optimize for human reviewability, not diff size. There is no line-count cap.
+
+${stackedPrSkillRequest}
 
 Use any explicitly named scope. Otherwise identify this thread's work, including relevant uncommitted changes and commits relative to the appropriate base. Inspect repository guidance, Git state, and publication status. Do not assume all changes in a shared checkout belong to this task. Ask if ownership or the base is ambiguous.
 
 Shape the stack around actual dependencies. Orthogonal changes may form independent branches based on the target branch or a shared prerequisite. Use a linear chain when each PR depends on the preceding PR. Each PR must be valid with its ancestors, without requiring descendants or sibling branches. Review its incremental diff against its parent, not the cumulative diff against the target branch.
 
 Give every branch in the stack, including all branches based directly on the target, a common task-specific prefix so the branches are easy to search and filter. For example: auth-refresh/foundation, auth-refresh/api, and auth-refresh/ui. Keep the target branch's existing name, such as main.
-
-${stackedPrDescriptionGuidance}
 
 Each PR should have one coherent purpose. Order by actual dependencies, not mandatory architectural layers. Put necessary, behavior-preserving preparatory refactors before the changes they enable and keep them separate from behavior changes. Do not add unrelated cleanup or force a split that makes the work harder to understand. One PR is acceptable when further splitting would be artificial.
 
@@ -88,8 +84,6 @@ Explain the proposed boundaries and validation needed for each branch. Report as
 const branchSplitPushRequest = `Split the current work into reviewable branches and publish the resulting PRs after explicit publication approval. Reuse a proposal already agreed in this thread, adjusting it only when the current work or validation requires it.
 
 ${branchSplitGuidance}
-
-${stackedPrPublicationGuidance}
 
 Split interleaved hunks and reconstruct intermediate versions as needed to implement the boundaries.
 
@@ -470,9 +464,11 @@ export default async function readiffPlugin(amp: PluginAPI): Promise<void> {
   // Also registers after reloading the plugin in an already-open session.
   amp.on('agent.start', async (event, ctx) => {
     await autoConnect(event, ctx)
+    if (!/\bstacked\s+PRs?\b/i.test(event.message)) return
+
     return {
       message: {
-        content: `${stackedPrPublicationGuidance}\n\n${stackedPrDescriptionGuidance}`,
+        content: stackedPrSkillRequest,
         display: false,
       },
     }

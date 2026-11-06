@@ -142,6 +142,7 @@ class AmpLiveTests(unittest.TestCase):
         method, authenticated, body = Handler.requests[-1]
         self.assertEqual(("POST", True), (method, authenticated))
         self.assertIn("reload_plugins", body["content"])
+        self.assertIn("reload_skills", body["content"])
         self.assertLess(len(json.dumps(body)), 600)
         amp_live.request_reload(self.connection, THREAD, self.root)
         self.assertNotEqual(body["id"], Handler.requests[-1][2]["id"])

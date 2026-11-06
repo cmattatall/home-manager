@@ -348,9 +348,9 @@ def request_reload(connection_path, expected_thread, root):
     body = json.dumps({
         "id": "reload-" + uuid.uuid4().hex,
         "content": (
-            "I just confirmed :harness install amp in rediff and installed the updated readiff plugin. "
-            "Please call reload_plugins now to activate it. This request authorizes only that reload; "
-            "do not install anything else, edit files, or change Git state. Continue any existing work afterward."
+            "I just confirmed :harness install amp in rediff and installed the updated plugins and skills. "
+            "Please call reload_plugins and reload_skills now to activate them. This request authorizes only those reloads. "
+            "Do not install anything else, edit files, or change Git state. Continue any existing work afterward."
         ),
     }).encode()
     try:

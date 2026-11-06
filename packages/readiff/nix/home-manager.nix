@@ -89,6 +89,9 @@ in
     home.file.".config/amp/plugins/readiff.ts" = lib.mkIf cfg.ampPlugin.enable {
       source = ../plugins/amp/readiff.ts;
     };
+    home.file.".config/agents/skills/stacked-prs" = lib.mkIf cfg.ampPlugin.enable {
+      source = ../plugins/amp/skills/stacked-prs;
+    };
     home.file.".config/amp/plugins/desloppify.ts" = lib.mkIf cfg.ampPlugin.enable {
       source = ../plugins/amp/desloppify.ts;
     };

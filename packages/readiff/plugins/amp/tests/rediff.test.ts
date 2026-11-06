@@ -177,8 +177,7 @@ for (const name of ['branch-split-propose', 'branch-split-push']) {
     assert.match(message.content, /human reviewability/)
     assert.match(message.content, /Orthogonal changes may form independent branches based on the target branch or a shared prerequisite/)
     assert.match(message.content, /every branch.*common task-specific prefix/)
-    assert.match(message.content, /may describe the overarching goal and how this PR contributes to it/)
-    assert.match(message.content, /never say that a PR is stacked or reference the stack/)
+    assert.match(message.content, /Load the stacked-prs skill/)
     assert.match(message.content, /incremental diff sizes as \+added \/ -deleted lines for every branch/)
     assert.match(message.content, /Measure each slice against its own parent, including in-scope uncommitted and untracked content/)
     assert.match(message.content, /label estimates explicitly, and report binary changes separately/)
@@ -194,8 +193,6 @@ for (const name of ['branch-split-propose', 'branch-split-push']) {
     } else {
       assert.match(message.content, /Reuse a proposal already agreed in this thread/)
       assert.match(message.content, /checks, lint, and tests using only that PR and its ancestors/)
-      assert.match(message.content, /use gh stack to create or update the GitHub stack/)
-      assert.match(message.content, /For already-pushed branches or existing PRs, use gh stack link/)
       assert.match(message.content, /recoverable snapshot of both content and staging/)
       assert.match(message.content, /active checkout on a stack tip with no duplicate in-scope changes/)
       assert.match(message.content, /For a branched stack, select one tip and report which in-scope work is on the other tips/)
@@ -214,32 +211,35 @@ for (const name of ['branch-split-propose', 'branch-split-push']) {
   })
 }
 
-test('stacked PR guidance reaches ordinary prompts and follow-up turns without an editor connection', async (t) => {
+test('stacked PR phrases request the bundled skill without an editor connection', async (t) => {
   const f = fakeAmp()
   await plugin(f.amp)
   t.after(() => Promise.all(f.disposers.map((dispose) => dispose())))
+  const skill = await readFile(new URL('../skills/stacked-prs/SKILL.md', import.meta.url), 'utf8')
+  assert.match(skill, /^name: stacked-prs$/m)
+
   const start = f.events.get('agent.start')!
   const context = { ...f.context('T-stack'), system: {} }
-  const first = await start({ message: 'Create stacked PRs for this work.' }, context)
-  const followUp = await start({ message: 'The branches are pushed. Finish publishing.' }, context)
-  const otherThread = await start(
-    { message: 'Fix this typo.' },
-    { ...f.context('T-other'), system: {} },
-  )
-
-  assert.equal(first.message.display, false)
-  assert.match(first.message.content, /"stacked PR" or "stacked PRs"/)
-  assert.match(first.message.content, /After pushing the branches to the GitHub remote, complete the remote stacking with gh stack/)
-  assert.match(first.message.content, /gh stack submit pushes the branches before creating or updating the GitHub stack/)
-  assert.match(first.message.content, /use gh stack link.*bottom-to-top dependency order/)
-  assert.match(first.message.content, /Verify the remote stack membership and PR bases/)
-  assert.match(first.message.content, /never say that a PR is stacked or reference the stack/)
-  assert.match(first.message.content, /generated descriptions as well as descriptions you write/)
-  assert.match(first.message.content, /Keep planning requests read-only/)
-  assert.match(first.message.content, /obtain any required publication approval before changing remote state/)
-  assert.match(first.message.content, /If gh stack is unavailable, report the blocker/)
-  assert.deepEqual(followUp, first)
-  assert.deepEqual(otherThread, first)
+  for (const message of [
+    'Propose a stacked PR.',
+    'Create stacked PRs for this work.',
+    'Finish the already-pushed STACKED PRS.',
+    'Use "stacked\nPRs" here.',
+  ]) {
+    const result = await start({ message }, context)
+    assert.equal(result.message.display, false, message)
+    assert.match(result.message.content, /Load the stacked-prs skill/, message)
+  }
+  for (const message of [
+    'Fix this typo.',
+    'The branches are pushed. Finish publishing.',
+    'Explain unstacked PRs.',
+    'Describe stacked processes.',
+  ]) {
+    assert.equal(await start({ message }, context), undefined, message)
+  }
+  const otherThread = { ...f.context('T-other'), system: {} }
+  assert.equal(await start({ message: 'Fix this typo.' }, otherThread), undefined)
   assert.equal(f.messages.size, 0)
 })
 

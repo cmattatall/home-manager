@@ -135,6 +135,7 @@ stdenv.mkDerivation {
     mkdir -p "$out/share/rediff/amp"
     cp ${../plugins/amp/readiff.ts} "$out/share/rediff/amp/readiff.ts"
     cp ${../plugins/amp/desloppify.ts} "$out/share/rediff/amp/desloppify.ts"
+    cp -R ${../plugins/amp/skills} "$out/share/rediff/amp/skills"
     cp ${../plugins/amp/install.sh} "$out/share/rediff/amp/install.sh"
     makeWrapper ${bash}/bin/bash "$out/bin/rediff-install-amp-plugin" \
       --prefix PATH : ${

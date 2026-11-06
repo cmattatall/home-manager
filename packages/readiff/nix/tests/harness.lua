@@ -49,6 +49,11 @@ return function(root, equal, fails, keys)
 			"Editor installs the separate guidance plugin"
 		)
 		equal(
+			vim.fn.readfile(vim.env.REDIFF_RUNTIME .. "/amp/skills/stacked-prs/SKILL.md"),
+			vim.fn.readfile(install_home .. "/.config/agents/skills/stacked-prs/SKILL.md"),
+			"Editor installs the stacked PR skill"
+		)
+		equal(
 			{ "ctrl+l", "esc esc" },
 			vim.json.decode(table.concat(vim.fn.readfile(install_home .. "/.config/amp/settings.json"), "\n"))["amp.keymap"]["thread.interrupt"],
 			"Harness install supports native and editor-translated interrupt keys"

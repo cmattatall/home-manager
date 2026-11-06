@@ -66,6 +66,7 @@ assert !(aliased.home.file ? ".config/rediff/standalone-owner");
 assert !(aliased.home.file ? ".config/amp/plugins/rediff.ts");
 assert !(aliased.home.file ? ".config/amp/plugins/readiff.ts");
 assert !(aliased.home.file ? ".config/amp/plugins/desloppify.ts");
+assert !(aliased.home.file ? ".config/agents/skills/stacked-prs");
 assert !(ampEnabled.home.file ? ".config/amp/plugins/rediff.ts");
 assert
   builtins.readFile ampEnabled.home.file.".config/amp/plugins/readiff.ts".source
@@ -73,6 +74,9 @@ assert
 assert
   builtins.readFile ampEnabled.home.file.".config/amp/plugins/desloppify.ts".source
   == builtins.readFile ../../plugins/amp/desloppify.ts;
+assert
+  builtins.readFile (ampEnabled.home.file.".config/agents/skills/stacked-prs".source + "/SKILL.md")
+  == builtins.readFile ../../plugins/amp/skills/stacked-prs/SKILL.md;
 assert !(aliased.home.file ? ".omp/agent/extensions/rediff.ts");
 assert
   builtins.fromJSON aliased.xdg.configFile."rediff/settings.json".text == {

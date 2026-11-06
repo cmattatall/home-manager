@@ -4,7 +4,7 @@ set -euo pipefail
 case "${1:-}" in
     --help|-h)
         echo "Usage: $0"
-        echo "Installs readiff and desloppify for this user. Backs up the old rediff plugin. Does not reload Amp."
+        echo "Installs readiff, desloppify, and the stacked-prs skill for this user. Backs up the old rediff plugin. Does not reload Amp."
         echo "Sets amp.keymap thread.interrupt to ctrl+l and esc esc, preserving other settings. Requires Python 3."
         exit 0 ;;
 esac
@@ -14,13 +14,22 @@ source_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 destination_dir="${HOME:?HOME must be set}/.config/amp/plugins"
 legacy="$destination_dir/rediff.ts"
 settings="$HOME/.config/amp/settings.json"
+skill_dir="$HOME/.config/agents/skills/stacked-prs"
+skill_file="$skill_dir/SKILL.md"
 
-for path in "$destination_dir/readiff.ts" "$destination_dir/desloppify.ts" "$legacy" "$settings"; do
+for path in \
+    "$destination_dir/readiff.ts" \
+    "$destination_dir/desloppify.ts" \
+    "$legacy" "$settings" "$skill_file"; do
     if [ -L "$path" ] || { [ -e "$path" ] && [ ! -f "$path" ]; }; then
         echo "Refusing to replace a symlink or non-file: $path (use Home Manager if it owns this file)." >&2
         exit 1
     fi
 done
+if [ -L "$skill_dir" ] || { [ -e "$skill_dir" ] && [ ! -d "$skill_dir" ]; }; then
+    echo "Refusing to replace a symlink or non-directory: $skill_dir (use Home Manager if it owns this directory)." >&2
+    exit 1
+fi
 
 mkdir -p "$destination_dir"
 temporary=$(mktemp -d "$destination_dir/.amp-install.XXXXXX")
@@ -29,6 +38,8 @@ for name in readiff desloppify; do
     cp "$source_dir/$name.ts" "$temporary/$name.ts"
     chmod 644 "$temporary/$name.ts"
 done
+cp "$source_dir/skills/stacked-prs/SKILL.md" "$temporary/SKILL.md"
+chmod 644 "$temporary/SKILL.md"
 
 # Validate settings first so a failed merge leaves the installed plugins intact.
 python3 - "$settings" <<'PY'
@@ -74,8 +85,11 @@ for name in readiff desloppify; do
     mv -f "$temporary/$name.ts" "$destination_dir/$name.ts"
     printf 'Installed %s\n' "$destination_dir/$name.ts"
 done
+mkdir -p "$skill_dir"
+mv -f "$temporary/SKILL.md" "$skill_file"
+printf 'Installed %s\n' "$skill_file"
 printf 'Configured Ctrl+L and Esc Esc to interrupt Amp; other settings and keybindings preserved.\n'
 printf 'In the Amp pane, Ctrl+L sends Escape: once to dismiss/back, twice to interrupt.\n'
-printf 'Restart Amp or reload its plugins, then run :harness connect amp in rediff.\n'
+printf 'Restart Amp or reload its plugins and skills, then run :harness connect amp in rediff.\n'
 printf 'Desloppify supplies coding guidance on every turn and adds code: desloppify to the Amp command palette.\n'
 printf 'No other plugins were changed. No reload was performed.\n'
