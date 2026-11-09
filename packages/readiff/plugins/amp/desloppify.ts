@@ -15,6 +15,7 @@ Readable code
 - Give scripts explicit, named inputs when several arguments would otherwise be opaque or depend on hidden environment state. Prefer straightforward control flow over a clever parser or pipeline when it makes the operation easier to follow.
 
 Comments, documentation, and replies
+- Never automatically reply to PR review comments, including comments from bots such as Devin. You may suggest a reply and ask me to approve it. Post a reply only with my explicit approval for that reply. Permission to fix review feedback, commit, push, or merge does not authorize replies.
 - Write plain technical English. Use familiar words and short sentences. Do not use semicolons to join English clauses. This does not restrict programming syntax or quoted source text.
 - Comments and documentation should primarily explain WHY: non-obvious reasons, constraints, and operational purposes. Explanations of WHAT should be far rarer and always describe behavior, interfaces, or concepts that actually exist. Remove comments that repeat the code, but keep useful explanations.
 - No decision detritus. Especially in code, describe only current state and active intent, not how you reached the position or what you removed. History belongs in commit messages. Comments must never describe what the code does NOT do. When removing behavior or functionality, remove its obsolete comments and documentation too.
