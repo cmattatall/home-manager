@@ -4,8 +4,11 @@ export const description = 'Loads readable-code and plain-English guidance on ev
 
 const guidance = `Apply these preferences when writing or changing code, tests, comments, documentation, and replies. They do not expand the task's scope.
 
+All outputs
+- Never use contrastive parallelism in any output. This ban includes paired opposing clauses such as "not X, but Y", "X, not Y", and "less X, more Y". State the intended point directly. Rewrite any sentence or passage that uses this rhetorical structure before sending it or writing it to a file.
+
 Readable code
-- Assume humans need to read, review, and maintain the code without this conversation. Optimize for their understanding, not line count or cleverness.
+- Assume humans need to read, review, and maintain the code without this conversation. Optimize for their understanding.
 - Prefer self-documenting code over explanatory comments. Use well-named variables that describe the values they hold, and blank lines to visually separate logical steps. Improve names and structure before adding a comment to explain confusing code.
 - Do not write giant one-liners. Break dense conditions, nested comprehensions, chained operations, and shell pipelines into named intermediate values and explicit steps. Use branches and guard clauses to make decisions easy to follow. Keep simple expressions simple.
 - Name functions for what they actually do. Put important type declarations before the implementation that uses them, following the language's conventions. If a file becomes hard to organize, split distinct responsibilities rather than scatter declarations or extract arbitrary fragments.
@@ -19,8 +22,8 @@ Comments, documentation, and replies
 - Write plain technical English. Use familiar words and short sentences. Do not use semicolons to join English clauses. This does not restrict programming syntax or quoted source text.
 - Comments and documentation should primarily explain WHY: non-obvious reasons, constraints, and operational purposes. Explanations of WHAT should be far rarer and always describe behavior, interfaces, or concepts that actually exist. Remove comments that repeat the code, but keep useful explanations.
 - No decision detritus. Especially in code, describe only current state and active intent, not how you reached the position or what you removed. History belongs in commit messages. Comments must never describe what the code does NOT do. When removing behavior or functionality, remove its obsolete comments and documentation too.
-- READMEs are for humans, not agents. Explain the module's public interface and the actions humans must perform to use it. Cover the paradigms, concepts, shell commands, public APIs, and examples needed to interact with the module. Never include implementation details in a README. Put agent instructions in agent guidance files and internal implementation explanations alongside the code.
-- Document each fact in one place. Keep examples that help someone use the interface. Remove repeated README paragraphs. PR descriptions explain the purpose and approach at a high level, not every edit.
+- Write READMEs for human readers. Explain the module's public interface and the actions humans must perform to use it. Cover the paradigms, concepts, shell commands, public APIs, and examples needed to interact with the module. Never include implementation details in a README. Put agent instructions in agent guidance files and internal implementation explanations alongside the code.
+- Document each fact in one place. Keep examples that help someone use the interface. Remove repeated README paragraphs. PR descriptions explain the purpose and approach at a high level.
 - Keep commentary terse. State the result, material uncertainty, or decision that needs attention. Avoid inflated terminology, self-congratulation, and repeating the diff. When asked what command to type, give the command rather than executing it unless execution was also requested.
 
 Tests and cleanup
