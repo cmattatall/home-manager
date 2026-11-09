@@ -223,6 +223,16 @@ class EditorUI(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline, condition)
             pump(editor)
 
+    def wait_for_index_contents(self, editor, path, expected):
+        revision = json.dumps(":" + path)
+        contents = json.dumps(expected.decode())
+        self.wait_for(editor, f"""
+            (function()
+                local actual, code = require('rediff.git').run(s.root, {{'show', {revision}}}, nil, true)
+                return code == 0 and actual == {contents}
+            end)()
+        """)
+
     def search_refs(self, editor):
         self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-graph'")
         self.keys(editor, "/")
@@ -1050,6 +1060,32 @@ class EditorUI(unittest.TestCase):
                 "vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false))"
             )
 
+        def choose_ref(query, label, key):
+            self.keys(editor, "<C-u>" + query)
+            self.wait_for(editor, f"""
+                (function()
+                    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+                        if vim.bo[buf].filetype == 'rediff-ref-details' then
+                            local heading = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]
+                            return heading:find({json.dumps(label)}, 1, true) ~= nil
+                        end
+                    end
+                    return false
+                end)()
+            """)
+            self.lua(editor, """
+                vim.g.test_comparison_changed = false
+                vim.api.nvim_create_autocmd('User', {
+                    pattern = 'ReviewComparisonChanged', once = true,
+                    callback = function() vim.g.test_comparison_changed = true end,
+                })
+            """)
+            self.keys(editor, key)
+            self.wait_for(
+                editor,
+                "vim.g.test_comparison_changed and vim.bo.filetype == 'rediff-ref-search'",
+            )
+
         self.assertEqual(" Local changes", sidebar()[0])
         self.assertIn(" ▾ STAGED (1)", sidebar())
         self.assertIn(" ▾ UNSTAGED (2)", sidebar())
@@ -1064,10 +1100,9 @@ class EditorUI(unittest.TestCase):
         self.assertIn("Index", "\n".join(header[:]))
         self.assertIn("Changes", "\n".join(header[:]))
         self.assertNotIn("HEAD", "\n".join(header[:]))
-        self.keys(editor, "=HEAD")
-        self.keys(editor, "<C-t><C-u>")
-        self.keys(editor, "=HEAD~1")
-        self.keys(editor, "<C-b> r")
+        choose_ref("=HEAD", tip[:8], "<C-t>")
+        choose_ref("=HEAD~1", base[:8], "<C-b>")
+        self.keys(editor, " r")
         self.assertEqual(
             [base, tip],
             self.lua(editor, "return {s.comparison.base, s.comparison.head}"),
@@ -1085,10 +1120,8 @@ class EditorUI(unittest.TestCase):
 
         self.keys(editor, " g")
         self.search_refs(editor)
-        self.keys(editor, "Index")
-        self.keys(editor, "<C-b><C-u>")
-        self.keys(editor, "Changes")
-        self.keys(editor, "<C-t>")
+        choose_ref("Index", "Index", "<C-b>")
+        choose_ref("Changes", "Changes", "<C-t>")
         self.assertEqual("rediff-ref-search", editor.current.buffer.options["filetype"])
         self.assertEqual(["unstaged"], self.lua(editor, "return s.groups"))
         self.assertIn(" Base: Index", sidebar())
@@ -1106,8 +1139,7 @@ class EditorUI(unittest.TestCase):
         self.wait_for(editor, "s.current.new == 'live unstaged edit\\n'")
         self.keys(editor, " g")
         self.search_refs(editor)
-        self.keys(editor, "=HEAD~1")
-        self.keys(editor, "<C-b>")
+        choose_ref("=HEAD~1", base[:8], "<C-b>")
         self.assertEqual("rediff-ref-search", editor.current.buffer.options["filetype"])
         self.assertEqual([base, "changes"], self.lua(editor, "return {s.comparison.base, s.comparison.head}"))
         self.assertEqual(5, self.lua(editor, "return #s.entries"))
@@ -1116,10 +1148,8 @@ class EditorUI(unittest.TestCase):
 
         self.keys(editor, " g")
         self.search_refs(editor)
-        self.keys(editor, "=HEAD")
-        self.keys(editor, "<C-b><C-u>")
-        self.keys(editor, "Index")
-        self.keys(editor, "<C-t>")
+        choose_ref("=HEAD", tip[:8], "<C-b>")
+        choose_ref("Index", "Index", "<C-t>")
         self.assertEqual("rediff-ref-search", editor.current.buffer.options["filetype"])
         self.assertEqual(["staged"], self.lua(editor, "return s.groups"))
         self.assertEqual(
@@ -1133,17 +1163,22 @@ class EditorUI(unittest.TestCase):
         self.assertIn("HEAD → Index", "\n".join(editor.current.buffer[:]))
         self.keys(editor, "q:git refresh-refs<CR>")
         self.keys(editor, ":ReviewUnstage file<CR>")
+        self.wait_for(editor, "#s.entries == 0")
         self.assertEqual(0, self.lua(editor, "return #s.entries"))
         self.assertEqual("", git("diff", "--cached", "--name-only"))
         self.keys(editor, ":fu<CR>")
+        self.wait_for(editor, "s.groups[1] == 'unstaged' and #s.entries == 2")
         self.assertEqual(["unstaged"], self.lua(editor, "return s.groups"))
         self.assertEqual(2, self.lua(editor, "return #s.entries"))
         self.keys(editor, ":ReviewStage file<CR>")
+        self.wait_for_index_contents(editor, "draft.txt", b"untracked\n")
         self.assertEqual("untracked", git("show", ":draft.txt"))
         self.keys(editor, ":fs<CR><Tab>:ReviewRevert<CR>")
+        self.wait_for(editor, "#s.entries == 0")
         self.assertEqual(0, self.lua(editor, "return #s.entries"))
         self.assertFalse(Path(self.root, "draft.txt").exists())
         self.keys(editor, ":Review<CR>")
+        self.wait_for(editor, "s.comparison == nil")
         self.assertIsNone(self.lua(editor, "return s.comparison"))
 
     def test_git_refs_compares_commit_index_and_working_snapshots(self):
@@ -2465,16 +2500,35 @@ class EditorUI(unittest.TestCase):
 
     def test_review_pickers_search_beyond_the_tree_filter(self):
         editor = self.launch(self.root)
+
+        def search_picker(query, selected_label):
+            self.wait_for(editor, """
+                vim.bo.filetype == 'fzf' and vim.api.nvim_get_mode().mode == 't'
+                and vim.api.nvim_buf_get_lines(0, 0, 1, false)[1]:find('> ', 1, true) ~= nil
+            """)
+            self.keys(editor, query)
+            selection = json.dumps("▌ " + selected_label, ensure_ascii=False)
+            self.wait_for(editor, f"""
+                (function()
+                    for _, line in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
+                        if line:find({selection}, 1, true) == 1 then
+                            return true
+                        end
+                    end
+                    return false
+                end)()
+            """)
+
         self.keys(editor, "/pln<CR>")
         self.keys(editor, " f")
-        self.keys(editor, "auth")
+        search_picker("auth", "[unstaged] auth.lua")
         self.keys(editor, "<Esc>")
+        self.wait_for(editor, "vim.bo.filetype ~= 'fzf'")
         self.assertEqual("pln", self.lua(editor, "return s.file_filter"))
         self.assertEqual("plan.md", self.lua(editor, "return s.current.path"))
 
         self.keys(editor, " f")
-        self.wait_for(editor, 'vim.bo.filetype == "fzf"')
-        self.keys(editor, "auth")
+        search_picker("auth", "[unstaged] auth.lua")
         self.keys(editor, "<CR>")
         self.wait_for(editor, "s.current.path == 'auth.lua'")
         self.assertEqual("", self.lua(editor, "return s.file_filter"))
@@ -2482,8 +2536,7 @@ class EditorUI(unittest.TestCase):
 
         self.keys(editor, " e/pln<CR>")
         self.keys(editor, " /")
-        self.wait_for(editor, 'vim.bo.filetype == "fzf"')
-        self.keys(editor, "local obsolete")
+        search_picker("local obsolete", "[unstaged] removed.lua:1 (old)")
         self.keys(editor, "<CR>")
         self.wait_for(editor, "s.current.path == 'removed.lua'")
         self.assertEqual("", self.lua(editor, "return s.file_filter"))
@@ -6340,10 +6393,25 @@ func greeting() string {
                 def remaining(editor=editor):
                     return self.lua(editor, "return r.notes(vim.fn.getcwd()).comments")
 
+                def wait_for_selection(note):
+                    expected = json.dumps(note["id"]) if note else "nil"
+                    self.wait_for(editor, f"""
+                        (function()
+                            local entry = require('telescope.actions.state').get_selected_entry()
+                            return vim.api.nvim_get_mode().mode == 'n'
+                                and (entry and entry.value.id) == {expected}
+                        end)()
+                    """)
+
                 opening = "@" if file_mode else ":al<CR>"
                 self.keys(editor, opening)
                 self.wait_for(editor, 'vim.bo.filetype == "TelescopePrompt"')
-                self.keys(editor, "jd")
+                wait_for_selection(notes[0])
+                self.keys(editor, "j")
+                wait_for_selection(notes[1])
+                self.keys(editor, "d")
+                self.wait_for(editor, "#r.notes(vim.fn.getcwd()).comments == 2")
+                wait_for_selection(notes[2])
                 self.assertEqual([notes[0], notes[2]], remaining())
                 self.assertEqual(
                     "TelescopePrompt", editor.current.buffer.options["filetype"]
@@ -6358,8 +6426,11 @@ func greeting() string {
 
                 # Searching for a word containing d must not delete anything.
                 self.keys(editor, "/Boundary<Esc>")
+                wait_for_selection(notes[0])
                 self.assertEqual([notes[0], notes[2]], remaining())
                 self.keys(editor, "d")
+                self.wait_for(editor, "#r.notes(vim.fn.getcwd()).comments == 1")
+                wait_for_selection(None)
                 self.assertEqual([notes[2]], remaining())
                 self.assertIn("Boundary", editor.current.buffer[0])
                 self.assertEqual(
@@ -6375,7 +6446,10 @@ func greeting() string {
                 self.assertEqual([notes[2]], remaining())
 
                 self.keys(editor, "/" + "<BS>" * len("Boundary") + "<Esc>")
+                wait_for_selection(notes[2])
                 self.keys(editor, "d")
+                self.wait_for(editor, "#r.notes(vim.fn.getcwd()).comments == 0")
+                wait_for_selection(None)
                 self.assertEqual([], remaining())
                 self.assertEqual(
                     "TelescopePrompt", editor.current.buffer.options["filetype"]
@@ -6918,7 +6992,8 @@ func greeting() string {
         """,
         )
         original = editor.current.buffer[:]
-        started = time.monotonic()
+        # Neovim's clock includes system sleep on macOS, unlike Python's clock.
+        started = self.lua(editor, "return vim.uv.hrtime() / 1e9")
         self.keys(editor, ":Harness open<CR>")
         self.wait_for(editor, "loading_text() ~= nil")
         frame = self.lua(editor, "return loading_text()")
@@ -6934,8 +7009,8 @@ func greeting() string {
         self.assertEqual(original, editor.current.buffer[:])
         self.assertFalse(self.lua(editor, "return vim.g.leaked ~= nil"))
         self.wait_for(editor, "loading_text() == nil", timeout=12)
-        self.assertGreaterEqual(time.monotonic() - started, 9.8)
-        self.assertLess(time.monotonic() - started, 11.5)
+        elapsed = self.lua(editor, "return vim.uv.hrtime() / 1e9") - started
+        self.assertGreaterEqual(elapsed, 9.8)
         self.assertIn("timed out after 10 seconds", editor.vars["startup_notice"])
         self.keys(editor, ":let g:unlocked=1<CR>")
         self.assertEqual(1, editor.vars["unlocked"])
@@ -8838,10 +8913,11 @@ func greeting() string {
             "activity('idle'); r.refresh({path='auth.lua',group='unstaged'}); "
             "vim.api.nvim_set_current_win(s.new_win)",
         )
-        started = time.monotonic()
+        started = self.lua(editor, "return vim.uv.hrtime() / 1e9")
         self.keys(editor, "r")
         self.wait_for(editor, "#sent == 4")
-        self.assertGreater(time.monotonic() - started, 4)
+        elapsed = self.lua(editor, "return vim.uv.hrtime() / 1e9") - started
+        self.assertGreater(elapsed, 4)
         self.lua(editor, "ack('accepted')")
 
         # Reintroducing the same edit is a new discard, not a transport retry.
@@ -9254,8 +9330,9 @@ func greeting() string {
                 r.refresh({{path={json.dumps(path.name)}, group='{group}'}})
                 vim.api.nvim_set_current_win(s.{pane}_win)
             """)
-            self.keys(editor, f"{line}G")
+            self.keys(editor, "gg]")
             self.wait_for(editor, "s.selected_hunk == 1")
+            self.assertEqual(line, editor.current.window.cursor[0])
 
         def assert_index(expected):
             index_contents = (
@@ -9307,17 +9384,22 @@ func greeting() string {
         self.keys(editor, "<Tab>")
         changed = Path(self.root, "auth.lua").read_bytes()
         self.keys(editor, "S")
+        self.wait_for_index_contents(editor, "auth.lua", changed)
         self.keys(editor, ":fs<CR>")
+        self.wait_for(editor, "s.current and s.current.group == 'staged'")
         self.assertEqual("staged", self.lua(editor, "return s.current.group"))
         self.keys(editor, "s")
         # The first hunk returns to HEAD while the second stays staged.
         partial = changed.replace(b"    return true\n", b"    return false\n")
+        self.wait_for_index_contents(editor, "auth.lua", partial)
         self.assertEqual(
             partial,
             subprocess.check_output(["git", "-C", self.root, "show", ":auth.lua"]),
         )
         self.keys(editor, ":fu<CR>")
+        self.wait_for(editor, "s.current and s.current.group == 'unstaged'")
         self.keys(editor, "s")
+        self.wait_for_index_contents(editor, "auth.lua", changed)
         self.assertEqual(
             changed,
             subprocess.check_output(["git", "-C", self.root, "show", ":auth.lua"]),
@@ -9345,20 +9427,29 @@ func greeting() string {
         # Both old/new panes, both layouts, and mappings after refresh.
         for layout, pane in (("split", "new"), ("split", "old"), ("merged", "new")):
             self.keys(editor, f":view {layout}<CR>:fu<CR>")
+            self.wait_for(
+                editor,
+                f"s.layout == '{layout}' and s.current and "
+                "s.current.path == 'auth.lua' and s.current.group == 'unstaged'",
+            )
             self.lua(editor, f"vim.api.nvim_set_current_win(s.{pane}_win)")
             self.keys(editor, " R")
             self.keys(editor, "S")
+            self.wait_for_index_contents(editor, "auth.lua", changed)
             self.assertEqual(
                 changed,
                 subprocess.check_output(["git", "-C", self.root, "show", ":auth.lua"]),
             )
+            self.wait_for(editor, "s.current and s.current.path == 'removed.lua'")
             self.assertEqual(
                 ["removed.lua", "unstaged"],
                 self.lua(editor, "return {s.current.path, s.current.group}"),
             )
             self.keys(editor, ":fs<CR>")
+            self.wait_for(editor, "s.current and s.current.group == 'staged'")
             self.assertEqual("staged", self.lua(editor, "return s.current.group"))
             self.keys(editor, "S")
+            self.wait_for_index_contents(editor, "auth.lua", baseline)
             self.assertEqual(
                 baseline,
                 subprocess.check_output(["git", "-C", self.root, "show", ":auth.lua"]),
@@ -9376,13 +9467,16 @@ func greeting() string {
             'for i, entry in ipairs(s.entries) do if entry.path == "plan.md" then r.show(i); break end end',
         )
         self.keys(editor, "S")
+        self.wait_for_index_contents(editor, "plan.md", Path(self.root, "plan.md").read_bytes())
         self.assertEqual(
             Path(self.root, "plan.md").read_bytes(),
             subprocess.check_output(["git", "-C", self.root, "show", ":plan.md"]),
         )
         self.keys(editor, ":fs<CR>")
+        self.wait_for(editor, "s.current and s.current.path == 'plan.md' and s.current.group == 'staged'")
         self.assertEqual("plan.md", self.lua(editor, "return s.current.path"))
         self.keys(editor, "S")
+        self.wait_for(editor, "require('rediff.git').run(s.root, {'ls-files', '--', 'plan.md'}) == ''")
         self.assertEqual(
             b"",
             subprocess.check_output(
@@ -9957,6 +10051,7 @@ func greeting() string {
             ),
         )
         self.keys(editor, "s")
+        self.wait_for_index_contents(editor, "auth.lua", b'return "second edit"\n')
         self.assertEqual(
             b'return "second edit"\n',
             subprocess.check_output(["git", "-C", self.root, "show", ":auth.lua"]),
@@ -10235,8 +10330,8 @@ func greeting() string {
         self.keys(editor, "iParent note<Esc>:w<CR>")
         self.keys(editor, ":worktree new topic<CR>")
         target = str(Path(self.root + "-topic").resolve())
-        self.assertEqual(b"refs/heads/topic\n", checkout_state(target)["branch"])
         self.wait_for(editor, "vim.fn.filereadable(vim.env.HARNESS_TEST_LOG) == 1")
+        self.assertEqual(b"refs/heads/topic\n", checkout_state(target)["branch"])
         self.assertEqual(
             [str(binary / "amp"), target, "0"], marker.read_text().splitlines()
         )
@@ -10250,6 +10345,7 @@ func greeting() string {
         )
         self.assertEqual("terminal", editor.current.buffer.options["buftype"])
         self.keys(editor, "<C-\\><C-n>:worktree switch main<CR>")
+        self.wait_for(editor, f"s.root == {json.dumps(self.root)}")
         self.assertEqual(
             [self.root, "Parent note", "none", True],
             self.lua(
@@ -10266,9 +10362,12 @@ func greeting() string {
             index, subprocess.check_output(["git", "-C", self.root, "write-tree"])
         )
         self.keys(editor, ":worktree list<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-worktrees'")
         self.keys(editor, "j<CR>")
+        self.wait_for(editor, f"s.root == {json.dumps(target)}")
         self.assertEqual(target, self.lua(editor, "return s.root"))
         self.keys(editor, ":worktree switch<CR>")
+        self.wait_for(editor, "vim.bo.filetype == 'rediff-worktrees'")
         self.assertNotIn("new", editor.current.buffer[0])
         self.assertNotIn("delete", editor.current.buffer[0])
         self.keys(editor, "ndd")
@@ -10276,6 +10375,7 @@ func greeting() string {
         self.assertEqual("rediff-worktrees", editor.current.buffer.options["filetype"])
         self.assertTrue(Path(target).exists())
         self.keys(editor, "k<CR>")
+        self.wait_for(editor, f"s.root == {json.dumps(self.root)}")
         self.assertEqual(self.root, self.lua(editor, "return s.root"))
         # Changing provider clears an incompatible feedback connection, not drafts.
         self.keys(editor, ":harness use claude<CR>")

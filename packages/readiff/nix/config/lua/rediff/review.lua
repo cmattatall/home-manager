@@ -557,7 +557,13 @@ local function focus_hunk(index, keep_fold)
 	select_tree_file(keep_fold)
 	local panes = { { s.new_win, s.new_buf, "new" } }
 	if s.old_win then
-		table.insert(panes, 1, { s.old_win, s.old_buf, "old" })
+		local old_pane = { s.old_win, s.old_buf, "old" }
+		-- Bound scrolling can move the peer's cursor. Center the focused pane last.
+		if api.nvim_get_current_win() == s.old_win then
+			table.insert(panes, old_pane)
+		else
+			table.insert(panes, 1, old_pane)
+		end
 	end
 	for _, pane in ipairs(panes) do
 		local win, buf, side = unpack(pane)
@@ -1910,6 +1916,7 @@ local function pick_comments(comments, action)
 			prompt_title = "Annotations",
 			results_title = "d: delete | i /: search | Enter: open",
 			initial_mode = "normal",
+			selection_strategy = "row",
 			previewer = false,
 			sorting_strategy = "ascending",
 			layout_config = { width = 0.85, height = 0.8, prompt_position = "top" },
