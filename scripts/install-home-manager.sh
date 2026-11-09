@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build and activate this flake's Home Manager configuration for the current
-# user on this machine. Usage: scripts/install-home-manager.sh [--remote] [profile]
+# user. Usage: scripts/install-home-manager.sh [--remote | --host HOST] [profile]
 # --remote works without a checkout: create a pinned ~/home.nix and activate it.
+# --host runs that installation over SSH using the target account and platform.
 #
 # The profile defaults to the native one (development-node, macbook or
 # macbook-intel); home.username/home.homeDirectory come from `id -un`/$HOME.
@@ -22,14 +23,24 @@ die() {
 say() { echo "install-home-manager: $*"; }
 
 remote=false
+host=
 profile=
-for arg in "$@"; do
+while [ "$#" -gt 0 ]; do
+	arg=$1
+	shift
 	case "$arg" in
 	--remote) remote=true ;;
+	--host)
+		[ -z "$host" ] || die "specify only one host"
+		[ "$#" -gt 0 ] && [ -n "$1" ] || die "--host requires an SSH destination"
+		case "$1" in -*) die "--host requires an SSH destination, not an option" ;; esac
+		host=$1
+		shift ;;
 	-h|--help)
-		echo "Usage: $0 [--remote] [development-node|macbook|macbook-intel]"
+		echo "Usage: $0 [--remote | --host HOST] [development-node|macbook|macbook-intel]"
 		echo "Default: build and activate the local checkout."
 		echo "--remote: create ~/home.nix pinned to published main and activate it (requires Nix)."
+		echo "--host HOST: run --remote over SSH as HOST (user@hostname or SSH alias)."
 		exit 0 ;;
 	development-node|macbook|macbook-intel)
 		[ -z "$profile" ] || die "specify only one profile"
@@ -37,6 +48,17 @@ for arg in "$@"; do
 	*) die "unknown argument: $arg (use --help)" ;;
 	esac
 done
+
+if [ -n "$host" ]; then
+	[ "$remote" = false ] || die "use either --host or --remote"
+	remote_command='bash -s -- --remote'
+	# Only the profile allowlist above may contribute remote shell syntax.
+	if [ -n "$profile" ]; then
+		remote_command="$remote_command $profile"
+	fi
+	say "installing published main on $host"
+	exec ssh -T -- "$host" "$remote_command" < "$here/$(basename "$0")"
+fi
 
 [ "$(id -u)" != 0 ] || die "run as a normal user, not root"
 user=$(id -un)

@@ -44,6 +44,14 @@ MOCKS = {
         [ -z "${MOCK_SYSTEMCTL_FAIL:-}" ] || exit 1
         echo "$MOCK_LOADSTATE"
     """,
+    "ssh": """
+        log ssh "$@"
+        [ -z "${MOCK_SSH_RC:-}" ] || exit "$MOCK_SSH_RC"
+        [ "$1" = -T ] && [ "$2" = -- ] || exit 2
+        shift 3
+        export MOCK_UID=1000 MOCK_USER=remote-user MOCK_OS=Linux MOCK_ARCH=x86_64
+        exec bash -c "$*"
+    """,
     "curl": """
         log curl "$@"
         [ -z "${MOCK_CURL_FAIL:-}" ] || exit 22
@@ -439,6 +447,80 @@ class InstallHomeManagerTest(SandboxTest):
         self.sb.nix_on_path()
         r = self.sb.run(INSTALL_HM, MOCK_NIX_BROKEN="1")
         self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self.sb.calls("nix"), [])
+        self.assertEqual(self.sb.calls("activate"), [])
+
+
+class SshHomeManagerTest(SandboxTest):
+    def test_invalid_arguments_never_connect(self):
+        for args in (
+            ("--host",),
+            ("--host", ""),
+            ("--host", "-oProxyCommand=anything"),
+            ("--host", "node", "--host", "other"),
+            ("--host", "node", "--remote"),
+            ("--host", "node", "macbook; touch injected"),
+        ):
+            with self.subTest(args=args):
+                result = self.sb.run(INSTALL_HM, *args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.sb.calls("ssh"), [])
+                self.assertEqual(self.sb.calls("activate"), [])
+
+    def test_ssh_failure_propagates_without_local_installation(self):
+        result = self.sb.run(INSTALL_HM, "--host", "dev-node", MOCK_SSH_RC="255")
+        self.assertEqual(result.returncode, 255)
+        self.assertFalse((self.sb.home / "home.nix").exists())
+        self.assertEqual(self.sb.calls("nix"), [])
+        self.assertEqual(self.sb.calls("curl"), [])
+
+    def test_target_requires_nix(self):
+        result = self.sb.run(INSTALL_HM, "--host", "dev-node")
+        self.assertFailed(result, "requires a working nix")
+        self.assertFalse((self.sb.home / "home.nix").exists())
+
+    @unittest.skipUnless(shutil.which("nix"), "Nix is required")
+    def test_ssh_install_uses_target_identity_and_profile(self):
+        self.sb.nix_on_path()
+        for profile in (None, "macbook-intel"):
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                args = ["--host", "remote-user@dev-node"]
+                if profile:
+                    args.append(profile)
+                result = self.sb.run(
+                    INSTALL_HM, *args, HOME=str(home), MOCK_UID="0",
+                    MOCK_OS="Unsupported", MOCK_ACTIVATE_RC="7",
+                )
+                self.assertEqual(result.returncode, 7, result.stderr)
+                build = self.sb.build_env()
+                self.assertEqual(build["HM_PROFILE"], profile or "development-node")
+                self.assertEqual(build["HM_USERNAME"], "remote-user")
+                self.assertEqual(build["HM_HOME"], str(home))
+                self.assertEqual(build["HM_CONFIG_FILE"], str(home / "home.nix"))
+                self.assertEqual(
+                    build["HM_FLAKE_DIR"],
+                    "git+https://github.com/cmattatall/home-manager.git?rev="
+                    + self.sb.env["MOCK_REVISION"],
+                )
+                config = (home / "home.nix").read_text()
+                module = "macbook" if profile else "development-node"
+                self.assertIn(f"personal.homeModules.{module}", config)
+                self.assertIn('home.username = "remote-user";', config)
+                self.assertEqual(self.sb.calls("activate")[-1][0], str(home))
+
+    def test_target_safety_checks_are_preserved(self):
+        self.sb.nixos()
+        result = self.sb.run(INSTALL_HM, "--host", "dev-node", MOCK_LOADSTATE="loaded")
+        self.assertOk(result)
+        self.assertIn("home-manager-remote-user.service", result.stdout)
+        config = self.sb.home / "home.nix"
+        self.assertFalse(config.exists())
+
+        config.write_text("personal edits\n")
+        result = self.sb.run(INSTALL_HM, "--host", "dev-node")
+        self.assertFailed(result, "already exists")
+        self.assertEqual(config.read_text(), "personal edits\n")
         self.assertEqual(self.sb.calls("nix"), [])
         self.assertEqual(self.sb.calls("activate"), [])
 

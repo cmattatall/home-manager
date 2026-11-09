@@ -152,10 +152,29 @@ git pull --ff-only
 ./scripts/install-home-manager.sh
 ```
 
-### Install on a remote NixOS node without cloning
+### Install on an SSH host
 
-After SSHing into a development node, download and review the installer, then
-run it with `--remote` as your normal user:
+From your local checkout, run:
+
+```sh
+./scripts/install-home-manager.sh --host user@hostname
+```
+
+The destination can also be an IP address or an alias from `~/.ssh/config`.
+SSH uses your normal authentication, host-key checks, and configured port or
+jump host. Use the target's normal user account, not root. Bash and working Nix
+must already be available there. No local Nix installation or remote checkout is
+needed.
+
+This installs **published `main`**, not local uncommitted or unpushed changes.
+It detects the target's platform and account. To select a profile explicitly:
+
+```sh
+./scripts/install-home-manager.sh --host dev-node development-node
+```
+
+`--host` runs the installer's `--remote` mode over SSH. To run that mode directly
+on a target without cloning, download and review the installer there:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/cmattatall/home-manager/main/scripts/install-home-manager.sh \
