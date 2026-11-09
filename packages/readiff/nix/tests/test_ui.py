@@ -233,6 +233,24 @@ class EditorUI(unittest.TestCase):
             end)()
         """)
 
+    def search_fzf(self, editor, query, selected_label):
+        self.wait_for(editor, """
+            vim.bo.filetype == 'fzf' and vim.api.nvim_get_mode().mode == 't'
+            and vim.api.nvim_buf_get_lines(0, 0, 1, false)[1]:find('> ', 1, true) ~= nil
+        """)
+        self.keys(editor, query)
+        selection = json.dumps("▌ " + selected_label, ensure_ascii=False)
+        self.wait_for(editor, f"""
+            (function()
+                for _, line in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
+                    if line:find({selection}, 1, true) == 1 then
+                        return true
+                    end
+                end
+                return false
+            end)()
+        """)
+
     def search_refs(self, editor):
         self.wait_for(editor, "vim.bo.filetype == 'rediff-ref-graph'")
         self.keys(editor, "/")
@@ -497,8 +515,7 @@ class EditorUI(unittest.TestCase):
         for expected in ("Comparison 2 of 3", base, tip, "Checkout: main", "origin/middle"):
             self.assertIn(expected, text)
         self.keys(editor, "q:git stack<CR>")
-        self.wait_for(editor, "vim.bo.filetype == 'fzf'")
-        self.keys(editor, "review-base")
+        self.search_fzf(editor, "review-base", f"1   {base[:12]} (review-base)")
         self.keys(editor, "<CR>")
         self.wait_for(
             editor, "s.comparison.base_ref == 'review-base' and vim.bo.filetype ~= 'fzf'"
@@ -2500,35 +2517,16 @@ class EditorUI(unittest.TestCase):
 
     def test_review_pickers_search_beyond_the_tree_filter(self):
         editor = self.launch(self.root)
-
-        def search_picker(query, selected_label):
-            self.wait_for(editor, """
-                vim.bo.filetype == 'fzf' and vim.api.nvim_get_mode().mode == 't'
-                and vim.api.nvim_buf_get_lines(0, 0, 1, false)[1]:find('> ', 1, true) ~= nil
-            """)
-            self.keys(editor, query)
-            selection = json.dumps("▌ " + selected_label, ensure_ascii=False)
-            self.wait_for(editor, f"""
-                (function()
-                    for _, line in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
-                        if line:find({selection}, 1, true) == 1 then
-                            return true
-                        end
-                    end
-                    return false
-                end)()
-            """)
-
         self.keys(editor, "/pln<CR>")
         self.keys(editor, " f")
-        search_picker("auth", "[unstaged] auth.lua")
+        self.search_fzf(editor, "auth", "[unstaged] auth.lua")
         self.keys(editor, "<Esc>")
         self.wait_for(editor, "vim.bo.filetype ~= 'fzf'")
         self.assertEqual("pln", self.lua(editor, "return s.file_filter"))
         self.assertEqual("plan.md", self.lua(editor, "return s.current.path"))
 
         self.keys(editor, " f")
-        search_picker("auth", "[unstaged] auth.lua")
+        self.search_fzf(editor, "auth", "[unstaged] auth.lua")
         self.keys(editor, "<CR>")
         self.wait_for(editor, "s.current.path == 'auth.lua'")
         self.assertEqual("", self.lua(editor, "return s.file_filter"))
@@ -2536,7 +2534,7 @@ class EditorUI(unittest.TestCase):
 
         self.keys(editor, " e/pln<CR>")
         self.keys(editor, " /")
-        search_picker("local obsolete", "[unstaged] removed.lua:1 (old)")
+        self.search_fzf(editor, "local obsolete", "[unstaged] removed.lua:1 (old)")
         self.keys(editor, "<CR>")
         self.wait_for(editor, "s.current.path == 'removed.lua'")
         self.assertEqual("", self.lua(editor, "return s.file_filter"))
