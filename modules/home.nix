@@ -64,10 +64,10 @@
         copy_on_select = "clipboard";
         tab_bar_style = "custom";
         active_tab_foreground = "#1e1e2e";
-        inactive_tab_foreground = "#1e1e2e";
+        inactive_tab_foreground = "#cdd6f4";
         active_tab_font_style = "bold";
         inactive_tab_font_style = "normal";
-        active_tab_title_template = "● {title}";
+        active_tab_title_template = "▶ {title} ◀";
       };
     };
     xdg.configFile."kitty/tab_bar.py".source = ../packages/kitty/tab_bar.py;

@@ -1,5 +1,6 @@
 from kitty.fast_data_types import Screen
-from kitty.tab_bar import DrawData, ExtraData, TabBarData, as_rgb, draw_tab_with_fade
+from kitty.rgb import alpha_blend, color_from_int
+from kitty.tab_bar import DrawData, ExtraData, TabBarData, as_rgb, draw_tab_with_slant
 
 
 TAB_BACKGROUNDS = (
@@ -26,7 +27,12 @@ def draw_tab(
 ) -> int:
     # Tab IDs keep colors stable when tabs are reordered or closed.
     background = TAB_BACKGROUNDS[(tab.tab_id - 1) % len(TAB_BACKGROUNDS)]
+    if not tab.is_active:
+        background = int(
+            alpha_blend(color_from_int(background), draw_data.default_bg, 0.2)
+        )
+
     screen.cursor.bg = as_rgb(background)
-    return draw_tab_with_fade(
+    return draw_tab_with_slant(
         draw_data, screen, tab, before, max_tab_length, index, is_last, extra_data
     )
