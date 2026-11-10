@@ -5,6 +5,7 @@ Run with: python3 -m unittest discover -s tests -v
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -525,6 +526,60 @@ class PsqlHelpersTest(StartupTestBase):
                                 "-U", "postgres", "-d", *args,
                             ],
                         )
+
+
+@unittest.skipUnless(ZSH and shutil.which("nix-instantiate"), "Zsh and Nix required")
+class KittyRecoveryTest(unittest.TestCase):
+    def test_prompt_clears_mouse_tracking_after_remote_command_failure(self) -> None:
+        evaluated = subprocess.run(
+            [
+                "nix-instantiate", "--eval", "--strict", "--json", "--expr",
+                "let module = import ./modules/profiles/macbook.nix "
+                "{ inputs = {}; config = {}; }; in "
+                "(module.flake.modules.homeManager.macbook { "
+                "config = {}; pkgs = {}; lib = { "
+                'mkMerge = builtins.concatStringsSep "\\n"; '
+                "mkBefore = x: x; mkAfter = x: x; }; "
+                "}).programs.zsh.initContent",
+            ],
+            cwd=REPO_DIR.parent, capture_output=True, text=True,
+            check=True, timeout=TIMEOUT_S,
+        )
+        with tempfile.TemporaryDirectory(prefix="kitty-recovery-") as home:
+            startup = Path(home) / "startup.zsh"
+            startup.write_text(json.loads(evaluated.stdout))
+            for kitty, tmux in [("0", ""), ("0", "/tmp/tmux-test,1,0"), ("", "")]:
+                with self.subTest(kitty=kitty, tmux=tmux):
+                    result = subprocess.run(
+                        [ZSH, "-d", "-f", "-i", "+Z"],
+                        input=(
+                            'PS1="STATUS=%? PROMPT> "; PS2=""; '
+                            'source "$HOME/startup.zsh"\n'
+                            "printf '\\033[?1003;1006hSESSION_ENDED'; (exit 255)\n"
+                            "exit 0\n"
+                        ),
+                        env={
+                            "HOME": home, "PATH": os.environ["PATH"],
+                            "TERM": "xterm-256color", "KITTY_WINDOW_ID": kitty,
+                            "TMUX": tmux,
+                        },
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, timeout=TIMEOUT_S,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    recovered = result.stdout.split("SESSION_ENDED", 1)[1]
+                    self.assertIn("STATUS=255 PROMPT>", recovered)
+                    disabled_modes = {
+                        int(mode)
+                        for parameters in re.findall(r"\x1b\[\?([\d;]+)l", recovered)
+                        for mode in parameters.split(";")
+                    }
+                    if kitty and not tmux:
+                        self.assertTrue({1000, 1002, 1003, 1006} <= disabled_modes)
+                        self.assertIn("\x1b]1337;SetUserVar=in_tmux\x07", recovered)
+                    else:
+                        self.assertEqual(disabled_modes, set())
+                        self.assertNotIn("SetUserVar=in_tmux", recovered)
 
 
 @unittest.skipUnless(BASH and shutil.which("nix-instantiate"), "bash and Nix required")

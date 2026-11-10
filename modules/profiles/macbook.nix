@@ -59,6 +59,7 @@ in
           # Remote cleanup cannot reach Kitty after a broken SSH connection.
           _hm_clear_kitty_tmux() {
             if [[ -n "''${KITTY_WINDOW_ID:-}" && -z "''${TMUX:-}" ]]; then
+              printf '\033[?1000;1002;1003;1005;1006;1015;1016l'
               printf '\033]1337;SetUserVar=in_tmux\007'
             fi
           }

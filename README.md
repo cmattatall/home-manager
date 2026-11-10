@@ -596,11 +596,14 @@ tmux panes.
 New panes inherit the current pane's directory. tmux's prefix remains Ctrl+B.
 Kitty forwards the keys only while its `in_tmux` user variable is present.
 tmux sets/clears it on terminal entry/exit, covering attach, detach, suspend,
-resume, and normal session exit. The local Mac Zsh prompt also clears stale
-state after SSH ends. A broken connection cannot deliver remote cleanup;
-if you are not returning to that Zsh prompt, clear it manually:
+resume, and normal session exit. Outside tmux, the local Mac Zsh prompt clears
+stale shortcut state and disables mouse reporting after SSH ends. Activate Home
+Manager on the Mac and start a new shell to enable this recovery. If a broken
+connection leaves clicks or scrolling typing escape sequences into an existing
+shell, press Ctrl+C to clear the input and run:
 
 ```sh
+printf '\033[?1000;1002;1003;1005;1006;1015;1016l'
 printf '\033]1337;SetUserVar=in_tmux\007'
 ```
 
