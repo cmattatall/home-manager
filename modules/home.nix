@@ -60,7 +60,16 @@
     programs.home-manager.enable = true;
     programs.kitty = {
       enable = true;
-      settings.copy_on_select = "clipboard";
+      settings = {
+        copy_on_select = "clipboard";
+        tab_bar_style = "custom";
+        active_tab_foreground = "#1e1e2e";
+        inactive_tab_foreground = "#1e1e2e";
+        active_tab_font_style = "bold";
+        inactive_tab_font_style = "normal";
+        active_tab_title_template = "● {title}";
+      };
     };
+    xdg.configFile."kitty/tab_bar.py".source = ../packages/kitty/tab_bar.py;
   };
 }
