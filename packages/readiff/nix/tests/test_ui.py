@@ -1103,7 +1103,7 @@ class EditorUI(unittest.TestCase):
                 "vim.g.test_comparison_changed and vim.bo.filetype == 'rediff-ref-search'",
             )
 
-        self.assertEqual(" Local changes", sidebar()[0])
+        self.assertEqual(" Changes  +3  −1", sidebar()[0])
         self.assertIn(" ▾ STAGED (1)", sidebar())
         self.assertIn(" ▾ UNSTAGED (2)", sidebar())
         self.assertEqual(5, split_count(editor))
@@ -1986,7 +1986,7 @@ class EditorUI(unittest.TestCase):
         )
         self.assertIn("REVIEW", self.lua(editor, "return r.statusline()"))
         self.assertIn(
-            " Total  +4  −4",
+            " Changes  +4  −4",
             self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_header_buf, 0, -1, false)"),
         )
         for layout in ("merged", "split"):
@@ -2130,8 +2130,8 @@ class EditorUI(unittest.TestCase):
 
         def assert_totals(added, deleted):
             self.assertEqual(
-                f" Total  +{added}  −{deleted}",
-                self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_header_buf, 1, 2, false)[1]"),
+                f" Changes  +{added}  −{deleted}",
+                self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_header_buf, 0, 1, false)[1]"),
             )
 
         assert_totals(8, 5)
@@ -2163,9 +2163,9 @@ class EditorUI(unittest.TestCase):
                 cell = editor.exec_lua(
                     """
                     local s = require('rediff.review').state
-                    local line = vim.api.nvim_buf_get_lines(s.tree_header_buf, 1, 2, false)[1]
+                    local line = vim.api.nvim_buf_get_lines(s.tree_header_buf, 0, 1, false)[1]
                     local column = line:find(..., 1, true)
-                    local position = vim.fn.screenpos(s.tree_header_win, 2, column)
+                    local position = vim.fn.screenpos(s.tree_header_win, 1, column)
                     return vim.api.nvim__inspect_cell(1, position.row - 1, position.col - 1)
                     """,
                     text,
@@ -2179,7 +2179,7 @@ class EditorUI(unittest.TestCase):
         Path(self.root, "plan.md").write_text("first\nsecond\nthird\nfourth\n")
         self.wait_for(
             editor,
-            "vim.api.nvim_buf_get_lines(s.tree_header_buf, 1, 2, false)[1] == ' Total  +10  −5'",
+            "vim.api.nvim_buf_get_lines(s.tree_header_buf, 0, 1, false)[1] == ' Changes  +10  −5'",
         )
         self.keys(editor, "/<C-u>no-matching-path<CR>")
         self.assertEqual(0, self.lua(editor, "return #s.entries"))
@@ -11541,8 +11541,8 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
             self.lua(editor, "return r.active() ~= nil and #s.entries == 0")
         )
         self.assertEqual(
-            " Total  +0  −0",
-            self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_header_buf, 1, 2, false)[1]"),
+            " Changes  +0  −0",
+            self.lua(editor, "return vim.api.nvim_buf_get_lines(s.tree_header_buf, 0, 1, false)[1]"),
         )
         self.keys(editor, ":fs<CR>")
         self.assertEqual(

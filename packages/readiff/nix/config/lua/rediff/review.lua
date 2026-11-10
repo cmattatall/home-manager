@@ -797,7 +797,7 @@ function M.refresh(preferred, changes)
 	s.line_totals = changes.line_totals
 	local additions = "+" .. s.line_totals.added
 	local deletions = "−" .. s.line_totals.deleted
-	local header_lines = { " Local changes" }
+	local header_lines = {}
 	if s.comparison then
 		local index, count = require("rediff.comparison_stack").position(s.root, s.comparison)
 		header_lines[1] = " COMPARE" .. (index and (" " .. index .. "/" .. count) or "")
@@ -812,7 +812,7 @@ function M.refresh(preferred, changes)
 			end
 		end
 	end
-	table.insert(header_lines, " Total  " .. additions .. "  " .. deletions)
+	table.insert(header_lines, " Changes  " .. additions .. "  " .. deletions)
 	local totals_row = #header_lines
 	if s.file_filter and s.file_filter ~= "" then
 		vim.wo[s.tree_header_win].winbar = " / %<"
@@ -828,7 +828,7 @@ function M.refresh(preferred, changes)
 	api.nvim_win_set_height(s.tree_header_win, #header_lines + 1)
 	api.nvim_buf_clear_namespace(s.tree_header_buf, tree_ns, 0, -1)
 	for _, chunk in ipairs({
-		{ "Total", "ReviewTotal" },
+		{ "Changes", "ReviewTotal" },
 		{ additions, "ReviewAdded" },
 		{ deletions, "ReviewDeleted" },
 	}) do

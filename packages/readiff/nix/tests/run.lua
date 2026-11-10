@@ -190,8 +190,7 @@ local function test()
 	equal(false, table.concat(sidebar(), "\n"):find("UNTRACKED", 1, true) ~= nil, "No separate untracked section")
 	equal(true, vim.list_contains(sidebar(), " U plan.md"), "Untracked files have a U badge")
 	equal({
-		" Local changes",
-		" Total  +4  −4",
+		" Changes  +4  −4",
 		" 3 changes",
 		" ▾ STAGED (0)",
 		"   (none)",
