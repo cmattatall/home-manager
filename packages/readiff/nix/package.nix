@@ -62,6 +62,9 @@ let
     parsers.go
     parsers.rust
     parsers.python
+    parsers.proto
+    parsers.lua
+    parsers.nix
   ]);
   plugins = [
     codediff

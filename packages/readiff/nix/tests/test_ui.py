@@ -151,6 +151,7 @@ class EditorUI(unittest.TestCase):
             ):
                 self.assertLess(time.monotonic(), deadline, "Review startup timed out")
                 pump(editor)
+            self.wait_for(editor, "not s or s.order_job == nil")
         return editor
 
     def lua(self, editor, code):
@@ -1146,11 +1147,13 @@ class EditorUI(unittest.TestCase):
         self.assertIn(" ▾ UNSTAGED (2)", sidebar())
         self.assertNotIn(" ▾ STAGED (1)", sidebar())
         self.assertEqual(
-            ["staged\n", "unstaged\n"],
+            ["", "untracked\n"],
             self.lua(editor, "return {s.current.old, s.current.new}"),
         )
         self.assertEqual(original, checkout_state(self.root))
         self.keys(editor, " r")
+        self.keys(editor, "j")
+        self.assertEqual("local.txt", self.lua(editor, "return s.current.path"))
 
         Path(self.root, "local.txt").write_text("live unstaged edit\n")
         self.wait_for(editor, "s.current.new == 'live unstaged edit\\n'")
@@ -2190,6 +2193,206 @@ class EditorUI(unittest.TestCase):
         self.keys(editor, ":View merged<CR>")
         assert_totals(10, 5)
 
+    def test_review_order_classifies_each_git_group_and_preserves_position(self):
+        body = (
+            "package api\nfunc Read(id int) int { return id }\n"
+            + "\n" * 12
+            + "func Count() int { return 1 }\n"
+        )
+        structure = "package api\ntype User struct { ID int }\n"
+        rpc = (
+            'syntax = "proto3";\nmessage Request {}\n'
+            "service Users { rpc Read(Request) returns (Request); }\n"
+        )
+        baseline = {
+            "README.md": "# User service\n",
+            "a_body.go": body,
+            "c_config.json": "{}\n",
+            "y_rpc.proto": rpc,
+            "z_types.go": structure,
+        }
+        for name, text in baseline.items():
+            Path(self.root, name).write_text(text)
+        subprocess.run(["git", "-C", self.root, "add", "."], check=True)
+        subprocess.run(
+            ["git", "-C", self.root, "commit", "-m", "Ordering baseline"],
+            check=True,
+            capture_output=True,
+        )
+        Path(self.root, "z_types.go").write_text(
+            structure.replace("ID int", "ID int64")
+        )
+        subprocess.run(["git", "-C", self.root, "add", "z_types.go"], check=True)
+        Path(self.root, "z_types.go").write_text(
+            "// User identity\n" + structure.replace("ID int", "ID int64")
+        )
+        Path(self.root, "README.md").write_text("# User service API\n")
+        Path(self.root, "a_body.go").write_text(
+            body.replace("return id", "return id + 1").replace("return 1", "return 2")
+        )
+        Path(self.root, "c_config.json").write_text('{"enabled": true}\n')
+        Path(self.root, "y_rpc.proto").write_text(
+            rpc.replace("Read(Request)", "Read(stream Request)")
+        )
+        Path(self.root, "d_new.py").write_text(
+            "def user(id: int) -> str:\n    return str(id)\n"
+        )
+        editor = self.launch(self.root)
+        self.wait_for(editor, "s.order_job == nil")
+
+        def entries():
+            return self.lua(
+                editor,
+                """
+                return vim.tbl_map(function(entry)
+                    return {entry.group, entry.path, entry.priority.reason}
+                end, s.entries)
+            """,
+            )
+
+        self.assertEqual(
+            [
+                ["staged", "z_types.go", "Type"],
+                ["untracked", "d_new.py", "Signature"],
+                ["unstaged", "y_rpc.proto", "RPC"],
+                ["unstaged", "a_body.go", "Body"],
+                ["unstaged", "c_config.json", "Unknown"],
+                ["unstaged", "README.md", "Docs"],
+                ["unstaged", "z_types.go", "Docs"],
+            ],
+            entries(),
+        )
+        self.keys(editor, ":fs<CR>h:fu<CR>")
+        self.assertEqual("d_new.py", self.lua(editor, "return s.current.path"))
+        self.keys(editor, " j j]")
+        self.assertEqual("a_body.go", self.lua(editor, "return s.current.path"))
+        self.assertEqual(2, self.lua(editor, "return s.selected_hunk"))
+        self.keys(editor, "<Tab>")
+
+        def position():
+            return self.lua(
+                editor,
+                """
+                return {s.current.id, s.selected_hunk, vim.api.nvim_win_get_cursor(s.new_win),
+                    vim.api.nvim_win_get_cursor(s.old_win), s.collapsed,
+                    vim.api.nvim_get_current_win() == s.tree_win}
+            """,
+            )
+
+        before = position()
+        self.keys(editor, "o2<CR>")
+        self.assertEqual("path", self.lua(editor, "return s.order_by"))
+        self.assertEqual(before, position())
+        self.assertEqual(
+            [
+                "z_types.go",
+                "README.md",
+                "a_body.go",
+                "c_config.json",
+                "d_new.py",
+                "y_rpc.proto",
+                "z_types.go",
+            ],
+            [entry[1] for entry in entries()],
+        )
+        self.keys(editor, "o<Esc>")
+        self.assertEqual("path", self.lua(editor, "return s.order_by"))
+        self.keys(editor, "/.go<CR>o1<CR>")
+        self.wait_for(editor, "s.order_job == nil")
+        self.assertEqual(".go", self.lua(editor, "return s.file_filter"))
+        self.assertEqual(
+            ["z_types.go", "a_body.go", "z_types.go"],
+            [entry[1] for entry in entries()],
+        )
+        self.keys(editor, "<Esc>")
+
+        Path(self.root, "a_body.go").write_text(body.replace("id int", "id int64"))
+        self.lua(editor, "r.refresh_live()")
+        self.wait_for(editor, "s.order_job == nil")
+        self.assertEqual(["unstaged", "a_body.go", "Signature"], entries()[1])
+        self.keys(editor, "o2<CR>")
+        self.close_editor(editor)
+        reopened = self.launch(self.root)
+        self.assertEqual("path", self.lua(reopened, "return s.order_by"))
+
+    def test_review_order_handles_lua_nix_help_and_large_python(self):
+        baseline = {
+            "a/doc/editor.txt": "Editor help\n",
+            "b_body.lua": "function read(id) return id + 1 end\n",
+            "c_schema.nix": "{ value = 1; }\n",
+            "y_large.py": "# " + "documentation " * 40000 + "\ndef read(id):\n    return id\n",
+            "z_api.lua": "function read(id) return id end\n",
+        }
+        for name, text in baseline.items():
+            path = Path(self.root, name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        subprocess.run(["git", "-C", self.root, "add", "."], check=True)
+        subprocess.run(
+            ["git", "-C", self.root, "commit", "-qm", "Language ordering baseline"],
+            check=True,
+        )
+        replacements = {
+            "a/doc/editor.txt": ("help", "documentation"),
+            "b_body.lua": ("id + 1", "id + 2"),
+            "c_schema.nix": ("value", "result"),
+            "y_large.py": ("read(id)", "read(id, fallback)"),
+            "z_api.lua": ("read(id)", "read(id, fallback)"),
+        }
+        for name, (old, new) in replacements.items():
+            Path(self.root, name).write_text(baseline[name].replace(old, new))
+        editor = self.launch(self.root)
+
+        def paths():
+            return self.lua(
+                editor,
+                "return vim.tbl_map(function(entry) return entry.path end, s.entries)",
+            )
+
+        self.assertEqual(
+            ["c_schema.nix", "y_large.py", "z_api.lua", "b_body.lua", "a/doc/editor.txt"],
+            paths(),
+        )
+        self.keys(editor, "o2<CR>")
+        self.assertEqual(sorted(baseline), paths())
+        self.keys(editor, "o1<CR>")
+        self.wait_for(editor, "s.order_job == nil")
+        self.assertEqual("c_schema.nix", paths()[0])
+        self.assertEqual("a/doc/editor.txt", paths()[-1])
+
+    def test_review_order_discards_pending_comparison_results(self):
+        Path(self.root, "contract.py").write_text(
+            "def read(id: int) -> int:\n    return id\n"
+        )
+        editor = self.launch(self.root)
+        self.lua(
+            editor,
+            """
+            r.order_by("priority")
+            r.open(s.root, require("rediff.git").comparison(s.root, "HEAD", "HEAD"))
+        """,
+        )
+        self.wait_for(editor, "s.order_job == nil")
+        self.assertEqual([], self.lua(editor, "return s.entries"))
+        self.assertEqual(
+            [" ▾ COMMITS (0)", "   (none)", ""],
+            self.lua(
+                editor,
+                """
+            return vim.api.nvim_buf_get_lines(s.tree_buf, 0, -1, false)
+        """,
+            ),
+        )
+        self.lua(editor, "r.open(s.root); r.order_by('priority'); r.order_by('path')")
+        self.assertEqual("path", self.lua(editor, "return s.order_by"))
+        self.assertEqual(
+            ["auth.lua", "contract.py", "plan.md", "removed.lua"],
+            self.lua(
+                editor,
+                "return vim.tbl_map(function(entry) return entry.path end, s.entries)",
+            ),
+        )
+
     def test_tree_path_filter_is_local_and_survives_refresh_and_staging(self):
         Path(self.root, "src").mkdir()
         Path(self.root, "src/Plan[1].md").write_text("first plan\n")
@@ -2569,6 +2772,7 @@ class EditorUI(unittest.TestCase):
         Path(self.root, "unseen-new.txt").write_text("unseen untracked addition\n")
         subprocess.run(["git", "-C", self.root, "add", "staged.txt"], check=True)
         self.lua(editor, "r.refresh()")
+        self.wait_for(editor, "s.order_job == nil")
         self.wait_for(editor, "not require('rediff.awareness').get(s.root).scanning")
         show_zeta = "for i,e in ipairs(s.entries) do if e.path=='zeta.txt' then r.show(i); break end end"
         self.lua(editor, show_zeta)
@@ -2587,11 +2791,11 @@ class EditorUI(unittest.TestCase):
             )
             for keys, expected in (
                 ("<C-S-]>", ["zeta.txt", 2]),
-                ("<C-S-]>", ["unseen-new.txt", 1]),
                 ("<C-S-]>", ["gone.txt", 1]),
-                ("<C-S-[>", ["unseen-new.txt", 1]),
-                ("<C-S-[>", ["zeta.txt", 2]),
+                ("<C-S-]>", ["unseen-new.txt", 1]),
                 ("<C-S-[>", ["gone.txt", 1]),
+                ("<C-S-[>", ["zeta.txt", 2]),
+                ("<C-S-[>", ["unseen-new.txt", 1]),
                 ("<C-S-]>", ["zeta.txt", 2]),
                 ("3<C-S-[>", ["zeta.txt", 2]),
             ):
@@ -8271,6 +8475,7 @@ func greeting() string {
             elif phase == "staging refresh":
                 subprocess.run(["git", "-C", self.root, "add", "auth.lua"], check=True)
                 self.lua(editor, "r.refresh()")
+                self.wait_for(editor, "s.order_job == nil")
             rows = self.lua(
                 editor,
                 "local rows = {}; for row, i in pairs(s.rows) do "
@@ -8650,7 +8855,7 @@ func greeting() string {
 
         # Explicit group navigation reveals its target even when folded.
         self.keys(editor, ":fu<CR>")
-        selected("unstaged", "auth.lua")
+        selected("untracked", "aaa-new.lua")
         self.assertIn(" ▾ UNSTAGED (3)", editor.current.buffer[:])
         self.keys(editor, "h:fs<CR>h")
         heading("staged")
@@ -9394,6 +9599,7 @@ func greeting() string {
             partial,
             subprocess.check_output(["git", "-C", self.root, "show", ":auth.lua"]),
         )
+        self.wait_for(editor, "s.order_job == nil")
         self.keys(editor, ":fu<CR>")
         self.wait_for(editor, "s.current and s.current.group == 'unstaged'")
         self.keys(editor, "s")
@@ -9594,8 +9800,11 @@ func greeting() string {
                 # A partially staged file exists in both lists before S.
                 subprocess.run(["git", "-C", self.root, "add", "auth.lua"], check=True)
                 path = Path(self.root, "auth.lua")
-                path.write_text(path.read_text() + "-- another edit\n")
+                path.write_text(
+                    path.read_text().replace("return M", "M.timeout = 60\nreturn M")
+                )
                 self.lua(editor, "r.refresh()")
+                self.wait_for(editor, "s.order_job == nil")
                 self.keys(editor, f":view {layout}<CR>:fu<CR>")
                 self.lua(editor, f"vim.api.nvim_set_current_win(s.{pane}_win)")
                 self.keys(editor, "S")
@@ -9605,13 +9814,14 @@ func greeting() string {
                 self.keys(editor, "S")
                 exhausted("unstaged", pane)
 
-                # Delete a middle staged row: next, not previous or same-path unstaged.
+                # Removing the middle staged row advances within the group.
                 self.keys(editor, ":fs<CR>")
+                self.wait_for(editor, "s.order_job == nil")
                 self.lua(
                     editor, f"r.show(2); vim.api.nvim_set_current_win(s.{pane}_win)"
                 )
                 self.keys(editor, "S")
-                selected("removed.lua", "staged", pane)
+                selected("plan.md", "staged", pane)
                 # Last row falls back to previous, and final row leaves an empty group.
                 self.keys(editor, "S")
                 selected("auth.lua", "staged", pane)
@@ -11431,7 +11641,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         )
         editor = self.launch(self.root)
         self.lua(editor, "require('rediff.live').stop(s)")
-        self.keys(editor, "3]")
+        self.keys(editor, "2]")
         self.assertEqual("large.lua", self.lua(editor, "return s.current.path"))
         # The old buffer has one empty physical line, so 19,999 fillers align it.
         self.assertEqual(
@@ -11610,7 +11820,7 @@ with open(sys.argv[1], 'ab', buffering=0) as log:
         # same path's new UNSTAGED row. Subsequent S presses drain that group.
         self.keys(editor, ":fs<CR>jjS")
         self.assertEqual(
-            ["plan.md", "staged"],
+            ["removed.lua", "staged"],
             self.lua(editor, "return {s.current.path, s.current.group}"),
         )
         self.keys(editor, "S")

@@ -8,7 +8,11 @@ local awareness = require("rediff.awareness")
 local summary = require("rediff.review_summary")
 local storage = require("rediff.review_storage")
 local pane_border = require("rediff.pane_border")
+local priority = require("rediff.review_priority")
+local order_labels = { priority = "Review priority", path = "Path" }
+local order_path = vim.fn.stdpath("state") .. "/review-order.json"
 local tree_ns = api.nvim_create_namespace("rediff.tree")
+local priority_ns = api.nvim_create_namespace("rediff.priority")
 local filter_ns = api.nvim_create_namespace("rediff.file-filter")
 local active_ns = api.nvim_create_namespace("rediff.active-file")
 local hunk_ns = api.nvim_create_namespace("rediff.hunk")
@@ -726,6 +730,27 @@ local function filter_positions(path, query)
 	return matches[2][1]
 end
 
+local function sort_entries(s, entries)
+	local groups = {}
+	for index, group in ipairs(s.groups) do
+		groups[group] = index
+	end
+	table.sort(entries, function(a, b)
+		local a_group, b_group = groups[tree_group(a)], groups[tree_group(b)]
+		if a_group ~= b_group then
+			return a_group < b_group
+		end
+		if s.order_by == "priority" then
+			local a_rank = a.priority and a.priority.rank or 3
+			local b_rank = b.priority and b.priority.rank or 3
+			if a_rank ~= b_rank then
+				return a_rank < b_rank
+			end
+		end
+		return a.path < b.path
+	end)
+end
+
 local function read_changes(s, preferred, cached_entries)
 	local reference
 	if cached_entries then
@@ -739,12 +764,22 @@ local function read_changes(s, preferred, cached_entries)
 		reference = git.reference(s.root)
 	end
 	local all_entries = cached_entries or git.entries(s.root, s.comparison)
+	if not cached_entries then
+		local previous = {}
+		for _, entry in ipairs(s.all_entries or {}) do
+			previous[entry_key(entry)] = entry.priority
+		end
+		for _, entry in ipairs(all_entries) do
+			entry.priority = previous[entry_key(entry)]
+		end
+	end
 	local entries = vim.list_slice(all_entries)
 	if s.file_filter and s.file_filter ~= "" then
 		retain(entries, function(entry)
 			return filter_positions(entry.path, s.file_filter) ~= nil
 		end)
 	end
+	sort_entries(s, entries)
 	local index = math.min(s.index or 1, #entries)
 	if s.exhausted_group then
 		index = nil
@@ -782,19 +817,7 @@ local function read_changes(s, preferred, cached_entries)
 	}
 end
 
-function M.refresh(preferred, changes)
-	local s = state()
-	local heading
-	for group, row in pairs(s.group_rows or {}) do
-		if api.nvim_win_get_cursor(s.tree_win)[1] == row then
-			heading = group
-		end
-	end
-	changes = changes or read_changes(s, preferred)
-	s.annotation_id = nil
-	s.entries, s.reference = changes.entries, changes.reference
-	s.all_entries = changes.all_entries
-	s.line_totals = changes.line_totals
+local function render_tree(s)
 	local additions = "+" .. s.line_totals.added
 	local deletions = "−" .. s.line_totals.deleted
 	local header_lines = {}
@@ -824,6 +847,8 @@ function M.refresh(preferred, changes)
 		vim.wo[s.tree_header_win].winbar = " / Filter paths…"
 		table.insert(header_lines, string.format(" %d changes", #s.all_entries))
 	end
+	table.insert(header_lines, " Order by: " .. order_labels[s.order_by])
+	table.insert(header_lines, s.order_job and " o change · Analyzing…" or " o change order")
 	set_lines(s.tree_header_buf, header_lines)
 	api.nvim_win_set_height(s.tree_header_win, #header_lines + 1)
 	api.nvim_buf_clear_namespace(s.tree_header_buf, tree_ns, 0, -1)
@@ -868,10 +893,17 @@ function M.refresh(preferred, changes)
 	s.rows = rows
 	set_lines(s.tree_buf, lines)
 	api.nvim_buf_clear_namespace(s.tree_buf, tree_ns, 0, -1)
+	api.nvim_buf_clear_namespace(s.tree_buf, priority_ns, 0, -1)
 	api.nvim_buf_clear_namespace(s.tree_buf, filter_ns, 0, -1)
 	api.nvim_buf_clear_namespace(s.tree_buf, active_ns, 0, -1)
 	for row, index in pairs(rows) do
 		local entry = s.entries[index]
+		if s.order_by == "priority" and entry.priority then
+			api.nvim_buf_set_extmark(s.tree_buf, priority_ns, row - 1, 0, {
+				virt_text = { { "  " .. entry.priority.reason, "Comment" } },
+				virt_text_pos = "eol",
+			})
+		end
 		local highlight = status_highlights[entry.status]
 		if highlight then
 			api.nvim_buf_set_extmark(s.tree_buf, tree_ns, row - 1, 1, {
@@ -905,6 +937,118 @@ function M.refresh(preferred, changes)
 			end
 		end
 	end)
+end
+
+local function reorder_tree(s)
+	local selected = s.entries[s.index or 0]
+	local row = api.nvim_win_get_cursor(s.tree_win)[1]
+	local cursor_entry = s.entries[s.rows[row] or 0]
+	local heading
+	for group, group_row in pairs(s.group_rows) do
+		if row == group_row then
+			heading = group
+		end
+	end
+	sort_entries(s, s.entries)
+	for index, entry in ipairs(s.entries) do
+		if entry == selected then
+			s.index = index
+			break
+		end
+	end
+	render_tree(s)
+	if heading then
+		api.nvim_win_set_cursor(s.tree_win, { s.group_rows[heading], 0 })
+	elseif cursor_entry then
+		for new_row, index in pairs(s.rows) do
+			if s.entries[index] == cursor_entry then
+				api.nvim_win_set_cursor(s.tree_win, { new_row, 0 })
+				break
+			end
+		end
+	end
+	highlight_tree_selection(s)
+	render_tree_annotations(s)
+	awareness.render()
+end
+
+local function analyze_entries(s)
+	s.order_job = nil
+	if s.order_by ~= "priority" then
+		return
+	end
+	local entries = s.all_entries
+	local job = {}
+	s.order_job = job
+	local index, results, cache = 1, {}, {}
+	local function step()
+		if M.state ~= s or s.order_job ~= job then
+			return
+		end
+		local entry = entries[index]
+		if not entry then
+			s.order_job = nil
+			s.priority_cache = cache
+			for position, result in ipairs(results) do
+				entries[position].priority = result
+			end
+			reorder_tree(s)
+			return
+		end
+		local ok, snapshot = pcall(git.snapshot, s.root, entry)
+		local result = { rank = 3, reason = "Unknown" }
+		if ok then
+			result = s.priority_cache[snapshot.id] or priority.classify(entry.path, snapshot.old, snapshot.new)
+			cache[snapshot.id] = result
+		end
+		results[index] = result
+		index = index + 1
+		vim.schedule(step)
+	end
+	vim.schedule(step)
+end
+
+function M.order_by(mode)
+	local s = assert(M.active(), "Enter Review first")
+	if not mode then
+		vim.ui.select({ "priority", "path" }, {
+			prompt = "Order by",
+			format_item = function(item)
+				return order_labels[item] .. (item == s.order_by and " (current)" or "")
+			end,
+		}, function(choice)
+			if choice and M.active() == s then
+				M.order_by(choice)
+			end
+		end)
+		return
+	end
+	assert(order_labels[mode], "Order must be priority or path")
+	vim.fn.mkdir(vim.fn.stdpath("state"), "p", 448)
+	feedback.write(order_path, mode)
+	s.order_by = mode
+	analyze_entries(s)
+	reorder_tree(s)
+end
+
+function M.refresh(preferred, changes)
+	local s = state()
+	local heading
+	for group, row in pairs(s.group_rows or {}) do
+		if api.nvim_win_get_cursor(s.tree_win)[1] == row then
+			heading = group
+		end
+	end
+	changes = changes or read_changes(s, preferred)
+	s.annotation_id = nil
+	s.entries, s.reference = changes.entries, changes.reference
+	local new_entries = s.all_entries ~= changes.all_entries
+	s.all_entries = changes.all_entries
+	s.line_totals = changes.line_totals
+	if new_entries then
+		analyze_entries(s)
+	end
+	render_tree(s)
 	if changes.index and s.entries[changes.index] then
 		local ok, err = false, changes.error
 		if not err then
@@ -2154,7 +2298,12 @@ function M.open(root, comparison)
 		layout = "split",
 		collapsed = {},
 		tree_selection = {},
+		order_by = feedback.read(order_path) or "priority",
+		priority_cache = {},
 	}
+	if not order_labels[s.order_by] then
+		s.order_by = "priority"
+	end
 	M.state = s
 	reviews[root] = s
 	vim.cmd.tabnew()
@@ -2216,6 +2365,7 @@ function M.open(root, comparison)
 	map(s.tree_buf, "n", "q", M.leave, "Leave Review")
 	map(s.tree_buf, "n", "/", M.filter_files, "Filter changed file paths")
 	map(s.tree_buf, "n", "<Esc>", M.clear_file_filter, "Clear file filter")
+	map(s.tree_buf, "n", "o", M.order_by, "Order changed files")
 	for _, key in ipairs({ "h", "<Left>" }) do
 		map(s.tree_buf, "n", key, function()
 			M.tree_fold(true)

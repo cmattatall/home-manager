@@ -75,6 +75,34 @@ Outside Git, startup stays in ordinary editing without a sidebar.
 Headless runs open neither Review nor the tree. Space r toggles Review.
 The bottom bar shows the branch (or detached @short-SHA), harness and delivery.
 
+FILE ORDER
+
+Press o in the Review tree to choose Order by: Review priority or Path.
+Review priority is the default. Your choice persists across editor restarts
+and applies within each Git group. Path sorts alphabetically. File and hunk
+navigation follow the displayed order. Changing order preserves your selected
+file, diff position, path filter, and collapsed groups.
+
+Review priority analyzes Go, Rust, Python, Protobuf, Lua, and Nix changes:
+  1. RPC, Interface, Type, Signature: changed declarations and contracts.
+  2. Body: changes to executable code.
+  3. Unknown: unsupported languages, configuration, unreadable files, parse
+     failures, and source files larger than the 2 MiB review limit.
+  4. Docs: Markdown, reStructuredText, README files, doc/*.txt help files,
+     and confirmed changes confined to comments, docstrings, or formatting.
+
+The label beside each path shows its highest-priority change. Equal priorities
+sort alphabetically. Tests receive the same analysis as other source files.
+Protobuf services identify RPC changes. Python decorators and Rust attributes
+on declarations count as contract changes. Lua table keys and Nix attribute
+names identify data structures. Runtime-generated APIs may require manual
+inspection. Analysis uses the selected comparison's old and new content,
+including separate staged and unstaged versions of a path.
+
+The header shows Analyzing while classifications update. The completed batch
+updates the ordering together and retains your current selection. Results are
+cached for unchanged snapshots during the review.
+
 COMPARING GIT REFS
 
 :git diff BASE TARGET compares two snapshots, with BASE on the left and

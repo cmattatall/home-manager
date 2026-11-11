@@ -192,6 +192,8 @@ local function test()
 	equal({
 		" Changes  +4  −4",
 		" 3 changes",
+		" Order by: Review priority",
+		" o change order",
 		" ▾ STAGED (0)",
 		"   (none)",
 		"",
@@ -618,6 +620,12 @@ local function test()
 	vim.cmd("ReviewUnstage hunk")
 	equal(index_before, run({ "write-tree" }), "Unstage restores index")
 	local function select_tree(path, group)
+		assert(
+			vim.wait(5000, function()
+				return s.order_job == nil
+			end),
+			"Review ordering timed out"
+		)
 		vim.api.nvim_set_current_win(s.tree_win)
 		for row, index in pairs(s.rows) do
 			local entry = s.entries[index]
@@ -692,11 +700,15 @@ local function test()
 	equal(6, vim.api.nvim_win_get_cursor(s.new_win)[1], "Reverse navigation synchronizes both sides")
 
 	vim.fn.writefile({}, root .. "/zzz-empty.txt")
-	review.refresh()
-	review.show(#s.entries - 1)
-	equal("plan.md", s.current.path, "Last text hunk precedes empty file")
-	vim.api.nvim_win_set_cursor(s.new_win, { 2, 0 })
+	review.refresh({ path = "removed.lua", group = "unstaged" })
+	select_tree("removed.lua", "unstaged")
+	vim.api.nvim_set_current_win(s.old_win)
+	vim.api.nvim_win_set_cursor(s.old_win, { 2, 0 })
 	keys("]")
+	equal("plan.md", s.current.path, "Forward navigation skips hunkless files")
+	keys("[")
+	equal("removed.lua", s.current.path, "Backward navigation skips hunkless files")
+	keys("]]")
 	equal("auth.lua", s.current.path, "Forward wrap skips hunkless files")
 	equal(1, s.selected_hunk, "Forward wrap selects the first hunk")
 	keys("[")
@@ -778,6 +790,7 @@ local function test()
 	dofile(tests .. "/revert.lua")(equal, fails)
 	dofile(tests .. "/awareness.lua")(equal)
 	dofile(tests .. "/input.lua")(equal)
+	dofile(tests .. "/priority.lua")(equal)
 	print(string.format("PASS: %d assertions", assertions))
 end
 
