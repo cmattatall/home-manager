@@ -2433,9 +2433,16 @@ function M.statusline()
 		local refs = require("rediff.ref_picker").comparison_label()
 		local mode = refs and "GIT REFS" or "REVIEW"
 		local reference = refs or s.reference or ""
+		local refresh_warning = ""
+		if s.live_error then
+			refresh_warning = "%#WarningMsg#Auto-refresh retrying: "
+				.. vim.fn.strtrans(s.live_error):gsub("%%", "%%%%")
+				.. "%* · "
+		end
 		return "%#RediffMode# "
 			.. mode
 			.. " %*· "
+			.. refresh_warning
 			.. vim.fn.strtrans(reference):gsub("%%", "%%%%")
 			.. (s.checkout and (" · checkout: " .. vim.fn.strtrans(s.checkout):gsub("%%", "%%%%")) or "")
 			.. " · "

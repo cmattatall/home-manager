@@ -51,6 +51,7 @@ function M.stop(s)
 		watchers[s] = nil
 	end
 	s.live_refresh = nil
+	s.live_error = nil
 end
 
 function M.changed(root)
@@ -90,7 +91,7 @@ function M.start(s)
 	end
 	local watcher = { requested = 0, applied = 0 }
 	watchers[s] = watcher
-	local running, previous, last_error = false, nil, nil
+	local running, previous = false, nil
 	watcher.check = function()
 		if running or watchers[s] ~= watcher or not M.ready(s) then
 			return
@@ -125,10 +126,11 @@ function M.start(s)
 					end
 				end)
 				running = false
-				if not ok and tostring(err) ~= last_error then
-					vim.notify("Auto-refresh paused: " .. tostring(err), vim.log.levels.WARN)
+				local refresh_error = not ok and tostring(err):gsub("^.-:%d+: ", "") or nil
+				if s.live_error ~= refresh_error then
+					s.live_error = refresh_error
+					vim.cmd.redrawstatus()
 				end
-				last_error = not ok and tostring(err) or nil
 				if watchers[s] == watcher and watcher.event_timer and watcher.applied == watcher.requested then
 					watcher.event_timer:stop()
 					watcher.event_timer:close()

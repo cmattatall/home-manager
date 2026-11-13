@@ -283,6 +283,10 @@ annotation editing, typing, selections, commands/pickers, and feedback delivery.
 Typing in an embedded harness terminal does not pause refresh.
 Annotation snapshots stay unchanged. Refresh never saves buffers, stages files,
 or sends feedback.
+Merge conflicts keep the last successful snapshot visible with an
+**Auto-refresh retrying: Unresolved merge conflicts** warning in the bottom bar.
+Background retries continue and update the snapshot automatically after the
+conflicts are resolved and staged. The warning clears on recovery.
 The bottom Review bar shows the branch or `@short-SHA` for detached HEAD.
 Use **Space R** / **:ReviewRefresh** for these snapshot buffers, not `:bufdo e`.
 Outside Review, native `:checktime` checks ordinary buffers for external changes.

@@ -10265,6 +10265,70 @@ func greeting() string {
             subprocess.check_output(["git", "-C", self.root, "show", ":auth.lua"]),
         )
 
+    def test_merge_conflict_refresh_retries_without_input(self):
+        for interval in (1, 0):
+            with self.subTest(interval=interval):
+                root = self.fixture.exec_lua(
+                    "local root = dofile(...).create(); return root", FIXTURE
+                )
+
+                def git(*args):
+                    return subprocess.run(
+                        ["git", "-C", root, *args], check=True, capture_output=True
+                    )
+
+                conflict = Path(root, "conflict.txt")
+                conflict.write_text("base\n")
+                git("add", ".")
+                git("commit", "-m", "Conflict base")
+                git("checkout", "-b", "incoming")
+                conflict.write_text("incoming\n")
+                git("commit", "-am", "Incoming changes")
+                git("checkout", "main")
+                conflict.write_text("local\n")
+                git("commit", "-am", "Local changes")
+                path = Path(root, "auth.lua")
+                path.write_text(path.read_text().replace("return true", "return 123"))
+
+                editor = self.launch(root)
+                self.lua(
+                    editor,
+                    "local f=require('rediff.feedback'); local p=vim.fn.stdpath('config'); "
+                    "vim.fn.mkdir(p,'p'); "
+                    f"f.write(p..'/settings.json',{{review_refresh_interval={interval}}}); "
+                    "require('rediff.live').start(s); vim.notify = original_notify",
+                )
+                snapshot = self.lua(editor, "return s.current.id")
+                window = editor.current.window.handle
+                merge = subprocess.run(
+                    ["git", "-C", root, "merge", "incoming"], capture_output=True
+                )
+                self.assertEqual(1, merge.returncode, merge.stderr)
+                if interval == 0:
+                    self.lua(editor, "require('rediff.live').changed(s.root)")
+
+                self.wait_for(editor, "s.live_error ~= nil")
+                status = editor.api.eval_statusline(
+                    editor.options["statusline"], {"maxwidth": 132}
+                )["str"]
+                self.assertIn("Unresolved merge conflicts", status)
+                self.assertIn("Auto-refresh retrying", status)
+                self.assertEqual(snapshot, self.lua(editor, "return s.current.id"))
+                self.assertFalse(editor.api.get_mode()["blocking"])
+
+                path.write_text(path.read_text().replace("return 123", "return 456"))
+                conflict.write_text("resolved\n")
+                git("add", "conflict.txt")
+                self.wait_for(editor, "s.live_error == nil")
+                self.wait_for(editor, 's.current.new:find("return 456", 1, true) ~= nil')
+                self.assertEqual(window, editor.current.window.handle)
+                self.assertFalse(editor.api.get_mode()["blocking"])
+                self.assertNotIn(
+                    "Auto-refresh retrying",
+                    editor.api.eval_statusline(editor.options["statusline"], {})["str"],
+                )
+                self.close_editor(editor)
+
     def test_live_refresh_preserves_focus_and_annotations(self):
         editor = self.launch(self.root)
         self.assertEqual(

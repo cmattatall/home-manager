@@ -137,10 +137,7 @@ end
 function M.entries(root, comparison)
 	local local_group = M.local_group(comparison)
 	if M.is_live(comparison) then
-		assert(
-			#paths(root, { "diff", "--name-only", "--diff-filter=U", "-z" }) == 0,
-			"Resolve merge conflicts before entering Review"
-		)
+		assert(#paths(root, { "diff", "--name-only", "--diff-filter=U", "-z" }) == 0, "Unresolved merge conflicts")
 	end
 	if comparison and not local_group then
 		if comparison.base == comparison.head then
