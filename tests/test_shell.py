@@ -230,6 +230,52 @@ class ZshStartupTest(StartupTestBase):
 
 
 @unittest.skipUnless(GIT, "git not installed")
+class GitCurrentBranchTest(StartupTestBase):
+    def test_branch_and_detached_head(self) -> None:
+        for state in ("unborn", "committed", "detached"):
+            expected = "feature-x\n"
+            if state == "committed":
+                subprocess.run(
+                    [GIT, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                     "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "Initial"],
+                    cwd=self.ordinary_dir, check=True,
+                )
+            elif state == "detached":
+                expected = subprocess.check_output(
+                    [GIT, "log", "-1", "--format=%H"],
+                    cwd=self.ordinary_dir, text=True,
+                )
+                subprocess.run(
+                    [GIT, "checkout", "--detach", "-q"],
+                    cwd=self.ordinary_dir, check=True,
+                )
+            for shell in filter(None, [BASH, ZSH]):
+                with self.subTest(shell=shell, state=state):
+                    result = self.run_shell(shell, self.ordinary_dir, shell, "gbc")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stderr, "")
+                    self.assertEqual(result.stdout, expected)
+
+                    result = self.run_shell(
+                        shell, self.ordinary_dir, shell,
+                        'if [ -n "${BASH_VERSION:-}" ]; then shopt -s expand_aliases; fi\n'
+                        'copy() { cat > "$HOME/copied"; }\n'
+                        'eval gbcp\n',
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout + result.stderr, "")
+                    self.assertEqual((self.home / "copied").read_text(), expected)
+
+    def test_outside_repository(self) -> None:
+        for shell in filter(None, [BASH, ZSH]):
+            with self.subTest(shell=shell):
+                result = self.run_shell(shell, self.home, shell, "gbc")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("not a git repository", result.stderr)
+
+
+@unittest.skipUnless(GIT, "git not installed")
 class GitWorktreeAddTest(StartupTestBase):
     def test_copies_only_ignored_envrc_files_below_current_directory(self) -> None:
         root = self.ordinary_dir

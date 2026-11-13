@@ -3,6 +3,7 @@
 # underneath aliases.
 for _git_command_name in \
     _git_remote_blame_log \
+    gbc \
     gbi \
     gcam \
     gbcp \
@@ -39,7 +40,7 @@ builtin unset _git_command_name
 alias gco="git checkout"
 
 # Branches
-alias gbcp="git branch --show-current | copy"
+alias gbcp="gbc | copy"
 alias gbicpo="gbi | copy"
 
 # Commits
@@ -57,6 +58,23 @@ alias gsh="git stash"
 # Functions
 
 # Short commands
+gbc() {
+    if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+        echo "Usage: gbc"
+        echo "Print the current branch name, or the full commit SHA when HEAD is detached."
+        return 0
+    fi
+
+    local current_branch
+    current_branch=$(git branch --show-current) || return
+
+    if [ -n "$current_branch" ]; then
+        printf '%s\n' "$current_branch"
+    else
+        git rev-parse HEAD
+    fi
+}
+
 gs() {
     if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
         echo "Usage: gs [checkout-arguments...]"
