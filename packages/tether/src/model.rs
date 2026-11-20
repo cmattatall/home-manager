@@ -1,0 +1,197 @@
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const MAX_FRAME: usize = 1024 * 1024;
+pub const MAX_SOURCE: u64 = 64 * 1024;
+pub const TOKEN_TYPES: [&str; 9] = [
+    "keyword", "string", "comment", "number", "function", "variable", "operator", "type",
+    "property",
+];
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SshDestination {
+    pub destination: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Machine {
+    pub id: String,
+    pub host: String,
+    pub account: String,
+    pub ssh: Option<SshDestination>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryPage {
+    pub path: String,
+    pub parent: Option<String>,
+    pub entries: Vec<String>,
+    pub next_offset: Option<usize>,
+    pub skipped: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Worktree {
+    pub id: String,
+    pub path: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Source {
+    pub id: String,
+    pub path: String,
+    pub text: String,
+    #[serde(default)]
+    pub highlights: Vec<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum Scope {
+    Uncommitted,
+    Staged,
+    Unstaged,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangedFile {
+    pub path: String,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Hunk {
+    pub before_start: u32,
+    pub before_end: u32,
+    pub after_start: u32,
+    pub after_end: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Comparison {
+    pub id: String,
+    pub scope: Scope,
+    pub before: Option<Source>,
+    pub after: Option<Source>,
+    pub hunks: Vec<Hunk>,
+    pub before_label: String,
+    pub after_label: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewAnchor {
+    pub comparison_id: String,
+    pub side: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisSource {
+    pub source: Source,
+    pub context: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceLocation {
+    pub source: Source,
+    pub selection: Selection,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Symbol {
+    pub name: String,
+    pub kind: u32,
+    pub range: Selection,
+    pub selection_range: Selection,
+    pub children: Vec<Symbol>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Inspection {
+    pub context: String,
+    pub hover: Vec<String>,
+    pub locations: Vec<SourceLocation>,
+    pub symbols: Vec<Symbol>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Selection {
+    pub start_line_number: u32,
+    pub start_column: u32,
+    pub end_line_number: u32,
+    pub end_column: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AnnotationInput {
+    pub id: String,
+    pub source_id: String,
+    pub path: String,
+    pub selection: Selection,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub review: Option<ReviewAnchor>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Annotation {
+    pub input: AnnotationInput,
+    pub excerpt: String,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Session {
+    pub owner: String,
+    pub version: String,
+}
+
+pub fn typescript() -> String {
+    let declarations: String = [
+        SshDestination::decl(),
+        Machine::decl(),
+        DirectoryPage::decl(),
+        Worktree::decl(),
+        Source::decl(),
+        Scope::decl(),
+        ChangedFile::decl(),
+        Hunk::decl(),
+        Comparison::decl(),
+        ReviewAnchor::decl(),
+        AnalysisSource::decl(),
+        SourceLocation::decl(),
+        Symbol::decl(),
+        Inspection::decl(),
+        Selection::decl(),
+        AnnotationInput::decl(),
+        Annotation::decl(),
+        Session::decl(),
+    ]
+    .into_iter()
+    .map(|declaration| format!("export {declaration}\n"))
+    .collect();
+    format!(
+        "{declarations}export const tokenTypes = {};\n",
+        serde_json::to_string(&TOKEN_TYPES).unwrap()
+    )
+}

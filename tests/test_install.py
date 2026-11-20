@@ -347,7 +347,7 @@ class InstallHomeManagerTest(SandboxTest):
         self.assertEqual(env["HM_PROFILE"], "development-node")
         self.assertEqual(env["HM_USERNAME"], "carl")
         self.assertEqual(env["HM_HOME"], str(self.sb.home))
-        self.assertEqual(env["HM_FLAKE_DIR"], str(REPO))
+        self.assertEqual(env["HM_FLAKE_DIR"], f"git+file://{REPO}")
         args = self.sb.build_args()
         self.assertEqual(args[0], "--extra-experimental-features")
         self.assertIn("nix-command", args[1])

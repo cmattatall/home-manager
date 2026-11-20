@@ -1,0 +1,10 @@
+repos:
+  - repo: local
+    hooks:
+      - id: tether-quality
+        name: Tether formatting, lint, types and schema
+        language: system
+        entry: nix develop .#tether --command bash packages/tether/check.sh
+        files: ^(packages/tether/|modules/tether\.nix$|\.pre-commit-config\.yaml$)
+        pass_filenames: false
+        require_serial: true

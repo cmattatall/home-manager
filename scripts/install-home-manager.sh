@@ -164,6 +164,11 @@ NIX
 	say "created $config_file pinned to $revision"
 fi
 
+if [ "$remote" = false ] && [ -e "$flake_dir/.git" ]; then
+	# Git filtering excludes runtime sockets and build output from the source snapshot.
+	flake_dir="git+file://$flake_dir"
+fi
+
 say "building homeConfigurations.$profile for $user ($HOME)"
 # shellcheck disable=SC2016 # Nix interpolation, values arrive via the environment.
 HM_FLAKE_DIR=$flake_dir HM_PROFILE=$profile HM_USERNAME=$user HM_HOME=$HOME HM_CONFIG_FILE=$config_file \
