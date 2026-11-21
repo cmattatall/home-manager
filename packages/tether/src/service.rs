@@ -206,10 +206,6 @@ impl Store {
         );
         let source = fs::read_to_string(self.directory.join("sources").join(&input.source_id))?;
         let excerpt = selected_text(&source, &input.selection)?.to_owned();
-        ensure!(
-            !excerpt.is_empty(),
-            "Select source before saving an annotation"
-        );
         let created = Utc::now();
         let annotation = Annotation {
             input,

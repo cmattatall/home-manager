@@ -1256,6 +1256,31 @@ async fn annotations_retain_exact_unicode_source_across_edits_retries_and_restar
         spanning["excerpt"],
         "package demo\r\n// A😀B and e\u{301}\rfunc"
     );
+    input["id"] = json!(uuid::Uuid::new_v4().to_string());
+    input["selection"] =
+        json!({"startLineNumber": 4, "startColumn": 1, "endLineNumber": 4, "endColumn": 1});
+    input["text"] = json!("Add the missing example on this blank line");
+    let blank = fixture
+        .post(&format!("{endpoint}/annotations"), &input)
+        .await;
+    assert_eq!(blank.status(), StatusCode::OK);
+    let blank: Value = blank.json().await.unwrap();
+    assert_eq!(blank["excerpt"], "");
+    assert_eq!(blank["input"], input);
+    assert_eq!(
+        fixture.read(&format!("{endpoint}/annotations")).await[0],
+        blank
+    );
+    input["id"] = json!(uuid::Uuid::new_v4().to_string());
+    input["selection"] =
+        json!({"startLineNumber": 5, "startColumn": 1, "endLineNumber": 5, "endColumn": 1});
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/annotations"), &input)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
     let other_notes: Value = fixture
         .get(&format!("worktrees/{other_id}/annotations"))
         .await

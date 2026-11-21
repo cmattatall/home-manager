@@ -200,9 +200,17 @@ the draft for later to return to browsing.
 Split diffs align corresponding lines and share scrolling, with a single vertical
 scrollbar on the right. Scroll over either side to move the comparison.
 
-Select text on either side and choose **Annotate selection**, or right-click a
-source line and choose **Annotate line** to open its composer. Individual lines,
-including unchanged lines, can receive annotations. Each saved review note retains
+Hover over a source line and click the gutter **+** to open its annotation
+composer. Drag over the line numbers to select several lines, then click **+**
+beside the selection to annotate the whole range. Text selections also support
+**Annotate selection** in the toolbar. The context menu offers **Annotate line or
+selection**. These controls work in source review, both diff sides and Go exploration.
+Blank and unchanged lines can receive annotations.
+
+Use the hunk arrows to choose a change, then **Annotate hunk** above either diff
+side to annotate that side's changed lines. A hunk annotation retains its line
+range, captured comparison, base and target sources, and selected side. The action
+is disabled for a side with no lines in that hunk. Each saved review note retains
 its comparison and selected side. An unborn repository uses an empty baseline.
 Additions and deletions show an absent-side label. Renames appear as deletion and
 addition entries. Binary, symlink, submodule and conflict entries report their

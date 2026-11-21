@@ -9,6 +9,7 @@ import "monaco-editor/editor/standalone/browser/quickAccess/standaloneGotoSymbol
 import "../node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.css";
 import type { AnalysisSource, Inspection, Source, Symbol } from "./protocol";
 import { api } from "./api";
+import { addAnnotationControls } from "./annotationControls";
 import {
   editorOptions,
   highlightSource,
@@ -29,11 +30,13 @@ export function GoExplorer({
   endpoint,
   path,
   onSelection,
+  onAnnotate,
 }: {
   worktree: string;
   endpoint: string;
   path: string;
   onSelection: (selection: SourceSelection | null) => void;
+  onAnnotate?: (selection: SourceSelection) => void;
 }) {
   const [source, setSource] = useState<AnalysisSource>();
   const [status, setStatus] = useState("Loading current Go analysis…");
@@ -45,6 +48,14 @@ export function GoExplorer({
   const symbols = useRef<() => void>(() => {});
   const callback = useRef(onSelection);
   callback.current = onSelection;
+  const annotate = useRef(onAnnotate);
+  annotate.current = onAnnotate;
+  const annotations = useRef<ReturnType<typeof addAnnotationControls>>(null);
+  const annotationEnabled = !!onAnnotate;
+
+  useEffect(() => {
+    annotations.current?.setEnabled(annotationEnabled);
+  }, [annotationEnabled]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -94,6 +105,14 @@ export function GoExplorer({
       ...editorOptions,
       model: initial,
     });
+    const controls = addAnnotationControls(editor, (selection) => {
+      annotate.current?.({
+        source: models.get(editor.getModel()!)!,
+        selection,
+      });
+    });
+    controls.setEnabled(!!annotate.current);
+    annotations.current = controls;
     editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F12, () => {
       editor.trigger("tether", "editor.action.referenceSearch.trigger", {});
     });
@@ -296,6 +315,8 @@ export function GoExplorer({
       disposed = true;
       controllers.forEach((controller) => controller.abort());
       subscriptions.forEach((subscription) => subscription.dispose());
+      controls.dispose();
+      annotations.current = null;
       editor.dispose();
       models.forEach((_, model) => model.dispose());
       callback.current(null);

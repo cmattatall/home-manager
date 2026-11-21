@@ -419,8 +419,21 @@
   overflow-wrap: anywhere;
 }
 
+.sideLabel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .sideLabel + .sideLabel {
   border-left: 1px solid var(--line);
+}
+
+.sideLabel button {
+  padding: 3px 6px;
+  font-size: 11px;
 }
 
 .explorationBar {

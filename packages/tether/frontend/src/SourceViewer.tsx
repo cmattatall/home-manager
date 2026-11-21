@@ -7,6 +7,7 @@ import "monaco-editor/editor/contrib/semanticTokens/browser/documentSemanticToke
 import type { Comparison, ReviewAnchor, Selection, Source } from "./protocol";
 import { tokenTypes } from "./protocol";
 import { GoExplorer } from "./GoExplorer";
+import { addAnnotationControls, lineRange } from "./annotationControls";
 import styles from "./Workbench.module.css";
 
 export interface SourceSelection {
@@ -26,7 +27,7 @@ interface SourceViewerProps {
 
 interface ReviewEditor {
   editor: monaco.editor.IStandaloneCodeEditor;
-  canAnnotate: monaco.editor.IContextKey<boolean>;
+  annotations?: ReturnType<typeof addAnnotationControls>;
 }
 
 self.MonacoEnvironment = { getWorker: () => new EditorWorker() };
@@ -71,6 +72,7 @@ monaco.editor.defineTheme("tether", {
     "editor.foreground": "#dce2eb",
     "editorLineNumber.foreground": "#68778b",
     "editor.selectionBackground": "#354b73",
+    "editor.inactiveSelectionBackground": "#354b73",
     "diffEditor.removedLineBackground": "#682c354d",
     "diffEditor.insertedLineBackground": "#21523c66",
     "peekView.border": "#829de3",
@@ -117,7 +119,7 @@ export function SourceViewer({
   onExplorationChange,
 }: SourceViewerProps & { endpoint: string }) {
   const [exploring, setExploring] = useState(false);
-  const [hunk, setHunk] = useState(-1);
+  const [hunk, setHunk] = useState(0);
   const path =
     source?.path ?? comparison?.after?.path ?? comparison?.before?.path ?? "";
   const callback = useRef(onSelection);
@@ -125,7 +127,7 @@ export function SourceViewer({
   const reviewSelection = useRef<SourceSelection | null>(null);
   useEffect(() => {
     setExploring(false);
-    setHunk(-1);
+    setHunk(0);
     reviewSelection.current = null;
     callback.current(null);
   }, [source?.id, comparison?.id, worktree]);
@@ -178,9 +180,9 @@ export function SourceViewer({
               ↓
             </button>
             <span>
-              {hunk < 0
-                ? comparison.hunks.length
-                : `${hunk + 1}/${comparison.hunks.length}`}{" "}
+              {comparison.hunks.length
+                ? `${hunk + 1}/${comparison.hunks.length}`
+                : 0}{" "}
               hunks
             </span>
           </>
@@ -207,6 +209,7 @@ export function SourceViewer({
           endpoint={endpoint}
           path={path}
           onSelection={onSelection}
+          onAnnotate={onAnnotate}
         />
       )}
     </div>
@@ -285,13 +288,9 @@ function SourceEditor({
     }
     const subscriptions: monaco.IDisposable[] = [];
     editors.current = codeEditors.map((editor, index) => {
-      const canAnnotate = editor.createContextKey(
-        "tetherCanAnnotate",
-        !!callbacks.current.onAnnotate,
-      );
+      let annotations: ReviewEditor["annotations"];
       const captured = sources[index];
       if (captured) {
-        let contextLine: number | undefined;
         const captureSelection = (
           selection: monaco.IRange,
         ): SourceSelection => {
@@ -311,47 +310,20 @@ function SourceEditor({
               : undefined,
           };
         };
+        annotations = addAnnotationControls(editor, (range) => {
+          callbacks.current.onAnnotate?.(captureSelection(range));
+        });
+        annotations.setEnabled(!!callbacks.current.onAnnotate);
+        subscriptions.push(annotations);
         subscriptions.push(
-          editor.onContextMenu(({ target }) => {
-            contextLine = target.position?.lineNumber;
-          }),
-          editor.onKeyDown(() => {
-            contextLine = undefined;
-          }),
           editor.onDidChangeCursorSelection(({ selection }) => {
-            contextLine = undefined;
             callbacks.current.onSelection(
               selection.isEmpty() ? null : captureSelection(selection),
             );
           }),
         );
-        subscriptions.push(
-          editor.addAction({
-            id: "tether.annotateLine",
-            label: "Annotate line",
-            precondition: "tetherCanAnnotate",
-            contextMenuGroupId: "tether",
-            run: () => {
-              const line = contextLine ?? editor.getPosition()!.lineNumber;
-              contextLine = undefined;
-              const model = models[index];
-              const selection =
-                line < model.getLineCount()
-                  ? new monaco.Range(line, 1, line + 1, 1)
-                  : new monaco.Range(
-                      line,
-                      1,
-                      line,
-                      model.getLineMaxColumn(line),
-                    );
-              if (selection.isEmpty()) return;
-              editor.setSelection(selection);
-              callbacks.current.onAnnotate?.(captureSelection(selection));
-            },
-          }),
-        );
       }
-      return { editor, canAnnotate };
+      return { editor, annotations };
     });
     return () => {
       editors.current = [];
@@ -362,8 +334,8 @@ function SourceEditor({
   }, [worktree, source, comparison]);
 
   useEffect(() => {
-    for (const { canAnnotate } of editors.current)
-      canAnnotate.set(annotationEnabled);
+    for (const { annotations } of editors.current)
+      annotations?.setEnabled(annotationEnabled);
   }, [annotationEnabled]);
 
   useEffect(() => {
@@ -376,18 +348,49 @@ function SourceEditor({
     editor.setPosition({ lineNumber: line, column: 1 });
   }, [comparison, hunk]);
 
+  function annotateHunk(side: "before" | "after") {
+    const change = comparison!.hunks[hunk];
+    const captured = comparison![side]!;
+    const editor = editors.current[side === "before" ? 0 : 1].editor;
+    const start = side === "before" ? change.beforeStart : change.afterStart;
+    const end = side === "before" ? change.beforeEnd : change.afterEnd;
+    const range = lineRange(editor.getModel()!, start, end - 1);
+    editor.setSelection(range);
+    editor.revealRangeInCenter(range);
+    onAnnotate?.({
+      source: captured,
+      selection: range,
+      review: { comparisonId: comparison!.id, side },
+    });
+  }
+
   return (
     <>
       {comparison && (
         <div className={styles.diffLabels}>
-          <div className={styles.sideLabel}>
-            {comparison.beforeLabel}
-            {!comparison.before && " · File absent on this side"}
-          </div>
-          <div className={styles.sideLabel}>
-            {comparison.afterLabel}
-            {!comparison.after && " · File absent on this side"}
-          </div>
+          {(["before", "after"] as const).map((side) => {
+            const change = comparison.hunks[hunk];
+            const hasLines =
+              change &&
+              (side === "before"
+                ? change.beforeStart < change.beforeEnd
+                : change.afterStart < change.afterEnd);
+            return (
+              <div key={side} className={styles.sideLabel}>
+                {side === "before"
+                  ? comparison.beforeLabel
+                  : comparison.afterLabel}
+                {!comparison[side] && " · File absent on this side"}
+                <button
+                  aria-label={`Annotate ${side} hunk`}
+                  disabled={!onAnnotate || !comparison[side] || !hasLines}
+                  onClick={() => annotateHunk(side)}
+                >
+                  Annotate hunk
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
       <div ref={container} className={styles.editor} />

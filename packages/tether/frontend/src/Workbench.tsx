@@ -20,6 +20,7 @@ import {
   type RecoveryDraft,
 } from "./recovery";
 import { SourceViewer, type SourceSelection } from "./SourceViewer";
+import { lastSelectedLine } from "./annotationControls";
 import { FileTree } from "./FileTree";
 import { Explorer } from "./Explorer";
 import { SignOut } from "./SignOut";
@@ -452,6 +453,7 @@ function Review({
     (scope === "source"
       ? source.data
       : (visibleComparison?.after ?? visibleComparison?.before));
+  const draftEndLine = draft ? lastSelectedLine(draft.input.selection) : 0;
   const error =
     (scope === "source" ? source.error : (changes.error ?? comparison.error)) ??
     annotations.error ??
@@ -635,7 +637,7 @@ function Review({
           <span>
             {selection
               ? `${selection.review?.side ?? "source"} · L${selection.selection.startLineNumber}:${selection.selection.startColumn}–L${selection.selection.endLineNumber}:${selection.selection.endColumn}`
-              : "Select text to annotate"}
+              : "Click + to annotate a line · Drag over line numbers to select a range"}
           </span>
         </div>
       </section>
@@ -665,6 +667,8 @@ function Review({
             <span className={styles.eyebrow}>
               CAPTURED {draft.input.review?.side.toUpperCase() ?? "SOURCE"} · L
               {draft.input.selection.startLineNumber}
+              {draftEndLine > draft.input.selection.startLineNumber &&
+                `–L${draftEndLine}`}
             </span>
             <label htmlFor="annotation">What should change?</label>
             <textarea
