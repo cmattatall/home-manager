@@ -89,8 +89,10 @@ Connecting authorizes automatic setup when Tether is missing. The Nix-packaged
 gateway transfers its pinned Tether and nixpkgs sources over SSH, builds Tether
 for the remote platform, and installs it in the remote account's
 `~/.local/share/tether/installations/` directory. Home Manager profiles stay
-unchanged. The dialog shows the current phase, elapsed time and live Nix transfer
-and build output. The scrollable output panel retains the latest 32,768 characters
+unchanged. A setup card in Machines shows a progress bar, the current phase,
+elapsed time and live Nix transfer and build output. The card retains progress
+and output while you browse other machines or worktrees. The scrollable output
+panel retains the latest 32,768 characters
 and follows new output while you are at the bottom. Output remains available after
 a failed attempt. Initial builds can take several minutes and require access to
 Nix caches and package sources. Each setup phase has a 30-minute timeout. Retry after a setup failure

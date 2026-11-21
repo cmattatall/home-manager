@@ -352,6 +352,12 @@ export function MachineSetup({
           ? "Install this gateway's pinned Tether build on the selected machine. Worktrees and saved annotations are preserved."
           : "Uses your SSH configuration and trusted host keys. Connect installs missing Tether through Nix in your remote account's Tether directory."}
       </Description>
+      {inline && !update && connection.isPending && (
+        <progress
+          className={styles.machineUpdateProgress}
+          aria-label={`Setting up Tether on ${destination}`}
+        />
+      )}
       {update && (
         <p className={styles.hint}>
           Installed: {update.status.installed?.version ?? "Missing"} ·{" "}

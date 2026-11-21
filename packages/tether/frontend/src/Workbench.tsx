@@ -118,8 +118,11 @@ export function Workbench({
         </select>
         {!selectedId && (
           <button
-            disabled={!machines.data}
-            onClick={() => setConnectionOpen(true)}
+            disabled={!machines.data || connectionOpen}
+            onClick={() => {
+              navigate("/");
+              setConnectionOpen(true);
+            }}
           >
             Connect machine
           </button>
@@ -161,100 +164,113 @@ export function Workbench({
             </button>
           )}
         </nav>
-        {worktree ? (
+        {worktree && (
           <Review
             key={`${machineId}:${worktree.id}`}
             worktree={worktree}
             machineId={machineId}
             owner={session.data.owner}
           />
-        ) : (
-          <main className={styles.welcome}>
-            <span className={styles.eyebrow}>
-              {machineId ? "2 · WORKTREE" : "1 · MACHINE"}
-            </span>
-            <h1>{machineId ? "Choose a worktree" : "Choose a machine"}</h1>
-            {machineId ? (
-              <>
-                <p>
-                  {machine?.ssh?.destination ?? machine?.host} · Worktrees on
-                  this machine
-                </p>
-                {inventory.isPending && <p role="status">Loading worktrees…</p>}
-                {inventory.error && (
-                  <p role="alert">{inventory.error.message}</p>
-                )}
-                {inventory.error && (
-                  <button onClick={() => void inventory.refetch()}>
-                    Retry connection
-                  </button>
-                )}
-                <div className={styles.selectionList}>
-                  {inventory.data?.map((entry) => (
-                    <button
-                      key={entry.id}
-                      className={styles.selection}
-                      onClick={() => navigate(`${worktreeBase}/${entry.id}`)}
-                    >
-                      <strong>{entry.name}</strong>
-                      <small>{entry.path}</small>
-                    </button>
-                  ))}
-                </div>
-                {inventory.data?.length === 0 && (
-                  <p>No worktrees registered on this machine.</p>
-                )}
-                <button
-                  className={styles.primary}
-                  disabled={!machine}
-                  onClick={() => setRegistrationOpen(true)}
-                >
-                  Register a worktree
-                </button>
-              </>
-            ) : (
-              <>
-                <p>
-                  Select the machine running your agents to browse its
-                  worktrees.
-                </p>
-                {machines.isPending && <p role="status">Loading machines…</p>}
-                {machines.error && <p role="alert">{machines.error.message}</p>}
-                {machines.error && (
-                  <button onClick={() => void machines.refetch()}>
-                    Retry machines
-                  </button>
-                )}
-                <div className={styles.selectionList}>
-                  {machines.data?.map((entry) => (
-                    <section
-                      key={entry.id}
-                      className={styles.machineCard}
-                      aria-label={`Machine ${entry.ssh?.destination ?? "Local machine"}`}
-                    >
-                      <button
-                        className={styles.selection}
-                        onClick={() => navigate(`/machines/${entry.id}/`)}
-                      >
-                        <strong>
-                          {entry.ssh?.destination ?? "Local machine"}
-                        </strong>
-                        <small>
-                          {entry.account}@{entry.host} ·{" "}
-                          {entry.ssh ? "SSH" : "Local"}
-                        </small>
-                      </button>
-                      <MachineVersion machine={entry} inline />
-                    </section>
-                  ))}
-                </div>
-                <p className={styles.hint}>
-                  Use Connect machine to add an SSH destination.
-                </p>
-              </>
-            )}
-          </main>
         )}
+        <main className={styles.welcome} hidden={!!worktree}>
+          <span className={styles.eyebrow}>
+            {machineId ? "2 · WORKTREE" : "1 · MACHINE"}
+          </span>
+          <h1>{machineId ? "Choose a worktree" : "Choose a machine"}</h1>
+          <div hidden={!machineId}>
+            <p>
+              {machine?.ssh?.destination ?? machine?.host} · Worktrees on this
+              machine
+            </p>
+            {inventory.isPending && <p role="status">Loading worktrees…</p>}
+            {inventory.error && <p role="alert">{inventory.error.message}</p>}
+            {inventory.error && (
+              <button onClick={() => void inventory.refetch()}>
+                Retry connection
+              </button>
+            )}
+            <div className={styles.selectionList}>
+              {inventory.data?.map((entry) => (
+                <button
+                  key={entry.id}
+                  className={styles.selection}
+                  onClick={() => navigate(`${worktreeBase}/${entry.id}`)}
+                >
+                  <strong>{entry.name}</strong>
+                  <small>{entry.path}</small>
+                </button>
+              ))}
+            </div>
+            {inventory.data?.length === 0 && (
+              <p>No worktrees registered on this machine.</p>
+            )}
+            <button
+              className={styles.primary}
+              disabled={!machine}
+              onClick={() => setRegistrationOpen(true)}
+            >
+              Register a worktree
+            </button>
+          </div>
+          <div hidden={!!machineId}>
+            <p>
+              Select the machine running your agents to browse its worktrees.
+            </p>
+            {machines.isPending && <p role="status">Loading machines…</p>}
+            {machines.error && <p role="alert">{machines.error.message}</p>}
+            {machines.error && (
+              <button onClick={() => void machines.refetch()}>
+                Retry machines
+              </button>
+            )}
+            <div className={styles.selectionList}>
+              {connectionOpen && machines.data && (
+                <section
+                  className={styles.machineCard}
+                  aria-label="New SSH machine"
+                >
+                  <MachineSetup
+                    machines={machines.data}
+                    inline
+                    onClose={() => setConnectionOpen(false)}
+                    onConnected={async (connected) => {
+                      await client.invalidateQueries({
+                        queryKey: ["machines"],
+                      });
+                      setConnectionOpen(false);
+                      navigate(`/machines/${connected.id}/`);
+                    }}
+                  />
+                </section>
+              )}
+              {!machineId &&
+                machines.data?.map((entry) => (
+                  <section
+                    key={entry.id}
+                    className={styles.machineCard}
+                    aria-label={`Machine ${entry.ssh?.destination ?? "Local machine"}`}
+                  >
+                    <button
+                      className={styles.selection}
+                      onClick={() => navigate(`/machines/${entry.id}/`)}
+                    >
+                      <strong>
+                        {entry.ssh?.destination ?? "Local machine"}
+                      </strong>
+                      <small>
+                        {entry.account}@{entry.host} ·{" "}
+                        {entry.ssh ? "SSH" : "Local"}
+                      </small>
+                    </button>
+                    <MachineVersion machine={entry} inline />
+                  </section>
+                ))}
+            </div>
+            <p className={styles.hint}>
+              Use Connect machine to add an SSH destination.
+            </p>
+          </div>
+        </main>
       </div>
       <footer className={styles.status}>
         <span>
@@ -276,17 +292,6 @@ export function Workbench({
             });
             setRegistrationOpen(false);
             navigate(`${worktreeBase}/${worktree.id}`);
-          }}
-        />
-      )}
-      {connectionOpen && machines.data && (
-        <MachineSetup
-          machines={machines.data}
-          onClose={() => setConnectionOpen(false)}
-          onConnected={async (connected) => {
-            await client.invalidateQueries({ queryKey: ["machines"] });
-            setConnectionOpen(false);
-            navigate(`/machines/${connected.id}/`);
           }}
         />
       )}
