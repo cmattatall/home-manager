@@ -1,4 +1,4 @@
-import type { ConnectionEvent, Machine } from "./protocol";
+import type { ConnectionEvent, Machine, SshDestination } from "./protocol";
 
 export class ApiError extends Error {
   constructor(
@@ -20,19 +20,20 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export async function connectMachine(
-  destination: string,
+export async function setupMachine(
+  endpoint: string,
+  input: SshDestination | undefined,
   onProgress: (
     event: Extract<ConnectionEvent, { type: "progress" | "output" }>,
   ) => void,
 ): Promise<Machine> {
-  const response = await fetch("/api/machines", {
+  const response = await fetch(`/api/${endpoint}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/x-ndjson",
     },
-    body: JSON.stringify({ destination }),
+    body: input ? JSON.stringify(input) : undefined,
   });
   if (!response.ok) {
     const body = await response.json();
@@ -57,7 +58,7 @@ export async function connectMachine(
       }
     }
     throw new Error(
-      "Connection interrupted. Retry Connect machine to check remote setup.",
+      "Progress connection interrupted. Check the machine status before retrying setup.",
     );
   } finally {
     await reader.cancel();

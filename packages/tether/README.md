@@ -105,6 +105,27 @@ compatibility. Successful connections appear in Machines and persist across
 gateway restarts. Closing the browser during setup leaves the operation running.
 Reconnect or reload Machines to check its result.
 
+### Check and update machines
+
+Machine cards and the selected machine's header show **Up to date**,
+**Update available**, **Updating…**, or **Unavailable**. Checks run every minute
+while the view is open. Use **Check version** to check immediately. Hover over
+the status to see the installed version, source-build ID and gateway build.
+Older installations with an unknown build ID show an available update.
+
+Choose **Update**, review the installed and target builds, then confirm
+**Update machine**. The target is the local gateway's pinned build. Each machine
+card contains its update controls, progress bar and installation output. Updates
+started from the workbench header use a dialog. Failed updates offer the same action
+for retry. Closing the browser leaves an accepted update running, and reopening
+the machine shows its status. Each machine accepts one update at a time.
+
+Updates preserve registered worktrees, source captures, saved annotations and
+browser drafts. New requests use the updated worktree services immediately.
+Previous services finish their requests and exit after their idle timeout.
+Automatic remote updates require the Nix-packaged gateway. Update the local
+gateway through its installer and restart it to use the new build.
+
 Tether uses system SSH configuration, existing keys and known-host records.
 Complete password, key-unlocking and host-key confirmation prompts in your
 terminal before connecting from the browser. Browser connections require

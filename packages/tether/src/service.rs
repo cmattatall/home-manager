@@ -6,7 +6,9 @@ use std::{fs, io::Write, os::unix::fs::PermissionsExt, path::PathBuf, time::Dura
 use tokio::net::UnixListener;
 
 use crate::{
-    model::{Annotation, AnnotationInput, Comparison, Hunk, Scope, Selection, Source, Worktree},
+    model::{
+        Annotation, AnnotationInput, BUILD_ID, Comparison, Hunk, Scope, Selection, Source, Worktree,
+    },
     repository, state, transport,
 };
 
@@ -328,14 +330,15 @@ pub(crate) fn selected_text<'a>(source: &'a str, selection: &Selection) -> Resul
 }
 
 pub fn socket(state: &std::path::Path, id: &str) -> PathBuf {
-    state.join("s").join(id)
+    let identity = state::digest(format!("{id}:{BUILD_ID}").as_bytes());
+    state.join("s").join(&identity[..32])
 }
 
 pub async fn run(state_directory: PathBuf, id: String) -> Result<()> {
     let worktree = state::find_worktree(&state_directory, &id)?;
     let directory = state::worktree_state(&state_directory, &id);
     state::private_directory(&directory)?;
-    let _lock = state::lock(&directory.join("service.lock"))?;
+    let _lock = state::lock(&directory.join(format!("service-{BUILD_ID}.lock")))?;
     state::private_directory(&state_directory.join("s"))?;
     let endpoint = socket(&state_directory, &id);
     if endpoint.exists() {

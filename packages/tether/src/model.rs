@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const BUILD_ID: &str = env!("TETHER_BUILD_ID");
 pub const MAX_FRAME: usize = 1024 * 1024;
 pub const MAX_SOURCE: u64 = 64 * 1024;
 pub const TOKEN_TYPES: [&str; 9] = [
@@ -22,6 +23,31 @@ pub struct Machine {
     pub host: String,
     pub account: String,
     pub ssh: Option<SshDestination>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildInfo {
+    pub version: String,
+    pub build_id: Option<String>,
+}
+
+impl BuildInfo {
+    pub fn current() -> Self {
+        Self {
+            version: VERSION.into(),
+            build_id: Some(BUILD_ID.into()),
+        }
+    }
+}
+
+#[derive(Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MachineStatus {
+    pub installed: Option<BuildInfo>,
+    pub expected: BuildInfo,
+    pub can_update: bool,
+    pub updating: bool,
 }
 
 #[derive(Serialize, TS)]
@@ -193,6 +219,8 @@ pub fn typescript() -> String {
     let declarations: String = [
         SshDestination::decl(),
         Machine::decl(),
+        BuildInfo::decl(),
+        MachineStatus::decl(),
         ConnectionEvent::decl(),
         DirectoryPage::decl(),
         Worktree::decl(),

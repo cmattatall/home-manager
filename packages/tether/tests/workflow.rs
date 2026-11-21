@@ -209,10 +209,11 @@ impl Fixture {
             .unwrap();
         self.services.push(Process(child));
         let deadline = Instant::now() + Duration::from_secs(5);
-        while tokio::net::UnixStream::connect(self.state.join("s").join(id))
-            .await
-            .is_err()
-        {
+        use sha2::{Digest, Sha256};
+        let identity = format!("{id}:{}", env!("TETHER_BUILD_ID"));
+        let socket_name = format!("{:x}", Sha256::digest(identity.as_bytes()));
+        let socket = self.state.join("s").join(&socket_name[..32]);
+        while tokio::net::UnixStream::connect(&socket).await.is_err() {
             assert!(Instant::now() < deadline, "service startup timed out");
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -241,7 +242,7 @@ async fn missing_remote_tether_is_installed_and_reused_after_setup_failures() {
     fs::create_dir_all(&remote).unwrap();
     fs::create_dir_all(&bin).unwrap();
     fs::create_dir_all(&remote_bin).unwrap();
-    for tool in ["sh", "id", "uname", "mkdir", "ln", "sleep"] {
+    for tool in ["sh", "id", "uname", "mkdir", "ln", "sleep", "cat", "rm"] {
         let executable = std::env::split_paths(&std::env::var_os("PATH").unwrap())
             .map(|directory| directory.join(tool))
             .find(|path| path.is_file())
@@ -279,6 +280,7 @@ while [ "$#" -gt 0 ]; do
 done
 mkdir -p "$installation/bin"
 ln -s '{}' "$installation/bin/tether"
+rm -f "$HOME/legacy-response"
 "#,
             env!("CARGO_BIN_EXE_tether")
         ),
@@ -303,6 +305,12 @@ case "$remote_command" in
         fi
         printf '%s\n' '{}'
         exit 0 ;;
+    *'machine-rpc'*)
+        if [ -e "$HOME/legacy-response" ]; then
+            cat >/dev/null
+            cat "$HOME/legacy-response"
+            exit 0
+        fi ;;
 esac
 exec sh -c "$remote_command"
 "#,
@@ -398,6 +406,98 @@ exec sh -c "$remote_command"
     assert_eq!(
         fixture.read(&format!("machines/{id}/worktrees")).await,
         json!([])
+    );
+
+    let status_path = format!("machines/{id}/status");
+    let update_path = format!("machines/{id}/update");
+    let status = fixture.read(&status_path).await;
+    assert_eq!(status["installed"], status["expected"]);
+    assert_eq!(status["canUpdate"], true);
+    assert_eq!(status["updating"], false);
+    assert_eq!(status["expected"]["buildId"].as_str().unwrap().len(), 64);
+
+    let write_older_identity = |identity: &str, build: Option<&str>| {
+        let mut remote_identity = machine.clone();
+        remote_identity["id"] = identity.into();
+        if let Some(build) = build {
+            remote_identity["buildId"] = build.into();
+        }
+        let reply = serde_json::to_vec(&json!({
+            "jsonrpc": "2.0", "id": 1, "version": "0.1.0", "result": remote_identity,
+        }))
+        .unwrap();
+        let mut frame = (reply.len() as u32).to_be_bytes().to_vec();
+        frame.extend(reply);
+        fs::write(remote.join("legacy-response"), frame).unwrap();
+    };
+    write_older_identity("replaced-machine", None);
+    assert_eq!(
+        fixture.get(&status_path).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    assert!(
+        fixture
+            .post(&update_path, &json!({}))
+            .await
+            .text()
+            .await
+            .unwrap()
+            .contains("identity changed")
+    );
+
+    write_older_identity(id, None);
+    let legacy = fixture.read(&status_path).await;
+    assert!(legacy["installed"]["buildId"].is_null());
+    assert_eq!(legacy["installed"]["version"], "0.1.0");
+    let current_link = remote.join(".local/share/tether/installations/current");
+    let previous_installation = fs::read_link(&current_link).unwrap();
+    let failed = fixture.post(&update_path, &json!({})).await;
+    assert_eq!(failed.status(), StatusCode::BAD_REQUEST);
+    assert!(failed.text().await.unwrap().contains("Test disk full"));
+    assert_eq!(fs::read_link(&current_link).unwrap(), previous_installation);
+    assert_eq!(fixture.read(&status_path).await["updating"], false);
+
+    write_older_identity(id, Some("earlier-source-build"));
+    assert_eq!(
+        fixture.read(&status_path).await["installed"]["buildId"],
+        "earlier-source-build"
+    );
+    fs::remove_file(remote.join("build-fails")).unwrap();
+    fs::write(remote.join("hold-build"), "").unwrap();
+    let mut updating = fixture
+        .client
+        .post(format!("{}/api/{update_path}", fixture.origin))
+        .header("Origin", &fixture.origin)
+        .header("Accept", "application/x-ndjson")
+        .send()
+        .await
+        .unwrap();
+    let mut output = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !String::from_utf8_lossy(&output).contains("Compiling remote Tether") {
+            output.extend_from_slice(&updating.chunk().await.unwrap().unwrap());
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(fixture.read(&status_path).await["updating"], true);
+    let duplicate = fixture.post(&update_path, &json!({})).await;
+    assert_eq!(duplicate.status(), StatusCode::BAD_REQUEST);
+    assert!(duplicate.text().await.unwrap().contains("already running"));
+    fs::remove_file(remote.join("hold-build")).unwrap();
+    output.extend_from_slice(&updating.bytes().await.unwrap());
+    let finished: Value =
+        serde_json::from_str(String::from_utf8(output).unwrap().lines().last().unwrap()).unwrap();
+    assert_eq!(finished["type"], "connected");
+    assert_eq!(finished["machine"], *machine);
+    let status = fixture.read(&status_path).await;
+    assert_eq!(status["installed"], status["expected"]);
+    assert_eq!(status["updating"], false);
+    assert_ne!(fs::read_link(&current_link).unwrap(), previous_installation);
+    fs::write(remote.join("build-fails"), "").unwrap();
+    assert_eq!(
+        fixture.post(&update_path, &json!({})).await.status(),
+        StatusCode::OK
     );
 }
 
@@ -843,6 +943,17 @@ async fn annotations_retain_exact_unicode_source_across_edits_retries_and_restar
 
     fixture.services[0].0.kill().unwrap();
     fixture.services[0].0.wait().unwrap();
+    let legacy_service =
+        std::os::unix::net::UnixListener::bind(fixture.state.join("s").join(&id)).unwrap();
+    let legacy_lock = fs::File::create(
+        fixture
+            .state
+            .join("worktrees")
+            .join(&id)
+            .join("service.lock"),
+    )
+    .unwrap();
+    fs2::FileExt::try_lock_exclusive(&legacy_lock).unwrap();
     fixture.start_service(&id).await;
     fixture.restart_gateway();
     let notes: Value = fixture
@@ -852,6 +963,8 @@ async fn annotations_retain_exact_unicode_source_across_edits_retries_and_restar
         .await
         .unwrap();
     assert_eq!(notes, json!([saved]));
+    drop(legacy_service);
+    drop(legacy_lock);
     input["selection"] =
         json!({"startLineNumber": 1, "startColumn": 1, "endLineNumber": 3, "endColumn": 5});
     let spanning: Value = fixture

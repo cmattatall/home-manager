@@ -211,19 +211,56 @@ async fn connect_machine(
         };
         let _ = sender.send(event).await;
     });
+    Ok(progress_response(receiver))
+}
+
+async fn machine_status(
+    State(gateway): State<Arc<Gateway>>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    Ok(Json(json!(machine::status(&gateway.directory, &id).await?)))
+}
+
+async fn update_machine(
+    State(gateway): State<Arc<Gateway>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
+    if headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        != Some("application/x-ndjson")
+    {
+        return Ok(Json(machine::update(&gateway.directory, &id, None).await?).into_response());
+    }
+    let (sender, receiver) = mpsc::channel(64);
+    tokio::spawn(async move {
+        let result = machine::update(&gateway.directory, &id, Some(&sender)).await;
+        let event = match result {
+            Ok(machine) => ConnectionEvent::Connected { machine },
+            Err(error) => ConnectionEvent::Error {
+                message: error.to_string(),
+            },
+        };
+        let _ = sender.send(event).await;
+    });
+    Ok(progress_response(receiver))
+}
+
+fn progress_response(receiver: mpsc::Receiver<ConnectionEvent>) -> Response {
     let stream = futures_util::stream::unfold(receiver, |mut receiver| async {
         let event = receiver.recv().await?;
         let line = serde_json::to_string(&event).map(|json| format!("{json}\n"));
         Some((line, receiver))
     });
-    Ok((
+    (
         [
             (header::CONTENT_TYPE, "application/x-ndjson"),
             (header::CACHE_CONTROL, "no-store"),
         ],
         Body::from_stream(stream),
     )
-        .into_response())
+        .into_response()
 }
 
 async fn directories(
@@ -492,6 +529,8 @@ pub async fn run(directory: PathBuf, port: u16) -> Result<()> {
         .route("/api/logout", post(logout))
         .route("/api/ssh-hosts", get(ssh_hosts))
         .route("/api/machines", get(machines).post(connect_machine))
+        .route("/api/machines/{id}/status", get(machine_status))
+        .route("/api/machines/{id}/update", post(update_machine))
         .route("/api/machines/{id}/directories", get(directories))
         .route(
             "/api/machines/{id}/worktrees",

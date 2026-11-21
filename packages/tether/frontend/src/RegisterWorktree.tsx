@@ -2,8 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
-import type { DirectoryPage, Machine, Worktree } from "./protocol";
-import { api, connectMachine } from "./api";
+import type {
+  DirectoryPage,
+  Machine,
+  MachineStatus,
+  Worktree,
+} from "./protocol";
+import { api, setupMachine } from "./api";
 import styles from "./Workbench.module.css";
 
 export function RegisterWorktree({
@@ -266,16 +271,22 @@ export function RegisterWorktree({
   );
 }
 
-export function ConnectMachine({
+export function MachineSetup({
   machines,
+  update,
+  inline = false,
   onClose,
   onConnected,
 }: {
   machines: Machine[];
+  update?: { machine: Machine; status: MachineStatus };
+  inline?: boolean;
   onClose: () => void;
   onConnected: (machine: Machine) => void;
 }) {
-  const [hostChoice, setHostChoice] = useState("");
+  const [hostChoice, setHostChoice] = useState(
+    update?.machine.ssh?.destination ?? "",
+  );
   const [hostSearch, setHostSearch] = useState("");
   const [hostInputFocused, setHostInputFocused] = useState(false);
   const [connectionProgress, setConnectionProgress] = useState("");
@@ -285,26 +296,32 @@ export function ConnectMachine({
   const followOutput = useRef(true);
   const connectButton = useRef<HTMLButtonElement>(null);
   const destination = (hostChoice || hostSearch).trim();
-  const alreadyRegistered = machines.some(
-    (machine) => machine.ssh?.destination === destination,
-  );
+  const alreadyRegistered =
+    !update &&
+    machines.some((machine) => machine.ssh?.destination === destination);
   const hosts = useQuery({
     queryKey: ["ssh-hosts"],
     queryFn: ({ signal }) => api<string[]>("ssh-hosts", { signal }),
+    enabled: !update,
   });
   const connection = useMutation({
+    mutationKey: ["machine-setup", update?.machine.id ?? destination],
     mutationFn: () => {
       setConnectionProgress("Connecting over SSH…");
       setConnectionOutput("");
       setElapsedSeconds(0);
       followOutput.current = true;
-      return connectMachine(destination, (event) => {
-        if (event.type === "progress") setConnectionProgress(event.message);
-        else
-          setConnectionOutput((previous) =>
-            (previous + event.text).slice(-32_768),
-          );
-      });
+      return setupMachine(
+        update ? `machines/${update.machine.id}/update` : "machines",
+        update ? undefined : { destination },
+        (event) => {
+          if (event.type === "progress") setConnectionProgress(event.message);
+          else
+            setConnectionOutput((previous) =>
+              (previous + event.text).slice(-32_768),
+            );
+        },
+      );
     },
   });
   useEffect(() => {
@@ -323,6 +340,224 @@ export function ConnectMachine({
     if (hostChoice) connectButton.current?.focus();
   }, [hostChoice]);
 
+  const Title = inline ? "h3" : Dialog.Title;
+  const Description = inline ? "p" : Dialog.Description;
+  const content = (
+    <>
+      <Title>
+        {update ? `Update Tether on ${destination}` : "Connect an SSH machine"}
+      </Title>
+      <Description>
+        {update
+          ? "Install this gateway's pinned Tether build on the selected machine. Worktrees and saved annotations are preserved."
+          : "Uses your SSH configuration and trusted host keys. Connect installs missing Tether through Nix in your remote account's Tether directory."}
+      </Description>
+      {update && (
+        <p className={styles.hint}>
+          Installed: {update.status.installed?.version ?? "Missing"} ·{" "}
+          {update.status.installed?.buildId?.slice(0, 12) ?? "build unknown"}
+          <br />
+          Target: {update.status.expected.version} ·{" "}
+          {update.status.expected.buildId?.slice(0, 12)}
+        </p>
+      )}
+      <form
+        className={styles.connectionForm}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!destination || connection.isPending || alreadyRegistered) return;
+          connection.mutate(undefined, { onSuccess: onConnected });
+        }}
+      >
+        <div className={styles.connectionFields}>
+          {!hostChoice ? (
+            <>
+              <p>SSH destination</p>
+              <Command label="SSH destination" className={styles.hostPicker}>
+                <Command.Input
+                  asChild
+                  autoFocus
+                  onFocus={() => setHostInputFocused(true)}
+                  onBlur={() => setHostInputFocused(false)}
+                  value={hostSearch}
+                  onValueChange={(value) => {
+                    connection.reset();
+                    setHostSearch(value);
+                  }}
+                  disabled={connection.isPending}
+                  placeholder="SSH alias, hostname, IP or user@host"
+                  aria-invalid={alreadyRegistered}
+                  aria-describedby={
+                    alreadyRegistered
+                      ? "ssh-search-help ssh-registration-error"
+                      : "ssh-search-help"
+                  }
+                >
+                  <input aria-expanded={hostInputFocused} />
+                </Command.Input>
+                <Command.List
+                  className={styles.hostList}
+                  label="Configured SSH hosts"
+                  hidden={!hostInputFocused}
+                  onMouseDown={(event) => event.preventDefault()}
+                >
+                  {!!hosts.data?.length && (
+                    <Command.Empty className={styles.hint}>
+                      No configured hosts match this destination.
+                    </Command.Empty>
+                  )}
+                  {hosts.data?.map((host) => {
+                    const registered = machines.some(
+                      (machine) => machine.ssh?.destination === host,
+                    );
+                    return (
+                      <Command.Item
+                        key={host}
+                        value={host}
+                        disabled={registered || connection.isPending}
+                        className={styles.hostOption}
+                        onSelect={() => {
+                          connection.reset();
+                          setHostChoice(host);
+                        }}
+                      >
+                        {host}
+                        {registered && <small>Already registered</small>}
+                      </Command.Item>
+                    );
+                  })}
+                </Command.List>
+              </Command>
+            </>
+          ) : (
+            <div className={styles.hostSelection}>
+              <strong>{hostChoice}</strong>
+              {!update && (
+                <button
+                  type="button"
+                  disabled={connection.isPending}
+                  onClick={() => {
+                    connection.reset();
+                    setHostSearch("");
+                    setHostChoice("");
+                  }}
+                >
+                  Change host
+                </button>
+              )}
+            </div>
+          )}
+          <div className={hostChoice ? undefined : styles.hostDetails}>
+            {!hostChoice && (
+              <p
+                id="ssh-search-help"
+                className={styles.hint}
+                hidden={connection.isPending || connection.isError}
+              >
+                Type a destination and choose Connect machine. Suggestions from
+                ~/.ssh/config support fuzzy search. ↑/↓ and Enter select a
+                suggested host.
+              </p>
+            )}
+            {!update && hosts.isPending && (
+              <p role="status">Loading configured hosts…</p>
+            )}
+            {!update && hosts.data?.length === 0 && (
+              <p>No concrete Host aliases found in ~/.ssh/config.</p>
+            )}
+            {hosts.error && <p role="alert">{hosts.error.message}</p>}
+            {hosts.error && (
+              <button type="button" onClick={() => void hosts.refetch()}>
+                Retry hosts
+              </button>
+            )}
+            <p
+              className={styles.hint}
+              hidden={connection.isPending || connection.isError}
+            >
+              Automatic setup requires Nix on the remote machine and uses this
+              gateway's pinned sources. First builds can take several minutes.
+              Home Manager profiles stay unchanged.
+            </p>
+            {connection.isPending && (
+              <>
+                <p className={styles.loading} role="status">
+                  <span className={styles.spinner} aria-hidden="true" />
+                  {connectionProgress}
+                </p>
+                <p className={styles.hint}>
+                  Elapsed {Math.floor(elapsedSeconds / 60)}m{" "}
+                  {elapsedSeconds % 60}s. Nix can be quiet between output
+                  messages.
+                </p>
+              </>
+            )}
+            {connection.error && (
+              <p className={styles.error} role="alert">
+                {connection.error.message}
+              </p>
+            )}
+            {(connection.isPending || connection.isError) &&
+              connectionOutput && (
+                <>
+                  <p className={styles.hint}>Latest installation output</p>
+                  <pre
+                    ref={outputPanel}
+                    className={styles.installationOutput}
+                    aria-label="Installation output"
+                    tabIndex={0}
+                    onScroll={(event) => {
+                      const panel = event.currentTarget;
+                      followOutput.current =
+                        panel.scrollHeight -
+                          panel.scrollTop -
+                          panel.clientHeight <
+                        24;
+                    }}
+                  >
+                    {connectionOutput}
+                  </pre>
+                </>
+              )}
+            {alreadyRegistered && (
+              <p
+                id="ssh-registration-error"
+                role="alert"
+                className={styles.error}
+              >
+                This machine is already registered. Select it from Machines.
+              </p>
+            )}
+          </div>
+        </div>
+        <div className={`${styles.actions} ${styles.connectionActions}`}>
+          <button
+            type="button"
+            disabled={connection.isPending}
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <button
+            ref={connectButton}
+            className={styles.primary}
+            disabled={connection.isPending || !destination || alreadyRegistered}
+          >
+            {connection.isPending
+              ? update
+                ? "Updating…"
+                : "Connecting…"
+              : update
+                ? "Update machine"
+                : "Connect machine"}
+          </button>
+        </div>
+      </form>
+    </>
+  );
+
+  if (inline) return <div className={styles.machineUpdate}>{content}</div>;
+
   return (
     <Dialog.Root
       open
@@ -335,202 +570,7 @@ export function ConnectMachine({
         <Dialog.Content
           className={`${styles.dialog} ${styles.directoryDialog} ${styles.connectionDialog}`}
         >
-          <Dialog.Title>Connect an SSH machine</Dialog.Title>
-          <Dialog.Description>
-            Uses your SSH configuration and trusted host keys. Connect installs
-            missing Tether through Nix in your remote account's Tether
-            directory.
-          </Dialog.Description>
-          <form
-            className={styles.connectionForm}
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!destination || connection.isPending || alreadyRegistered)
-                return;
-              connection.mutate(undefined, { onSuccess: onConnected });
-            }}
-          >
-            <div className={styles.connectionFields}>
-              {!hostChoice ? (
-                <>
-                  <p>SSH destination</p>
-                  <Command
-                    label="SSH destination"
-                    className={styles.hostPicker}
-                  >
-                    <Command.Input
-                      asChild
-                      autoFocus
-                      onFocus={() => setHostInputFocused(true)}
-                      onBlur={() => setHostInputFocused(false)}
-                      value={hostSearch}
-                      onValueChange={(value) => {
-                        connection.reset();
-                        setHostSearch(value);
-                      }}
-                      disabled={connection.isPending}
-                      placeholder="SSH alias, hostname, IP or user@host"
-                      aria-invalid={alreadyRegistered}
-                      aria-describedby={
-                        alreadyRegistered
-                          ? "ssh-search-help ssh-registration-error"
-                          : "ssh-search-help"
-                      }
-                    >
-                      <input aria-expanded={hostInputFocused} />
-                    </Command.Input>
-                    <Command.List
-                      className={styles.hostList}
-                      label="Configured SSH hosts"
-                      hidden={!hostInputFocused}
-                      onMouseDown={(event) => event.preventDefault()}
-                    >
-                      {!!hosts.data?.length && (
-                        <Command.Empty className={styles.hint}>
-                          No configured hosts match this destination.
-                        </Command.Empty>
-                      )}
-                      {hosts.data?.map((host) => {
-                        const registered = machines.some(
-                          (machine) => machine.ssh?.destination === host,
-                        );
-                        return (
-                          <Command.Item
-                            key={host}
-                            value={host}
-                            disabled={registered || connection.isPending}
-                            className={styles.hostOption}
-                            onSelect={() => {
-                              connection.reset();
-                              setHostChoice(host);
-                            }}
-                          >
-                            {host}
-                            {registered && <small>Already registered</small>}
-                          </Command.Item>
-                        );
-                      })}
-                    </Command.List>
-                  </Command>
-                </>
-              ) : (
-                <div className={styles.hostSelection}>
-                  <strong>{hostChoice}</strong>
-                  <button
-                    type="button"
-                    disabled={connection.isPending}
-                    onClick={() => {
-                      connection.reset();
-                      setHostSearch("");
-                      setHostChoice("");
-                    }}
-                  >
-                    Change host
-                  </button>
-                </div>
-              )}
-              <div className={hostChoice ? undefined : styles.hostDetails}>
-                {!hostChoice && (
-                  <p
-                    id="ssh-search-help"
-                    className={styles.hint}
-                    hidden={connection.isPending || connection.isError}
-                  >
-                    Type a destination and choose Connect machine. Suggestions
-                    from ~/.ssh/config support fuzzy search. ↑/↓ and Enter
-                    select a suggested host.
-                  </p>
-                )}
-                {hosts.isPending && (
-                  <p role="status">Loading configured hosts…</p>
-                )}
-                {hosts.data?.length === 0 && (
-                  <p>No concrete Host aliases found in ~/.ssh/config.</p>
-                )}
-                {hosts.error && <p role="alert">{hosts.error.message}</p>}
-                {hosts.error && (
-                  <button type="button" onClick={() => void hosts.refetch()}>
-                    Retry hosts
-                  </button>
-                )}
-                <p
-                  className={styles.hint}
-                  hidden={connection.isPending || connection.isError}
-                >
-                  Automatic setup requires Nix on the remote machine and uses
-                  this gateway's pinned sources. First builds can take several
-                  minutes. Home Manager profiles stay unchanged.
-                </p>
-                {connection.isPending && (
-                  <>
-                    <p className={styles.loading} role="status">
-                      <span className={styles.spinner} aria-hidden="true" />
-                      {connectionProgress}
-                    </p>
-                    <p className={styles.hint}>
-                      Elapsed {Math.floor(elapsedSeconds / 60)}m{" "}
-                      {elapsedSeconds % 60}s. Nix can be quiet between output
-                      messages.
-                    </p>
-                  </>
-                )}
-                {connection.error && (
-                  <p className={styles.error} role="alert">
-                    {connection.error.message}
-                  </p>
-                )}
-                {(connection.isPending || connection.isError) &&
-                  connectionOutput && (
-                    <>
-                      <p className={styles.hint}>Latest installation output</p>
-                      <pre
-                        ref={outputPanel}
-                        className={styles.installationOutput}
-                        aria-label="Installation output"
-                        tabIndex={0}
-                        onScroll={(event) => {
-                          const panel = event.currentTarget;
-                          followOutput.current =
-                            panel.scrollHeight -
-                              panel.scrollTop -
-                              panel.clientHeight <
-                            24;
-                        }}
-                      >
-                        {connectionOutput}
-                      </pre>
-                    </>
-                  )}
-                {alreadyRegistered && (
-                  <p
-                    id="ssh-registration-error"
-                    role="alert"
-                    className={styles.error}
-                  >
-                    This machine is already registered. Select it from Machines.
-                  </p>
-                )}
-              </div>
-            </div>
-            <div className={`${styles.actions} ${styles.connectionActions}`}>
-              <button
-                type="button"
-                disabled={connection.isPending}
-                onClick={onClose}
-              >
-                Cancel
-              </button>
-              <button
-                ref={connectButton}
-                className={styles.primary}
-                disabled={
-                  connection.isPending || !destination || alreadyRegistered
-                }
-              >
-                {connection.isPending ? "Connecting…" : "Connect machine"}
-              </button>
-            </div>
-          </form>
+          {content}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

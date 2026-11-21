@@ -34,3 +34,6 @@ tree-sitter-highlight = "0.25"
 ts-rs = "11"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
+
+[build-dependencies]
+sha2 = "0.10"

@@ -23,7 +23,8 @@ import { SourceViewer, type SourceSelection } from "./SourceViewer";
 import { FileTree } from "./FileTree";
 import { Explorer } from "./Explorer";
 import { SignOut } from "./SignOut";
-import { ConnectMachine, RegisterWorktree } from "./RegisterWorktree";
+import { MachineSetup, RegisterWorktree } from "./RegisterWorktree";
+import { MachineVersion } from "./MachineVersion";
 import styles from "./Workbench.module.css";
 
 export function Workbench({
@@ -143,6 +144,7 @@ export function Workbench({
             </option>
           ))}
         </select>
+        {machine && <MachineVersion key={machine.id} machine={machine} />}
         <SignOut owner={session.data.owner} />
       </header>
       <div className={styles.workspace}>
@@ -225,19 +227,25 @@ export function Workbench({
                 )}
                 <div className={styles.selectionList}>
                   {machines.data?.map((entry) => (
-                    <button
+                    <section
                       key={entry.id}
-                      className={styles.selection}
-                      onClick={() => navigate(`/machines/${entry.id}/`)}
+                      className={styles.machineCard}
+                      aria-label={`Machine ${entry.ssh?.destination ?? "Local machine"}`}
                     >
-                      <strong>
-                        {entry.ssh?.destination ?? "Local machine"}
-                      </strong>
-                      <small>
-                        {entry.account}@{entry.host} ·{" "}
-                        {entry.ssh ? "SSH" : "Local"}
-                      </small>
-                    </button>
+                      <button
+                        className={styles.selection}
+                        onClick={() => navigate(`/machines/${entry.id}/`)}
+                      >
+                        <strong>
+                          {entry.ssh?.destination ?? "Local machine"}
+                        </strong>
+                        <small>
+                          {entry.account}@{entry.host} ·{" "}
+                          {entry.ssh ? "SSH" : "Local"}
+                        </small>
+                      </button>
+                      <MachineVersion machine={entry} inline />
+                    </section>
                   ))}
                 </div>
                 <p className={styles.hint}>
@@ -272,7 +280,7 @@ export function Workbench({
         />
       )}
       {connectionOpen && machines.data && (
-        <ConnectMachine
+        <MachineSetup
           machines={machines.data}
           onClose={() => setConnectionOpen(false)}
           onConnected={async (connected) => {

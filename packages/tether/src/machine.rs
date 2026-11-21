@@ -2,14 +2,13 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, fs, io::ErrorKind, path::Path, process::Stdio, time::Duration};
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    process::Command,
-    sync::mpsc,
-};
+use tokio::{io::AsyncReadExt, process::Command, sync::mpsc};
 
 use crate::{
-    model::{ConnectionEvent, DirectoryPage, Machine, SshDestination, VERSION},
+    model::{
+        BUILD_ID, BuildInfo, ConnectionEvent, DirectoryPage, Machine, MachineStatus,
+        SshDestination, VERSION,
+    },
     process, state, transport,
 };
 
@@ -157,6 +156,7 @@ async fn setup_command(
 
 async fn install_remote(
     ssh: &SshDestination,
+    expected_identity: Option<&str>,
     progress: Option<&mpsc::Sender<ConnectionEvent>>,
 ) -> Result<()> {
     let expression =
@@ -220,17 +220,35 @@ umask 077
 directory="$HOME/.local/share/tether/installations"
 mkdir -p "$directory"
 {} --extra-experimental-features nix-command --log-format raw-with-logs build --impure --file {} --out-link "$directory"/{}
-ln -sfn {} "$directory/current"
 "#,
         shlex::try_quote(nix)?,
         shlex::try_quote(&expression)?,
-        shlex::try_quote(key)?,
         shlex::try_quote(key)?
     );
     let script = format!("exec sh -c {}", shlex::try_quote(&script)?);
     setup_command(
         ssh_command(ssh, &script),
         "Building remote Tether",
+        progress,
+    )
+    .await?;
+    report_phase(progress, "Verifying the installed Tether build…").await;
+    let (machine, build) = remote_identity(ssh).await?;
+    ensure!(
+        expected_identity.is_none_or(|id| machine.id == id),
+        "Remote machine identity changed. Reconnect this machine explicitly"
+    );
+    ensure!(
+        build.build_id.as_deref() == Some(BUILD_ID) && build.version == VERSION,
+        "Installed Tether build does not match this gateway"
+    );
+    let activate = format!(
+        "ln -sfn {} \"$HOME/.local/share/tether/installations/current\"",
+        shlex::try_quote(key)?
+    );
+    setup_command(
+        ssh_command(ssh, &activate),
+        "Activating remote Tether",
         progress,
     )
     .await?;
@@ -339,7 +357,7 @@ pub async fn connect(
     let identity = match ssh_request(&ssh, None, "identity", json!({})).await {
         Ok(identity) => identity,
         Err(error) if error.is::<MissingRemote>() => {
-            install_remote(&ssh, progress).await?;
+            install_remote(&ssh, None, progress).await?;
             report_phase(progress, "Checking the remote Tether handshake…").await;
             ssh_request(&ssh, None, "identity", json!({})).await?
         }
@@ -365,6 +383,17 @@ async fn ssh_request(
     method: &str,
     input: Value,
 ) -> Result<Value> {
+    ssh_reply(ssh, identity, method, input)
+        .await?
+        .into_result(1)
+}
+
+async fn ssh_reply(
+    ssh: &SshDestination,
+    identity: Option<&str>,
+    method: &str,
+    input: Value,
+) -> Result<transport::Reply> {
     let expression = remote_expression();
     let key = expression
         .as_deref()
@@ -392,7 +421,7 @@ async fn ssh_request(
     let exchange_result = async {
         let exchange = async {
             transport::write(&mut stdin, &request).await?;
-            stdin.shutdown().await?;
+            drop(stdin);
             transport::read::<transport::Reply>(&mut stdout).await
         };
         let (reply, diagnostics, status) =
@@ -408,13 +437,103 @@ async fn ssh_request(
             ssh.destination,
             String::from_utf8_lossy(&diagnostics).trim()
         );
-        reply
-            .context("Remote Tether returned an invalid response")?
-            .into_result(1)
+        let reply = reply.context("Remote Tether returned an invalid response")?;
+        ensure!(
+            reply.jsonrpc == "2.0" && reply.id == 1,
+            "Invalid remote response identity"
+        );
+        Ok(reply)
     };
     tokio::time::timeout(Duration::from_secs(65), exchange_result)
         .await
         .context("Remote request timed out. Check the SSH connection and retry")?
+}
+
+async fn remote_identity(ssh: &SshDestination) -> Result<(Machine, BuildInfo)> {
+    let reply = ssh_reply(ssh, None, "identity", json!({})).await?;
+    if let Some(error) = reply.error {
+        bail!(error.message);
+    }
+    let value = reply.result.context("Remote identity is missing")?;
+    let build = BuildInfo {
+        version: reply.version,
+        build_id: value["buildId"].as_str().map(str::to_owned),
+    };
+    Ok((serde_json::from_value(value)?, build))
+}
+
+pub async fn status(directory: &Path, id: &str) -> Result<MachineStatus> {
+    let mut status = MachineStatus {
+        installed: Some(BuildInfo::current()),
+        expected: BuildInfo::current(),
+        can_update: false,
+        updating: false,
+    };
+    if id == "local" {
+        return Ok(status);
+    }
+    let machine = find(directory, id)?;
+    let ssh = machine
+        .ssh
+        .context("Saved machine has no SSH destination")?;
+    status.can_update = remote_expression().is_some();
+    status.updating = match state::lock(&directory.join(format!("update-{id}.lock"))) {
+        Ok(_) => false,
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == ErrorKind::WouldBlock) =>
+        {
+            true
+        }
+        Err(error) => return Err(error),
+    };
+    status.installed = match remote_identity(&ssh).await {
+        Ok((remote, build)) => {
+            ensure!(
+                remote.id == machine.id,
+                "Remote machine identity changed. Reconnect this machine explicitly"
+            );
+            Some(build)
+        }
+        Err(error) if error.is::<MissingRemote>() => None,
+        Err(error) => return Err(error),
+    };
+    Ok(status)
+}
+
+pub async fn update(
+    directory: &Path,
+    id: &str,
+    progress: Option<&mpsc::Sender<ConnectionEvent>>,
+) -> Result<Machine> {
+    ensure!(
+        id != "local",
+        "Update the local gateway through its installer"
+    );
+    let machine = find(directory, id)?;
+    let ssh = machine
+        .ssh
+        .as_ref()
+        .context("Saved machine has no SSH destination")?;
+    let _lock = state::lock(&directory.join(format!("update-{id}.lock")))
+        .context("A machine update is already running")?;
+    report_phase(progress, "Checking the remote machine…").await;
+    match remote_identity(ssh).await {
+        Ok((remote, build)) => {
+            ensure!(
+                remote.id == machine.id,
+                "Remote machine identity changed. Reconnect this machine explicitly"
+            );
+            if build.build_id.as_deref() == Some(BUILD_ID) && build.version == VERSION {
+                return Ok(machine);
+            }
+        }
+        Err(error) if error.is::<MissingRemote>() => {}
+        Err(error) => return Err(error),
+    }
+    install_remote(ssh, Some(&machine.id), progress).await?;
+    Ok(machine)
 }
 
 pub async fn request(
@@ -435,7 +554,11 @@ pub async fn request(
 
 async fn execute(directory: &Path, method: &str, input: Value) -> Result<Value> {
     match method {
-        "identity" => Ok(json!(identity(directory)?)),
+        "identity" => {
+            let mut identity = json!(identity(directory)?);
+            identity["buildId"] = BUILD_ID.into();
+            Ok(identity)
+        }
         "directories" => {
             let input = serde_json::from_value(input)?;
             Ok(json!(
@@ -480,7 +603,11 @@ pub async fn serve(directory: &Path) -> Result<()> {
     )
     .await??;
     let outcome = async {
-        request.validate()?;
+        if request.method == "identity" {
+            ensure!(request.jsonrpc == "2.0", "JSON-RPC 2.0 required");
+        } else {
+            request.validate()?;
+        }
         if request.method != "identity" {
             ensure!(
                 request.params["identity"].as_str() == Some(&identity(directory)?.id),
