@@ -202,6 +202,7 @@ impl Fixture {
 
     async fn start_service(&mut self, id: &str) {
         let child = Command::new(env!("CARGO_BIN_EXE_tether"))
+            .env("HOME", self._directory.path())
             .arg("--state-dir")
             .arg(&self.state)
             .args(["service", "--id", id])
@@ -227,6 +228,284 @@ impl Fixture {
         assert_eq!(origin, self.origin);
         self.gateway = gateway;
     }
+}
+
+#[tokio::test]
+async fn feedback_retains_evidence_and_retries_only_the_original_amp_connection() {
+    use axum::{Json, Router, extract::State, http::HeaderMap, routing::get};
+    use std::{
+        os::unix::fs::PermissionsExt,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicU16, Ordering},
+        },
+    };
+
+    let mut fixture = Fixture::new();
+    fixture.login(&fixture.ticket()).await;
+    let original = "package example\nvar Timeout = 10\n";
+    let (id, root) = fixture.worktree("review", original).await;
+    let (other_id, _) = fixture.worktree("other", "package other\n").await;
+    let endpoint = format!("machines/local/worktrees/{id}");
+    let source = fixture
+        .read(&format!("{endpoint}/source?path=hello.go"))
+        .await;
+    let annotation_id = uuid::Uuid::new_v4().to_string();
+    let input = json!({
+        "id": annotation_id, "sourceId": source["id"], "path": "hello.go",
+        "selection": {"startLineNumber": 2, "startColumn": 5, "endLineNumber": 2, "endColumn": 12},
+        "text": "Make the timeout configurable",
+    });
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/annotations"), &input)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let second_id = uuid::Uuid::new_v4().to_string();
+    let mut second = input.clone();
+    second["id"] = json!(second_id);
+    second["text"] = json!("Use milliseconds in the name");
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/annotations"), &second)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    let identity =
+        json!({"version": 1, "root": fs::canonicalize(&root).unwrap(), "thread": "T-test-review"});
+    let posts = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let response_status = Arc::new(AtomicU16::new(202));
+    let received = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let observed = posts.clone();
+    let status = response_status.clone();
+    let received_by_bridge = received.clone();
+    let release_bridge = release.clone();
+    let app = Router::new()
+        .route(
+            "/feedback",
+            get(
+                |State(identity): State<Value>, headers: HeaderMap| async move {
+                    assert_eq!(headers["authorization"], "Bearer fixture-token");
+                    Json(identity)
+                },
+            )
+            .post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                let observed = observed.clone();
+                let status = status.clone();
+                let received = received_by_bridge.clone();
+                let release = release_bridge.clone();
+                async move {
+                    assert_eq!(headers["authorization"], "Bearer fixture-token");
+                    observed.lock().unwrap().push(body);
+                    let status = status.load(Ordering::SeqCst);
+                    if status == 0 {
+                        received.notify_one();
+                        release.notified().await;
+                        StatusCode::NO_CONTENT
+                    } else {
+                        StatusCode::from_u16(status).unwrap()
+                    }
+                }
+            }),
+        )
+        .with_state(identity.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let registry = fixture._directory.path().join(".cache/rediff/amp");
+    let session_dir = registry.join("session-fixture");
+    fs::create_dir_all(&session_dir).unwrap();
+    for directory in [&registry, &session_dir] {
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let descriptor_path = session_dir.join("connection.json");
+    let mut descriptor = identity;
+    descriptor["url"] = json!(format!("http://127.0.0.1:{port}/feedback"));
+    descriptor["token"] = json!("fixture-token");
+    descriptor["title"] = json!("Timeout review");
+    fs::write(&descriptor_path, serde_json::to_vec(&descriptor).unwrap()).unwrap();
+    fs::set_permissions(&descriptor_path, fs::Permissions::from_mode(0o600)).unwrap();
+    let sessions = fixture.read(&format!("{endpoint}/ampSessions")).await;
+    assert_eq!(sessions.as_array().unwrap().len(), 1);
+    assert!(sessions[0].get("token").is_none());
+    assert_eq!(
+        fixture
+            .read(&format!("worktrees/{other_id}/ampSessions"))
+            .await,
+        json!([])
+    );
+    fs::set_permissions(&descriptor_path, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(
+        fixture.read(&format!("{endpoint}/ampSessions")).await,
+        json!([])
+    );
+    fs::set_permissions(&descriptor_path, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let batch = json!({"id": uuid::Uuid::new_v4().to_string(), "sessionId": sessions[0]["id"], "annotationIds": [annotation_id, second_id]});
+    let prepared = fixture
+        .post(&format!("{endpoint}/prepareFeedback"), &batch)
+        .await;
+    assert_eq!(prepared.status(), StatusCode::OK);
+    let preview: Value = prepared.json().await.unwrap();
+    assert_eq!(preview["feedback"]["status"], "prepared");
+    assert!(posts.lock().unwrap().is_empty());
+    let content = preview["content"].as_str().unwrap();
+    let evidence: Value = serde_json::from_str(content.split("\n\n").last().unwrap()).unwrap();
+    assert_eq!(evidence[0]["source"], original);
+    assert_eq!(
+        evidence[1]["annotation"]["input"]["text"],
+        "Use milliseconds in the name"
+    );
+    fs::write(
+        root.join("hello.go"),
+        "package example\nvar Timeout = 999\n",
+    )
+    .unwrap();
+    let mut conflicting = batch.clone();
+    conflicting["annotationIds"] = json!([second_id]);
+    assert_ne!(
+        fixture
+            .post(&format!("{endpoint}/prepareFeedback"), &conflicting)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_ne!(
+        fixture
+            .post(&format!("worktrees/{other_id}/prepareFeedback"), &batch)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let submission = json!({"id": batch["id"]});
+    let pending: Value = fixture
+        .post(&format!("{endpoint}/sendFeedback"), &submission)
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(pending["status"], "uncertain");
+    assert_eq!(posts.lock().unwrap()[0]["content"], preview["content"]);
+
+    fixture.services[0].0.kill().unwrap();
+    fixture.services[0].0.wait().unwrap();
+    fixture.start_service(&id).await;
+    fixture.restart_gateway();
+    assert_eq!(
+        fixture.read(&format!("{endpoint}/feedback")).await[0]["status"],
+        "uncertain"
+    );
+    response_status.store(204, Ordering::SeqCst);
+    let accepted: Value = fixture
+        .post(&format!("{endpoint}/sendFeedback"), &submission)
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(accepted["status"], "accepted");
+    let sent = posts.lock().unwrap().clone();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0], sent[1]);
+    fixture
+        .post(&format!("{endpoint}/sendFeedback"), &submission)
+        .await;
+    assert_eq!(posts.lock().unwrap().len(), 2);
+    assert_eq!(
+        fixture
+            .read(&format!("{endpoint}/annotations"))
+            .await
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let mut disconnected_batch = batch.clone();
+    disconnected_batch["id"] = json!(uuid::Uuid::new_v4().to_string());
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/prepareFeedback"), &disconnected_batch)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    response_status.store(0, Ordering::SeqCst);
+    let client = fixture.client.clone();
+    let origin = fixture.origin.clone();
+    let url = format!("{origin}/api/{endpoint}/sendFeedback");
+    let disconnected_id = disconnected_batch["id"].clone();
+    let request = tokio::spawn(async move {
+        client
+            .post(url)
+            .header("Origin", origin)
+            .json(&json!({"id": disconnected_id}))
+            .send()
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(5), received.notified())
+        .await
+        .unwrap();
+    request.abort();
+    release.notify_one();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let history = fixture.read(&format!("{endpoint}/feedback")).await;
+        if history[0]["status"] == "accepted" {
+            assert_eq!(history[0]["input"]["id"], disconnected_batch["id"]);
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "delivery did not survive browser disconnect"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let mut uncertain_batch = batch.clone();
+    uncertain_batch["id"] = json!(uuid::Uuid::new_v4().to_string());
+    fixture
+        .post(&format!("{endpoint}/prepareFeedback"), &uncertain_batch)
+        .await;
+    response_status.store(500, Ordering::SeqCst);
+    let uncertain_id = json!({"id": uncertain_batch["id"]});
+    let failed: Value = fixture
+        .post(&format!("{endpoint}/sendFeedback"), &uncertain_id)
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(failed["status"], "uncertain");
+    descriptor["token"] = json!("replacement-token");
+    fs::write(&descriptor_path, serde_json::to_vec(&descriptor).unwrap()).unwrap();
+    let blocked: Value = fixture
+        .post(&format!("{endpoint}/sendFeedback"), &uncertain_id)
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(blocked["status"], "uncertain");
+    assert!(
+        blocked["detail"]
+            .as_str()
+            .unwrap()
+            .contains("Original Amp connection is unavailable")
+    );
+    assert_eq!(posts.lock().unwrap().len(), 4);
+    assert_eq!(
+        fixture
+            .read(&format!(
+                "{endpoint}/feedbackPreview?id={}",
+                batch["id"].as_str().unwrap()
+            ))
+            .await["content"],
+        preview["content"]
+    );
+    server.abort();
 }
 
 #[tokio::test]

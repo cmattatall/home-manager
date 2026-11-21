@@ -1,4 +1,5 @@
 mod analysis;
+mod feedback;
 mod gateway;
 mod machine;
 mod model;

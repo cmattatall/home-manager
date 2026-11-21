@@ -5,7 +5,8 @@ Register Git worktrees, inspect source, select text, and save an annotation with
 the exact source you reviewed. Each worktree keeps its own notes.
 
 This implementation supports local and SSH worktrees, diff review, Go symbol
-navigation and durable annotations. Shared service drafts and Amp delivery are planned.
+navigation, durable annotations and delivery to existing Amp sessions. Shared
+service drafts are planned.
 Source editing and Git changes are performed through your existing tools.
 
 ## Install with Home Manager
@@ -65,6 +66,34 @@ After a failed save, **Retry save annotation** reuses the same operation and
 content. The text stays locked while its outcome is uncertain. Saved notes
 remain readable after source edits and process restarts. **Refresh** explicitly
 captures the selected view again.
+
+## Send annotations to Amp
+
+Open Amp in the reviewed worktree with the repository's readiff Amp plugin
+enabled. Its **readiff connect** command publishes the session for discovery.
+For SSH worktrees, run Amp and the plugin on that execution machine.
+
+Open **Annotations**, choose a session, select up to 20 saved annotations and
+choose **Preview annotations**. The saved preview shows the recipient and exact
+message, including captured source and comparison evidence. A batch supports up
+to 256 KiB of message text. Choose a smaller selection if it exceeds this limit.
+
+**Send to Amp** queues the preview as a steering message and can start agent work.
+The recipient and message remain fixed for that submission. Saved annotations
+remain available after sending. Agent replies are visible in Amp.
+
+**Delivery history** retains previews and delivery outcomes through browser,
+gateway and worktree-service restarts. **Confirmed** means the bridge found the
+feedback in the Amp transcript. **Unconfirmed** includes queued feedback and
+interrupted requests. Use **View submission**, then **Check delivery**, to check
+the original submission with its original identity. An accepted submission can
+be checked repeatedly.
+
+If the original Amp plugin connection closes or restarts, Tether blocks retries
+through the replacement connection. Inspect the target thread before preparing
+another batch. This protects against duplicate feedback when the bridge loses
+its receipt cache. Delivery history retains the exact message for that check.
+Physical cleanup of retained submissions remains planned.
 
 ## Connect an SSH machine
 

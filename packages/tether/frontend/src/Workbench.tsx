@@ -25,6 +25,7 @@ import { Explorer } from "./Explorer";
 import { SignOut } from "./SignOut";
 import { MachineSetup, RegisterWorktree } from "./RegisterWorktree";
 import { MachineVersion } from "./MachineVersion";
+import { FeedbackPanel } from "./FeedbackPanel";
 import styles from "./Workbench.module.css";
 
 export function Workbench({
@@ -729,22 +730,13 @@ function Review({
             )}
           </>
         )}
-        {annotations.data?.map((annotation) => (
-          <article key={annotation.input.id} className={styles.note}>
-            <div>
-              <span className={styles.badge}>Saved</span>
-              <small>
-                {annotation.input.path}:
-                {annotation.input.selection.startLineNumber}
-              </small>
-            </div>
-            <p>{annotation.input.text}</p>
-            <pre>{annotation.excerpt}</pre>
-            <small>
-              Original source retained · {annotation.input.sourceId.slice(0, 8)}
-            </small>
-          </article>
-        ))}
+        {feedbackVisible && !draft && (
+          <FeedbackPanel
+            key={endpoint}
+            endpoint={endpoint}
+            annotations={annotations.data ?? []}
+          />
+        )}
         {!draft && annotations.data?.length === 0 && (
           <p className={styles.hint}>
             Saved annotations retain the source you inspected, even as the

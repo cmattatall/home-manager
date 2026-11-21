@@ -411,6 +411,9 @@ async fn read_worktree(
         "comparison",
         "analysisSource",
         "inspect",
+        "ampSessions",
+        "feedback",
+        "feedbackPreview",
     ]
     .contains(&route.operation.as_str())
     {
@@ -425,6 +428,17 @@ async fn save_annotation(
     Json(input): Json<Value>,
 ) -> ApiResult<Json<Value>> {
     worktree_request(&gateway, &route, "saveAnnotation", input).await
+}
+
+async fn write_feedback(
+    State(gateway): State<Arc<Gateway>>,
+    Path(route): Path<WorktreeRoute>,
+    Json(input): Json<Value>,
+) -> ApiResult<Json<Value>> {
+    if !["prepareFeedback", "sendFeedback"].contains(&route.operation.as_str()) {
+        return Err(ApiError(StatusCode::NOT_FOUND, "Unknown operation".into()));
+    }
+    worktree_request(&gateway, &route, &route.operation, input).await
 }
 
 async fn enable_analysis(
@@ -546,7 +560,7 @@ pub async fn run(directory: PathBuf, port: u16) -> Result<()> {
         )
         .route(
             "/api/machines/{machine}/worktrees/{id}/{operation}",
-            get(read_worktree),
+            get(read_worktree).post(write_feedback),
         )
         .route("/api/worktrees", get(inventory).post(register))
         .route("/api/worktree-directory", post(choose_directory))
@@ -555,7 +569,10 @@ pub async fn run(directory: PathBuf, port: u16) -> Result<()> {
             get(annotations).post(save_annotation),
         )
         .route("/api/worktrees/{id}/enableAnalysis", post(enable_analysis))
-        .route("/api/worktrees/{id}/{operation}", get(read_worktree))
+        .route(
+            "/api/worktrees/{id}/{operation}",
+            get(read_worktree).post(write_feedback),
+        )
         .fallback(asset)
         .layer(DefaultBodyLimit::max(MAX_FRAME))
         .layer(middleware::from_fn_with_state(gateway.clone(), boundary))

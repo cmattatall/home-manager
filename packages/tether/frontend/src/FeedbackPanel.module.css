@@ -1,0 +1,67 @@
+.panel {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  min-width: 0;
+}
+
+.panel h3,
+.panel h4,
+.panel p {
+  margin: 0;
+}
+
+.panel select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  color: inherit;
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: inherit;
+}
+
+.selection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.selection input {
+  width: auto;
+}
+
+.preview,
+.history article {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.preview pre {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+
+.history {
+  display: grid;
+  gap: 12px;
+}
+
+.status[data-status="prepared"] {
+  color: var(--muted);
+  background: var(--raised);
+}
+
+.status[data-status="uncertain"] {
+  color: #e8bc77;
+  background: #3b3021;
+}

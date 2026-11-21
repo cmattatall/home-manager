@@ -350,6 +350,10 @@ pub async fn run(state_directory: PathBuf, id: String) -> Result<()> {
         PathBuf::from(&worktree.path),
         state_directory.clone(),
     ));
+    let delivery = std::sync::Arc::new(crate::feedback::Delivery::new(
+        directory.clone(),
+        worktree.clone(),
+    )?);
     let store = std::sync::Arc::new(Store::open(directory, worktree)?);
     let mut requests = tokio::task::JoinSet::new();
     loop {
@@ -361,12 +365,19 @@ pub async fn run(state_directory: PathBuf, id: String) -> Result<()> {
         let (mut stream, _) = accepted?;
         let store = store.clone();
         let analysis = analysis.clone();
+        let delivery = delivery.clone();
         requests.spawn(async move {
             let result = async {
                 let request: transport::Request = transport::read(&mut stream).await?;
                 let id = request.id;
                 request.validate()?;
-                let outcome = if matches!(request.method.as_str(), "analysisSource" | "inspect") {
+                let feedback_operation = matches!(
+                    request.method.as_str(),
+                    "ampSessions" | "prepareFeedback" | "sendFeedback" | "feedback" | "feedbackPreview"
+                );
+                let outcome = if feedback_operation {
+                    delivery.execute(&request.method, request.params).await
+                } else if matches!(request.method.as_str(), "analysisSource" | "inspect") {
                     use tokio::io::AsyncReadExt;
                     let mut disconnect = [0];
                     tokio::select! {

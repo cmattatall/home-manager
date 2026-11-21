@@ -208,6 +208,47 @@ pub struct Annotation {
     pub expires_at: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AmpSession {
+    pub id: String,
+    pub thread: String,
+    pub title: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedbackInput {
+    pub id: String,
+    pub session_id: String,
+    pub annotation_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum DeliveryStatus {
+    Prepared,
+    Uncertain,
+    Accepted,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Feedback {
+    pub input: FeedbackInput,
+    pub session: AmpSession,
+    pub created_at: String,
+    pub status: DeliveryStatus,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedbackPreview {
+    pub feedback: Feedback,
+    pub content: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
@@ -239,6 +280,11 @@ pub fn typescript() -> String {
         Selection::decl(),
         AnnotationInput::decl(),
         Annotation::decl(),
+        AmpSession::decl(),
+        FeedbackInput::decl(),
+        DeliveryStatus::decl(),
+        Feedback::decl(),
+        FeedbackPreview::decl(),
         Session::decl(),
     ]
     .into_iter()
