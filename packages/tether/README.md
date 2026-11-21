@@ -126,11 +126,24 @@ connection pooling remain planned.
 
 ## Review changes and explore Go
 
-The initial **Uncommitted** view compares HEAD with saved worktree content,
-including eligible untracked files. **Staged** compares HEAD with the index.
-**Unstaged** compares the index with saved content. **All source** browses the
-worktree. Changes refresh every five seconds. An open composer holds its captured
+Worktrees open in **Explorer**, which browses files and folders even when the
+worktree is clean. Expand a folder to load its immediate children. Large folders
+show 200 entries at a time with **Load more entries**. Hidden and ignored files
+are included. Git metadata and symbolic links are excluded. **Refresh** reloads
+expanded folders and the selected source.
+
+Choose **Changes** for diff review. **Uncommitted** compares HEAD with saved
+worktree content, including eligible untracked files. **Staged** compares HEAD
+with the index. **Unstaged** compares the index with saved content.
+Changes refresh every five seconds. An open composer holds its captured
 comparison and source. Use the arrow buttons to move between changed ranges.
+
+Changed files appear in collapsible folders with change markers. Filter by path
+in Changes to reveal matching files and their parent folders. **Files** toggles
+the sidebar. Use the header
+selectors to switch machines and worktrees. **Annotations** opens saved notes and
+recovery drafts. Starting an annotation opens the panel automatically. Save or keep
+the draft for later to return to browsing.
 
 Split diffs align corresponding lines and share scrolling, with a single vertical
 scrollbar on the right. Scroll over either side to move the comparison.
@@ -183,8 +196,9 @@ State defaults to `$XDG_STATE_HOME/tether`, or `~/.local/state/tether`. Use
 state directories require mode `0700`. State includes source text and review
 content. Keep it private.
 
-The current limits are UTF-8 regular files up to 64 KiB, 20,000 source paths,
-100 returned notes per worktree, and 1 MiB service responses. Symbolic links
+The current limits are UTF-8 regular files up to 64 KiB, 20,000 source paths for
+Go analysis and unborn-repository comparisons, 100 returned notes per worktree,
+and 1 MiB service responses. Explorer loads each folder independently. Symbolic links
 and Git metadata are excluded from source reads. Saved notes leave the active
 list after three calendar months. Physical expiry cleanup remains planned.
 

@@ -5,7 +5,7 @@ use std::{
     process::Command,
 };
 
-use crate::model::{ChangedFile, MAX_SOURCE, Scope};
+use crate::model::{ChangedFile, MAX_SOURCE, Scope, SourceDirectory, SourceEntry};
 
 pub fn git(directory: &Path, arguments: &[&str]) -> Result<Vec<u8>> {
     let output = Command::new("git")
@@ -61,13 +61,11 @@ pub fn files(directory: &Path) -> Result<Vec<String>> {
     Ok(paths.into_iter().collect())
 }
 
-pub fn source(directory: &Path, relative: &str) -> Result<String> {
+fn open_source_path(directory: &Path, relative: &str) -> Result<std::fs::File> {
     let path = Path::new(relative);
     ensure!(
-        !relative.is_empty()
-            && path
-                .components()
-                .all(|part| matches!(part, Component::Normal(_))),
+        path.components()
+            .all(|part| matches!(part, Component::Normal(_))),
         "Source path must be relative to the worktree"
     );
     ensure!(
@@ -88,6 +86,62 @@ pub fn source(directory: &Path, relative: &str) -> Result<String> {
         )?;
         file = descriptor.into();
     }
+    Ok(file)
+}
+
+pub fn source_directory(
+    directory: &Path,
+    relative: &str,
+    offset: usize,
+) -> Result<SourceDirectory> {
+    use rustix::fs::{AtFlags, Dir, FileType, statat};
+
+    let folder = open_source_path(directory, relative)?;
+    ensure!(
+        folder.metadata()?.is_dir(),
+        "Explorer path must be a directory"
+    );
+    let mut entries = Vec::new();
+    for entry in Dir::read_from(&folder)? {
+        let entry = entry?;
+        let name = entry
+            .file_name()
+            .to_str()
+            .context("Source path must be UTF-8")?;
+        if matches!(name, "." | ".." | ".git") {
+            continue;
+        }
+        let metadata = statat(&folder, entry.file_name(), AtFlags::SYMLINK_NOFOLLOW)?;
+        let kind = FileType::from_raw_mode(metadata.st_mode);
+        if !matches!(kind, FileType::RegularFile | FileType::Directory) {
+            continue;
+        }
+        let path = if relative.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{relative}/{name}")
+        };
+        entries.push(SourceEntry {
+            path,
+            directory: kind == FileType::Directory,
+        });
+    }
+    entries.sort_by(|left, right| {
+        right
+            .directory
+            .cmp(&left.directory)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    let end = offset.saturating_add(200);
+    let next_offset = (end < entries.len()).then_some(end);
+    Ok(SourceDirectory {
+        entries: entries.into_iter().skip(offset).take(200).collect(),
+        next_offset,
+    })
+}
+
+pub fn source(directory: &Path, relative: &str) -> Result<String> {
+    let file = open_source_path(directory, relative)?;
     ensure!(file.metadata()?.is_file(), "Source must be a regular file");
     use std::io::Read;
     let mut bytes = Vec::new();

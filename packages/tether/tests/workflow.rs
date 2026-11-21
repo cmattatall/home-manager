@@ -874,6 +874,97 @@ async fn annotations_retain_exact_unicode_source_across_edits_retries_and_restar
 }
 
 #[tokio::test]
+async fn explorer_browses_clean_worktrees_and_pages_immediate_children() {
+    let mut fixture = Fixture::new();
+    assert_eq!(
+        fixture.login(&fixture.ticket()).await.status(),
+        StatusCode::OK
+    );
+    let (id, directory) = fixture.worktree("explorer", "package main\n").await;
+    git(&directory, &["add", "hello.go"]);
+    git(&directory, &["commit", "--quiet", "-m", "Initial source"]);
+    let endpoint = format!("machines/local/worktrees/{id}");
+    assert_eq!(
+        fixture
+            .read(&format!("{endpoint}/changes?scope=uncommitted"))
+            .await,
+        json!([])
+    );
+    assert_eq!(
+        fixture
+            .read(&format!("{endpoint}/sourceDirectory?path="))
+            .await,
+        json!({"entries": [{"path": "hello.go", "directory": false}], "nextOffset": null})
+    );
+
+    fs::create_dir(directory.join("nested # folder")).unwrap();
+    fs::create_dir(directory.join("empty")).unwrap();
+    fs::write(directory.join(".hidden"), "hidden content").unwrap();
+    fs::write(directory.join(".git/info/exclude"), ".hidden\n").unwrap();
+    std::os::unix::fs::symlink("/tmp", directory.join("linked")).unwrap();
+    for number in 0..201 {
+        fs::write(
+            directory.join(format!("nested # folder/file-{number:03}.txt")),
+            "source",
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        fixture
+            .read(&format!("{endpoint}/sourceDirectory?path="))
+            .await,
+        json!({"entries": [
+            {"path": "empty", "directory": true},
+            {"path": "nested # folder", "directory": true},
+            {"path": ".hidden", "directory": false},
+            {"path": "hello.go", "directory": false}
+        ], "nextOffset": null})
+    );
+    assert_eq!(
+        fixture
+            .read(&format!("{endpoint}/sourceDirectory?path=empty"))
+            .await,
+        json!({"entries": [], "nextOffset": null})
+    );
+    let first = fixture
+        .read(&format!(
+            "{endpoint}/sourceDirectory?path=nested%20%23%20folder"
+        ))
+        .await;
+    assert_eq!(first["entries"].as_array().unwrap().len(), 200);
+    assert_eq!(first["entries"][0]["path"], "nested # folder/file-000.txt");
+    assert_eq!(
+        first["entries"][199]["path"],
+        "nested # folder/file-199.txt"
+    );
+    assert_eq!(first["nextOffset"], 200);
+    assert_eq!(
+        fixture
+            .read(&format!(
+                "{endpoint}/sourceDirectory?path=nested%20%23%20folder&offset=200"
+            ))
+            .await,
+        json!({"entries": [{"path": "nested # folder/file-200.txt", "directory": false}], "nextOffset": null})
+    );
+    let source = fixture
+        .read(&format!(
+            "{endpoint}/source?path=nested%20%23%20folder/file-200.txt"
+        ))
+        .await;
+    assert_eq!(source["text"], "source");
+    for path in ["..", "/tmp", ".git", "linked", "linked/nested", "hello.go"] {
+        let response = fixture
+            .client
+            .get(format!("{}/api/{endpoint}/sourceDirectory", fixture.origin))
+            .query(&[("path", path)])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "path: {path}");
+    }
+}
+
+#[tokio::test]
 async fn source_reads_reject_metadata_symlinks_binary_and_oversized_files() {
     let mut fixture = Fixture::new();
     assert_eq!(

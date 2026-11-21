@@ -237,6 +237,13 @@ impl Store {
             "files" => Ok(json!(repository::files(std::path::Path::new(
                 &self.worktree.path
             ))?)),
+            "sourceDirectory" => Ok(json!(repository::source_directory(
+                std::path::Path::new(&self.worktree.path),
+                request.params["path"]
+                    .as_str()
+                    .context("Directory path required")?,
+                request.params["offset"].as_str().unwrap_or("0").parse()?,
+            )?)),
             "source" => Ok(json!(
                 self.source(
                     request.params["path"]

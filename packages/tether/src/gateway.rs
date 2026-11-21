@@ -367,6 +367,7 @@ async fn read_worktree(
 ) -> ApiResult<Json<Value>> {
     if ![
         "files",
+        "sourceDirectory",
         "source",
         "annotations",
         "changes",

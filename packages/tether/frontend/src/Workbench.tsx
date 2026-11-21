@@ -20,6 +20,8 @@ import {
   type RecoveryDraft,
 } from "./recovery";
 import { SourceViewer, type SourceSelection } from "./SourceViewer";
+import { FileTree } from "./FileTree";
+import { Explorer } from "./Explorer";
 import { SignOut } from "./SignOut";
 import { ConnectMachine, RegisterWorktree } from "./RegisterWorktree";
 import styles from "./Workbench.module.css";
@@ -95,11 +97,6 @@ export function Workbench({
         <strong className={styles.brand}>
           tether<span> / </span>
         </strong>
-        <span className={styles.breadcrumb}>
-          {machine
-            ? `${machine.account}@${machine.host} / ${worktree?.name ?? "Worktrees"}`
-            : "Machines"}
-        </span>
         <select
           className={styles.machineSelector}
           aria-label="Selected machine"
@@ -118,14 +115,16 @@ export function Workbench({
             </option>
           ))}
         </select>
-        <button
-          disabled={!machines.data}
-          onClick={() => setConnectionOpen(true)}
-        >
-          Connect machine
-        </button>
+        {!selectedId && (
+          <button
+            disabled={!machines.data}
+            onClick={() => setConnectionOpen(true)}
+          >
+            Connect machine
+          </button>
+        )}
         <select
-          className={styles.compactWorktree}
+          className={styles.worktreeSelector}
           aria-label="Selected worktree"
           value={selectedId}
           disabled={!machine}
@@ -144,7 +143,6 @@ export function Workbench({
             </option>
           ))}
         </select>
-        <span className={styles.stage}>Preview · {session.data.version}</span>
         <SignOut owner={session.data.owner} />
       </header>
       <div className={styles.workspace}>
@@ -161,46 +159,6 @@ export function Workbench({
             </button>
           )}
         </nav>
-        {selectedId && (
-          <aside className={styles.sidebar}>
-            <div className={styles.sectionTitle}>
-              <span>WORKTREES</span>
-              <button
-                aria-label="Register worktree"
-                disabled={!machine}
-                onClick={() => setRegistrationOpen(true)}
-              >
-                +
-              </button>
-            </div>
-            <p className={styles.machine}>
-              {machine?.ssh?.destination ?? "This machine"}
-            </p>
-            {inventory.data?.map((entry) => (
-              <button
-                key={entry.id}
-                className={`${styles.worktree} ${entry.id === selectedId ? styles.active : ""}`}
-                onClick={() => navigate(`${worktreeBase}/${entry.id}`)}
-                title={entry.path}
-              >
-                <span>⑂ {entry.name}</span>
-                <small>{entry.path}</small>
-              </button>
-            ))}
-            {inventory.error && <p role="alert">{inventory.error.message}</p>}
-            {machines.error && <p role="alert">{machines.error.message}</p>}
-            {inventory.error && (
-              <button onClick={() => void inventory.refetch()}>
-                Retry connection
-              </button>
-            )}
-            <div className={styles.sidebarFoot}>
-              {machine?.account}@{machine?.host}
-              <br />
-              Source evidence stays on the owning machine
-            </div>
-          </aside>
-        )}
         {worktree ? (
           <Review
             key={`${machineId}:${worktree.id}`}
@@ -344,17 +302,13 @@ function Review({
       : `machines/${machineId}/worktrees/${worktree.id}`;
   const worktreeKey =
     machineId === "local" ? worktree.id : `${machineId}:${worktree.id}`;
-  const [scope, setScope] = useState<Scope | "source">("uncommitted");
+  const [scope, setScope] = useState<Scope | "source">("source");
   const changes = useQuery({
     queryKey: [worktreeKey, "changes", scope],
     queryFn: ({ signal }) =>
       api<ChangedFile[]>(`${endpoint}/changes?scope=${scope}`, { signal }),
     enabled: scope !== "source",
     refetchInterval: 5000,
-  });
-  const files = useQuery({
-    queryKey: [worktreeKey, "files"],
-    queryFn: () => api<string[]>(`${endpoint}/files`),
   });
   const annotations = useQuery({
     queryKey: [worktreeKey, "annotations"],
@@ -374,6 +328,8 @@ function Review({
   const [recovery, setRecovery] = useState<RecoveryDraft[]>([]);
   const [message, setMessage] = useState("");
   const [filter, setFilter] = useState("");
+  const [filesOpen, setFilesOpen] = useState(true);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const mounted = useRef(true);
   const source = useQuery({
     queryKey: [worktreeKey, "source", path],
@@ -483,92 +439,119 @@ function Review({
       ? source.data
       : (visibleComparison?.after ?? visibleComparison?.before));
   const error =
-    files.error ??
-    changes.error ??
-    (scope === "source" ? source.error : comparison.error) ??
+    (scope === "source" ? source.error : (changes.error ?? comparison.error)) ??
     annotations.error ??
     save.error;
-  const listed =
-    scope === "source"
-      ? files.data?.map((path) => ({ path, status: "" }))
-      : changes.data;
-  const fileListing = scope === "source" ? files : changes;
+  const feedbackVisible = feedbackOpen || !!draft;
+
+  function selectPath(path: string) {
+    setPath(path);
+    setExplorationComparison(undefined);
+    setSelection(null);
+  }
+
+  function changeScope(scope: Scope | "source") {
+    setScope(scope);
+    selectPath("");
+  }
+
   return (
     <main className={styles.review}>
-      <aside className={styles.files}>
+      <aside id="review-files" className={styles.files} hidden={!filesOpen}>
+        <div className={styles.fileViews} aria-label="File views">
+          <button
+            aria-pressed={scope === "source"}
+            disabled={!!draft}
+            onClick={() => changeScope("source")}
+          >
+            Explorer
+          </button>
+          <button
+            aria-pressed={scope !== "source"}
+            disabled={!!draft}
+            onClick={() => changeScope("uncommitted")}
+          >
+            Changes
+          </button>
+        </div>
         <div className={styles.sectionTitle}>
-          {scope === "source" ? "SOURCE FILES" : "CHANGES"}{" "}
-          <span>{listed?.length ?? "…"}</span>
+          {scope === "source" ? worktree.name : "CHANGES"}
+          {scope !== "source" && <span>{changes.data?.length ?? "…"}</span>}
         </div>
-        <select
-          aria-label="Comparison scope"
-          value={scope}
-          disabled={!!draft}
-          onChange={(event) => {
-            setScope(event.target.value as Scope | "source");
-            setPath("");
-            setExplorationComparison(undefined);
-            setSelection(null);
-          }}
-        >
-          <option value="uncommitted">Uncommitted</option>
-          <option value="staged">Staged</option>
-          <option value="unstaged">Unstaged</option>
-          <option value="source">All source</option>
-        </select>
-        <input
-          aria-label="Filter files"
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-          placeholder="Filter paths…"
-        />
-        <div className={styles.loading} role="status">
-          {fileListing.isFetching && (
-            <>
-              <span className={styles.spinner} aria-hidden="true" />
-              {fileListing.isPending ? "Loading files…" : "Refreshing files…"}
-            </>
-          )}
+        <div className={styles.fileList} hidden={scope !== "source"}>
+          <Explorer
+            endpoint={endpoint}
+            selected={path}
+            disabled={!!draft}
+            onSelect={selectPath}
+          />
         </div>
-        <div className={styles.fileList} aria-busy={fileListing.isFetching}>
-          {listed
-            ?.filter((file) =>
-              file.path.toLowerCase().includes(filter.toLowerCase()),
-            )
-            .map((file) => (
-              <button
-                key={file.path}
+        {scope !== "source" && (
+          <>
+            <select
+              aria-label="Comparison scope"
+              value={scope}
+              disabled={!!draft}
+              onChange={(event) => changeScope(event.target.value as Scope)}
+            >
+              <option value="uncommitted">Uncommitted</option>
+              <option value="staged">Staged</option>
+              <option value="unstaged">Unstaged</option>
+            </select>
+            <input
+              aria-label="Filter files"
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              placeholder="Filter paths…"
+            />
+            <div className={styles.loading} role="status">
+              {changes.isFetching && (
+                <>
+                  <span className={styles.spinner} aria-hidden="true" />
+                  {changes.isPending ? "Loading files…" : "Refreshing files…"}
+                </>
+              )}
+            </div>
+            <div className={styles.fileList} aria-busy={changes.isFetching}>
+              <FileTree
+                key={`${scope}:${filter}`}
+                files={(changes.data ?? []).filter((file) =>
+                  file.path.toLowerCase().includes(filter.toLowerCase()),
+                )}
+                selected={path}
                 disabled={!!draft}
-                className={path === file.path ? styles.active : ""}
-                onClick={() => {
-                  setPath(file.path);
-                  setExplorationComparison(undefined);
-                  setSelection(null);
-                }}
-              >
-                {file.status && (
-                  <span className={styles.fileStatus}>{file.status}</span>
-                )}{" "}
-                {file.path}
-              </button>
-            ))}
-        </div>
+                onSelect={selectPath}
+              />
+            </div>
+          </>
+        )}
       </aside>
       <section className={styles.sourcePane}>
         <div className={styles.toolbar}>
-          <span className={styles.sourcePath}>
+          <button
+            aria-expanded={filesOpen}
+            aria-controls="review-files"
+            onClick={() => setFilesOpen(!filesOpen)}
+          >
+            Files
+          </button>
+          <span className={styles.sourcePath} title={displayed?.path}>
             {displayed?.path ?? "Choose a source file"}
           </span>
           <button
             onClick={() => {
               setSelection(null);
-              if (scope === "source") void source.refetch();
-              else {
+              if (scope === "source") {
+                void client.invalidateQueries({
+                  queryKey: [endpoint, "sourceDirectory"],
+                });
+                if (path) void source.refetch();
+              } else {
                 void changes.refetch();
-                void comparison.refetch();
+                if (path) void comparison.refetch();
               }
             }}
-            disabled={!path || !!draft}
+            disabled={!!draft}
           >
             Refresh
           </button>
@@ -578,6 +561,15 @@ function Review({
             onClick={() => beginAnnotation(selection)}
           >
             Annotate selection
+          </button>
+          <button
+            aria-expanded={feedbackVisible}
+            aria-controls="review-annotations"
+            disabled={!!draft}
+            onClick={() => setFeedbackOpen(!feedbackOpen)}
+          >
+            Annotations ({annotations.data?.length ?? 0})
+            {recovery.length > 0 && ` · ${recovery.length} drafts`}
           </button>
         </div>
         {error && (
@@ -608,15 +600,17 @@ function Review({
         ) : (
           <div className={styles.empty}>
             <h2>
-              {fileListing.isPending
-                ? "Loading worktree…"
-                : listed?.length === 0
-                  ? "No changes in this comparison."
-                  : "Choose a file to review."}
+              {scope === "source"
+                ? "Choose a file in Explorer."
+                : changes.isPending
+                  ? "Loading worktree…"
+                  : changes.data?.length === 0
+                    ? "No changes in this comparison."
+                    : "Choose a file to review."}
             </h2>
             <p>
-              Inspect both sides, select source, and add an annotation. Staged
-              and Unstaged remain available for index-only changes.
+              Explorer browses the worktree's files and folders. Changes shows
+              diffs for Uncommitted, Staged, and Unstaged content.
             </p>
           </div>
         )}
@@ -630,20 +624,21 @@ function Review({
               : "Select text to annotate"}
           </span>
         </div>
-        <section className={styles.terminal}>
-          <div className={styles.sectionTitle}>
-            AGENT TERMINAL <span>Upcoming</span>
-          </div>
-          <p>Managed Amp sessions will appear here.</p>
-          <small>
-            This foundation keeps source capture and annotation persistence
-            available independently.
-          </small>
-        </section>
       </section>
-      <aside className={styles.feedback}>
+      <aside
+        id="review-annotations"
+        className={styles.feedback}
+        hidden={!feedbackVisible}
+      >
         <div className={styles.sectionTitle}>
           ANNOTATIONS <span>{annotations.data?.length ?? 0}</span>
+          <button
+            aria-label="Close annotations"
+            disabled={!!draft}
+            onClick={() => setFeedbackOpen(false)}
+          >
+            ×
+          </button>
         </div>
         {draft ? (
           <form

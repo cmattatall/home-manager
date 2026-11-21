@@ -78,6 +78,20 @@ pub struct ChangedFile {
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct SourceEntry {
+    pub path: String,
+    pub directory: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceDirectory {
+    pub entries: Vec<SourceEntry>,
+    pub next_offset: Option<usize>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct Hunk {
     pub before_start: u32,
     pub before_end: u32,
@@ -185,6 +199,8 @@ pub fn typescript() -> String {
         Source::decl(),
         Scope::decl(),
         ChangedFile::decl(),
+        SourceEntry::decl(),
+        SourceDirectory::decl(),
         Hunk::decl(),
         Comparison::decl(),
         ReviewAnchor::decl(),
