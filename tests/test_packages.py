@@ -25,7 +25,7 @@ class PackageTest(unittest.TestCase):
 
     def test_shell_dependencies_are_executable(self):
         commands = """
-            amp bash zsh git gh gitleaks fzf bat python3 node jq aws psql
+            amp omp bash zsh git gh gitleaks fzf bat python3 node jq aws psql
             grep sed awk find xargs sort uniq head tail wc cut tr date
             mkdir cp mv rm touch cat which dirname mktemp nproc
             curl ssh cmake make ninja clang llvm-config arm-none-eabi-gcc

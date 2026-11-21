@@ -430,7 +430,7 @@ happen to be present on a development node:
 
 | Purpose | Managed programs |
 | --- | --- |
-| Coding agents | Amp CLI (`amp`); oh-my-pi (`omp`) on Apple Silicon Macs |
+| Coding agents | Amp CLI (`amp`); oh-my-pi (`omp`) on Linux and Apple Silicon Macs |
 | Shell and Git helpers | Modern Bash, Zsh, Git, GitHub CLI, fzf, bat, GNU coreutils/grep/sed/awk/findutils, which |
 | JSON, scripts, remote access | Node.js, jq, Python 3, curl, OpenSSH (Linux; macOS uses Apple's SSH) |
 | Cloud and database helpers | AWS CLI v2, PostgreSQL (`psql`; no database service is started) |

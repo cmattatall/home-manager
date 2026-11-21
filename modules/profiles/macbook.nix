@@ -25,12 +25,10 @@ in
         automatic = true;
         dates = "daily";
       };
-      # OMP is absent and Amp is older in the stable release.
-      # Unstable no longer supports Intel Macs.
+      # Apple Silicon uses unstable for a newer Amp release.
       nixpkgs.overlays = [
         (_: prev: lib.optionalAttrs prev.stdenv.hostPlatform.isAarch64 { amp-cli = unstable.amp-cli; })
       ];
-      home.packages = lib.optionals pkgs.stdenv.hostPlatform.isAarch64 [ unstable.omp ];
       programs.direnv = {
         enable = true;
         enableZshIntegration = true;
