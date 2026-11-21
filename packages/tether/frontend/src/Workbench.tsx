@@ -118,7 +118,12 @@ export function Workbench({
             </option>
           ))}
         </select>
-        <button onClick={() => setConnectionOpen(true)}>Connect machine</button>
+        <button
+          disabled={!machines.data}
+          onClick={() => setConnectionOpen(true)}
+        >
+          Connect machine
+        </button>
         <select
           className={styles.compactWorktree}
           aria-label="Selected worktree"
@@ -308,8 +313,9 @@ export function Workbench({
           }}
         />
       )}
-      {connectionOpen && (
+      {connectionOpen && machines.data && (
         <ConnectMachine
+          machines={machines.data}
           onClose={() => setConnectionOpen(false)}
           onConnected={async (connected) => {
             await client.invalidateQueries({ queryKey: ["machines"] });
@@ -486,6 +492,7 @@ function Review({
     scope === "source"
       ? files.data?.map((path) => ({ path, status: "" }))
       : changes.data;
+  const fileListing = scope === "source" ? files : changes;
   return (
     <main className={styles.review}>
       <aside className={styles.files}>
@@ -515,7 +522,15 @@ function Review({
           onChange={(event) => setFilter(event.target.value)}
           placeholder="Filter paths…"
         />
-        <div className={styles.fileList}>
+        <div className={styles.loading} role="status">
+          {fileListing.isFetching && (
+            <>
+              <span className={styles.spinner} aria-hidden="true" />
+              {fileListing.isPending ? "Loading files…" : "Refreshing files…"}
+            </>
+          )}
+        </div>
+        <div className={styles.fileList} aria-busy={fileListing.isFetching}>
           {listed
             ?.filter((file) =>
               file.path.toLowerCase().includes(filter.toLowerCase()),
@@ -592,9 +607,11 @@ function Review({
         ) : (
           <div className={styles.empty}>
             <h2>
-              {listed?.length === 0
-                ? "No changes in this comparison."
-                : "Choose a file to review."}
+              {fileListing.isPending
+                ? "Loading worktree…"
+                : listed?.length === 0
+                  ? "No changes in this comparison."
+                  : "Choose a file to review."}
             </h2>
             <p>
               Inspect both sides, select source, and add an annotation. Staged

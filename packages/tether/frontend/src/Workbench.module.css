@@ -254,6 +254,39 @@
   overflow: auto;
 }
 
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  flex-shrink: 0;
+  margin: 0 10px;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
 .fileList button {
   display: block;
   border: none;
@@ -274,6 +307,7 @@
 
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   padding: 10px 14px;
   gap: 8px;
@@ -514,7 +548,8 @@
   font-size: 11px;
 }
 
-.error {
+.error,
+.dialog .error {
   margin: 0;
   padding: 12px;
   background: #452e31;
@@ -559,13 +594,80 @@
   width: 100%;
 }
 
-.dialog select {
-  width: 100%;
-  padding: 9px;
-  color: inherit;
+.hostPicker {
+  position: relative;
+}
+
+.hostDetails {
+  display: flow-root;
+  min-height: 180px;
+}
+
+.installationOutput {
+  max-height: 180px;
+  overflow: auto;
+  padding: 10px;
   background: var(--canvas);
   border: 1px solid var(--line);
   border-radius: 5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.hostList {
+  position: absolute;
+  z-index: 1;
+  top: 100%;
+  left: 0;
+  right: 0;
+  max-height: min(160px, 32dvh);
+  overflow-y: auto;
+  margin-top: 8px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.hostOption {
+  padding: 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.hostOption[data-selected="true"] {
+  background: #283449;
+  color: #dae4ff;
+}
+
+.hostOption[data-disabled="true"] {
+  color: var(--muted);
+  cursor: default;
+}
+
+.hostOption small {
+  display: block;
+  margin-top: 4px;
+}
+
+.hostSelection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 20px 0;
+}
+
+.hostSelection strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.hostSelection button {
+  flex-shrink: 0;
 }
 
 .dialog input[type="checkbox"] {
@@ -647,6 +749,26 @@
   margin-top: 24px;
 }
 
+.connectionDialog,
+.connectionForm {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.connectionForm,
+.connectionFields {
+  min-height: 0;
+}
+
+.connectionFields {
+  overflow: auto;
+}
+
+.connectionActions {
+  flex-shrink: 0;
+}
+
 @media (width <= 1200px) {
   .sidebar {
     width: 175px;
@@ -696,6 +818,10 @@
 
   .sourcePane {
     min-width: 0;
+  }
+
+  .sourcePath {
+    flex-basis: 100%;
   }
 
   .diff {

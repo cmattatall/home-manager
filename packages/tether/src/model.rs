@@ -24,6 +24,15 @@ pub struct Machine {
     pub ssh: Option<SshDestination>,
 }
 
+#[derive(Serialize, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ConnectionEvent {
+    Progress { message: String },
+    Output { text: String },
+    Connected { machine: Machine },
+    Error { message: String },
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DirectoryPage {
@@ -170,6 +179,7 @@ pub fn typescript() -> String {
     let declarations: String = [
         SshDestination::decl(),
         Machine::decl(),
+        ConnectionEvent::decl(),
         DirectoryPage::decl(),
         Worktree::decl(),
         Source::decl(),

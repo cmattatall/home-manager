@@ -68,28 +68,48 @@ captures the selected view again.
 
 ## Connect an SSH machine
 
-Install this checkout's Tether build on the remote machine. You can use its Home
-Manager installer from a copy of this checkout on that host. Confirm SSH access
-and the executable in a terminal, using your own host alias:
+The remote machine needs Nix and working SSH access. Confirm access in a
+terminal, using your own host alias:
 
 ```sh
-ssh dev-host tether --version
+ssh dev-host
 ```
 
-Choose **Connect machine** and select a host from the gateway account's
-`~/.ssh/config`. The picker lists unique, literal `Host` aliases from that file.
-Wildcard and negated patterns are excluded. Use **Enter another destination…**
-for a host supplied through an included configuration file or a `user@host` address.
-Tether locates its remote executable through PATH, the account's `.nix-profile`,
-the NixOS per-user profile or the system profile.
-Successful connections appear in the machine selector and persist across
-gateway restarts. Adding a machine requires an installed matching release.
+Choose **Connect machine**, type an SSH alias, hostname, IP address or `user@host`,
+and choose **Connect machine** to attempt the connection. The field also offers
+fuzzy suggestions from literal `Host` aliases in the gateway account's
+`~/.ssh/config`. Use ↑/↓ and Enter to select a suggestion, then confirm with
+**Connect machine**. **Change host** returns to the input.
+Registered SSH destinations show a red validation message and block submission.
+Open their existing machine entry to review worktrees. Suggestions exclude wildcard
+and negated patterns. Direct entry supports destinations covered by wildcard rules
+and included configuration files.
+
+Connecting authorizes automatic setup when Tether is missing. The Nix-packaged
+gateway transfers its pinned Tether and nixpkgs sources over SSH, builds Tether
+for the remote platform, and installs it in the remote account's
+`~/.local/share/tether/installations/` directory. Home Manager profiles stay
+unchanged. The dialog shows the current phase, elapsed time and live Nix transfer
+and build output. The scrollable output panel retains the latest 32,768 characters
+and follows new output while you are at the bottom. Output remains available after
+a failed attempt. Initial builds can take several minutes and require access to
+Nix caches and package sources. Each setup phase has a 30-minute timeout. Retry after a setup failure
+to reuse completed Nix build work. If Nix is missing, install it on the remote
+machine and retry.
+
+Tether reuses the setup installation matching the gateway's sources, then the
+most recent successful setup installation. It also finds existing executables
+through PATH, the account's `.nix-profile`, the NixOS
+per-user profile and the system profile. The remote handshake checks protocol
+compatibility. Successful connections appear in Machines and persist across
+gateway restarts. Closing the browser during setup leaves the operation running.
+Reconnect or reload Machines to check its result.
 
 Tether uses system SSH configuration, existing keys and known-host records.
 Complete password, key-unlocking and host-key confirmation prompts in your
 terminal before connecting from the browser. Browser connections require
 noninteractive authentication and strict host-key verification. Ports and jump
-hosts come from SSH configuration. Tether leaves remote installation to you.
+hosts come from SSH configuration.
 
 Browse and register a worktree on the selected machine to review its changes.
 Source reads, annotations and Go analysis execute on that machine. Its state

@@ -1,10 +1,12 @@
 {
   flake.modules.homeManager.default = { pkgs, ... }: {
-    home.packages = [ (pkgs.callPackage ../packages/tether/package.nix { }) ];
+    home.packages = [
+      (pkgs.callPackage ../packages/tether/package.nix { nixpkgsSource = pkgs.path; })
+    ];
   };
 
   perSystem = { pkgs, config, ... }: {
-    packages.tether = pkgs.callPackage ../packages/tether/package.nix { };
+    packages.tether = pkgs.callPackage ../packages/tether/package.nix { nixpkgsSource = pkgs.path; };
     checks.tether = config.packages.tether;
     devShells.tether = pkgs.mkShell {
       packages = [

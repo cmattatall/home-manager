@@ -10,8 +10,32 @@
   xdg-utils,
   zenity,
   openssh,
+  nix,
+  nixpkgsSource,
+  remoteExpression ? null,
 }:
 let
+  source = lib.cleanSourceWith {
+    src = ./.;
+    filter =
+      path: _type:
+      !(builtins.elem (baseNameOf path) [
+        "target"
+        "node_modules"
+        "dist"
+      ]);
+  };
+  bootstrapExpression =
+    if remoteExpression != null then
+      remoteExpression
+    else
+      builtins.toFile "tether-remote.nix" ''
+        let pkgs = import ${nixpkgsSource} { };
+        in pkgs.callPackage ${source}/package.nix {
+          nixpkgsSource = pkgs.path;
+          remoteExpression = builtins.storePath __curPos.file;
+        }
+      '';
   frontend = buildNpmPackage {
     pname = "tether-ui";
     version = "0.1.0";
@@ -24,7 +48,7 @@ let
           "dist"
         ]);
     };
-    npmDepsHash = "sha256-lYMO8es4d1SsrC+Lwt2NaufsMtFr6sq9JmT67lCybD8=";
+    npmDepsHash = "sha256-34rzStX3xf7N6mQm9NQ3rIn+uG6rT//Sc8gdyLF5oHo=";
     preBuild = ''
       npm run lint
     '';
@@ -37,16 +61,7 @@ in
 rustPlatform.buildRustPackage {
   pname = "tether";
   version = "0.1.0";
-  src = lib.cleanSourceWith {
-    src = ./.;
-    filter =
-      path: _type:
-      !(builtins.elem (baseNameOf path) [
-        "target"
-        "node_modules"
-        "dist"
-      ]);
-  };
+  src = source;
   cargoLock.lockFile = ./Cargo.lock;
   nativeBuildInputs = [ makeWrapper ];
   nativeCheckInputs = [
@@ -64,11 +79,12 @@ rustPlatform.buildRustPackage {
   '';
   postInstall = ''
     $out/bin/tether-schema | diff frontend/src/protocol.ts -
-    wrapProgram $out/bin/tether --prefix PATH : ${
+    wrapProgram $out/bin/tether --set TETHER_REMOTE_EXPRESSION ${bootstrapExpression} --prefix PATH : ${
       lib.makeBinPath (
         [
           git
           gopls
+          nix
         ]
         ++ lib.optionals stdenv.hostPlatform.isLinux [
           xdg-utils

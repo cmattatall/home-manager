@@ -5,14 +5,21 @@ use std::{collections::BTreeSet, fs, io::ErrorKind, path::Path, process::Stdio, 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::Command,
+    sync::mpsc,
 };
 
 use crate::{
-    model::{DirectoryPage, Machine, SshDestination, VERSION},
+    model::{ConnectionEvent, DirectoryPage, Machine, SshDestination, VERSION},
     process, state, transport,
 };
 
 const REMOTE_COMMAND: &str = r#"exec sh -c '
+if [ -n "$1" ] && [ -x "$HOME/.local/share/tether/installations/$1/bin/tether" ]; then
+    exec "$HOME/.local/share/tether/installations/$1/bin/tether" machine-rpc
+fi
+if [ -x "$HOME/.local/share/tether/installations/current/bin/tether" ]; then
+    exec "$HOME/.local/share/tether/installations/current/bin/tether" machine-rpc
+fi
 if command -v tether >/dev/null 2>&1; then
     exec tether machine-rpc
 fi
@@ -23,9 +30,212 @@ for executable in "$HOME/.nix-profile/bin/tether" \
         exec "$executable" machine-rpc
     fi
 done
-echo "Tether is missing on this host. Install this checkout with scripts/install-home-manager.sh on the remote host, then retry." >&2
-exit 127
+echo "Connected over SSH. Tether setup is required on this machine." >&2
+exit 78
+' tether"#;
+
+const SSH_OPTIONS: &[&str] = &[
+    "-T",
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "StrictHostKeyChecking=yes",
+    "-o",
+    "ConnectTimeout=10",
+    "-o",
+    "ServerAliveInterval=5",
+    "-o",
+    "ServerAliveCountMax=2",
+    "-o",
+    "ClearAllForwardings=yes",
+];
+
+#[derive(Debug)]
+struct MissingRemote;
+
+impl std::fmt::Display for MissingRemote {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Connected over SSH. Tether setup is required on this machine")
+    }
+}
+
+impl std::error::Error for MissingRemote {}
+
+fn remote_expression() -> Option<String> {
+    std::env::var("TETHER_REMOTE_EXPRESSION").ok()
+}
+
+fn installation_key(expression: &str) -> Result<&str> {
+    ensure!(
+        expression.starts_with("/nix/store/"),
+        "Tether bootstrap source must be in the Nix store"
+    );
+    Path::new(expression)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("Invalid Tether bootstrap source")
+}
+
+fn ssh_command(ssh: &SshDestination, script: &str) -> Command {
+    let mut command = Command::new("ssh");
+    command
+        .args(SSH_OPTIONS)
+        .arg("--")
+        .arg(&ssh.destination)
+        .arg(script);
+    command
+}
+
+async fn report_phase(progress: Option<&mpsc::Sender<ConnectionEvent>>, message: &str) {
+    if let Some(sender) = progress {
+        let _ = sender
+            .send(ConnectionEvent::Progress {
+                message: message.into(),
+            })
+            .await;
+    }
+}
+
+async fn diagnostics(
+    reader: &mut (impl tokio::io::AsyncRead + Unpin),
+    progress: Option<&mpsc::Sender<ConnectionEvent>>,
+) -> Result<Vec<u8>> {
+    let mut tail = Vec::new();
+    let mut chunk = [0; 8192];
+    loop {
+        let length = reader.read(&mut chunk).await?;
+        if length == 0 {
+            return Ok(tail);
+        }
+        if let Some(sender) = progress {
+            let _ = sender
+                .send(ConnectionEvent::Output {
+                    text: String::from_utf8_lossy(&chunk[..length]).into_owned(),
+                })
+                .await;
+        }
+        tail.extend_from_slice(&chunk[..length]);
+        if tail.len() > 8192 {
+            tail.drain(..tail.len() - 8192);
+        }
+    }
+}
+
+async fn setup_command(
+    mut command: Command,
+    phase: &str,
+    progress: Option<&mpsc::Sender<ConnectionEvent>>,
+) -> Result<String> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("{phase}: could not start command"))?;
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    tokio::time::timeout(Duration::from_secs(1800), async {
+        let mut output = String::new();
+        let (read, errors, status) = tokio::join!(
+            stdout.read_to_string(&mut output),
+            diagnostics(&mut stderr, progress),
+            child.wait()
+        );
+        read?;
+        let errors = errors?;
+        ensure!(
+            status?.success(),
+            "{phase}: {}",
+            String::from_utf8_lossy(&errors).trim()
+        );
+        Ok(output)
+    })
+    .await
+    .with_context(|| format!("{phase} timed out. Retry to reuse completed Nix build work"))?
+}
+
+async fn install_remote(
+    ssh: &SshDestination,
+    progress: Option<&mpsc::Sender<ConnectionEvent>>,
+) -> Result<()> {
+    let expression =
+        remote_expression().context("Automatic setup requires the Nix-packaged Tether gateway")?;
+    let key = installation_key(&expression)?;
+    report_phase(progress, "Checking Nix on the remote machine…").await;
+    let probe = r#"exec sh -c '
+for executable in "$(command -v nix 2>/dev/null)" "$HOME/.nix-profile/bin/nix" /nix/var/nix/profiles/default/bin/nix /run/current-system/sw/bin/nix; do
+    if [ -x "$executable" ]; then
+        printf "%s\n" "$executable"
+        exit 0
+    fi
+done
+echo "Nix is required on this machine. Install Nix and retry Connect machine." >&2
+exit 1
 '"#;
+    let nix = setup_command(ssh_command(ssh, probe), "Checking remote Nix", progress).await?;
+    let nix = nix.trim();
+    ensure!(
+        Path::new(nix).is_absolute(),
+        "Remote Nix returned an invalid executable path"
+    );
+    let nix_store = Path::new(nix).with_file_name("nix-store");
+    let remote_program: String =
+        url::form_urlencoded::byte_serialize(nix_store.to_string_lossy().as_bytes()).collect();
+    let (account, host) = ssh
+        .destination
+        .rsplit_once('@')
+        .map_or(("", ssh.destination.as_str()), |(account, host)| {
+            (account, host)
+        });
+    let host = if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_owned()
+    };
+    let authority = if account.is_empty() {
+        host
+    } else {
+        format!("{account}@{host}")
+    };
+    report_phase(progress, "Transferring pinned Tether sources…").await;
+    let mut copy = Command::new("nix");
+    copy.args([
+        "--extra-experimental-features",
+        "nix-command",
+        "--log-format",
+        "raw",
+        "--verbose",
+        "copy",
+        "--to",
+    ])
+    .arg(format!("ssh://{authority}?remote-program={remote_program}"))
+    .arg(&expression)
+    .env("NIX_SSHOPTS", SSH_OPTIONS.join(" "));
+    setup_command(copy, "Transferring Tether sources", progress).await?;
+    report_phase(progress, "Building and installing Tether with Nix…").await;
+    let script = format!(
+        r#"set -eu
+umask 077
+directory="$HOME/.local/share/tether/installations"
+mkdir -p "$directory"
+{} --extra-experimental-features nix-command --log-format raw-with-logs build --impure --file {} --out-link "$directory"/{}
+ln -sfn {} "$directory/current"
+"#,
+        shlex::try_quote(nix)?,
+        shlex::try_quote(&expression)?,
+        shlex::try_quote(key)?,
+        shlex::try_quote(key)?
+    );
+    let script = format!("exec sh -c {}", shlex::try_quote(&script)?);
+    setup_command(
+        ssh_command(ssh, &script),
+        "Building remote Tether",
+        progress,
+    )
+    .await?;
+    Ok(())
+}
 
 #[derive(Default, Deserialize, Serialize)]
 pub struct DirectoryInput {
@@ -110,7 +320,11 @@ fn find(directory: &Path, id: &str) -> Result<Machine> {
     Ok(serde_json::from_str(&configuration)?)
 }
 
-pub async fn connect(directory: &Path, ssh: SshDestination) -> Result<Machine> {
+pub async fn connect(
+    directory: &Path,
+    ssh: SshDestination,
+    progress: Option<&mpsc::Sender<ConnectionEvent>>,
+) -> Result<Machine> {
     ensure!(
         !ssh.destination.is_empty()
             && ssh.destination.len() <= 255
@@ -121,12 +335,22 @@ pub async fn connect(directory: &Path, ssh: SshDestination) -> Result<Machine> {
                 .all(|ch| ch.is_ascii_alphanumeric() || "@._-:[]%+".contains(ch)),
         "Enter an SSH host alias or user@host"
     );
-    let mut machine: Machine =
-        serde_json::from_value(ssh_request(&ssh, None, "identity", json!({})).await?)?;
+    report_phase(progress, "Connecting over SSH…").await;
+    let identity = match ssh_request(&ssh, None, "identity", json!({})).await {
+        Ok(identity) => identity,
+        Err(error) if error.is::<MissingRemote>() => {
+            install_remote(&ssh, progress).await?;
+            report_phase(progress, "Checking the remote Tether handshake…").await;
+            ssh_request(&ssh, None, "identity", json!({})).await?
+        }
+        Err(error) => return Err(error),
+    };
+    let mut machine: Machine = serde_json::from_value(identity)?;
     ensure!(
         uuid::Uuid::parse_str(&machine.id).is_ok(),
         "Invalid remote machine identity"
     );
+    report_phase(progress, "Registering the machine…").await;
     machine.ssh = Some(ssh);
     state::gateway_database(directory)?.execute(
         "INSERT INTO machines VALUES (?1, ?2) ON CONFLICT(id) DO UPDATE SET configuration=excluded.configuration",
@@ -141,25 +365,14 @@ async fn ssh_request(
     method: &str,
     input: Value,
 ) -> Result<Value> {
-    let mut child = Command::new("ssh")
-        .args([
-            "-T",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "StrictHostKeyChecking=yes",
-            "-o",
-            "ConnectTimeout=10",
-            "-o",
-            "ServerAliveInterval=5",
-            "-o",
-            "ServerAliveCountMax=2",
-            "-o",
-            "ClearAllForwardings=yes",
-            "--",
-        ])
-        .arg(&ssh.destination)
-        .arg(REMOTE_COMMAND)
+    let expression = remote_expression();
+    let key = expression
+        .as_deref()
+        .map(installation_key)
+        .transpose()?
+        .unwrap_or("");
+    let remote_command = format!("{REMOTE_COMMAND} {}", shlex::try_quote(key)?);
+    let mut child = ssh_command(ssh, &remote_command)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -168,7 +381,7 @@ async fn ssh_request(
         .context("Could not start system SSH")?;
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = child.stdout.take().unwrap();
-    let mut stderr = child.stderr.take().unwrap().take(8192);
+    let mut stderr = child.stderr.take().unwrap();
     let request = transport::Request {
         jsonrpc: "2.0".into(),
         id: 1,
@@ -182,12 +395,15 @@ async fn ssh_request(
             stdin.shutdown().await?;
             transport::read::<transport::Reply>(&mut stdout).await
         };
-        let mut diagnostics = Vec::new();
-        let (reply, diagnostics_read, status) =
-            tokio::join!(exchange, stderr.read_to_end(&mut diagnostics), child.wait());
-        diagnostics_read?;
+        let (reply, diagnostics, status) =
+            tokio::join!(exchange, diagnostics(&mut stderr, None), child.wait());
+        let diagnostics = diagnostics?;
+        let status = status?;
+        if status.code() == Some(78) {
+            return Err(MissingRemote.into());
+        }
         ensure!(
-            status?.success(),
+            status.success(),
             "SSH to {} failed. Confirm host trust, authentication and the remote Tether executable with ssh. {}",
             ssh.destination,
             String::from_utf8_lossy(&diagnostics).trim()

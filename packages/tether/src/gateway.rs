@@ -18,12 +18,12 @@ use std::{
 use tokio::{
     net::{TcpListener, UnixListener},
     process::Command,
-    sync::{Mutex, watch},
+    sync::{Mutex, mpsc, watch},
 };
 
 use crate::{
     machine,
-    model::{MAX_FRAME, Session, SshDestination, VERSION},
+    model::{ConnectionEvent, MAX_FRAME, Session, SshDestination, VERSION},
     state, transport,
 };
 
@@ -190,11 +190,40 @@ async fn ssh_hosts() -> ApiResult<Json<Vec<String>>> {
 
 async fn connect_machine(
     State(gateway): State<Arc<Gateway>>,
+    headers: HeaderMap,
     Json(input): Json<SshDestination>,
-) -> ApiResult<Json<Value>> {
-    Ok(Json(json!(
-        machine::connect(&gateway.directory, input).await?
-    )))
+) -> ApiResult<Response> {
+    if headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        != Some("application/x-ndjson")
+    {
+        return Ok(Json(machine::connect(&gateway.directory, input, None).await?).into_response());
+    }
+    let (sender, receiver) = mpsc::channel(64);
+    tokio::spawn(async move {
+        let result = machine::connect(&gateway.directory, input, Some(&sender)).await;
+        let event = match result {
+            Ok(machine) => ConnectionEvent::Connected { machine },
+            Err(error) => ConnectionEvent::Error {
+                message: error.to_string(),
+            },
+        };
+        let _ = sender.send(event).await;
+    });
+    let stream = futures_util::stream::unfold(receiver, |mut receiver| async {
+        let event = receiver.recv().await?;
+        let line = serde_json::to_string(&event).map(|json| format!("{json}\n"));
+        Some((line, receiver))
+    });
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/x-ndjson"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        Body::from_stream(stream),
+    )
+        .into_response())
 }
 
 async fn directories(

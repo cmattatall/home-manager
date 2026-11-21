@@ -93,6 +93,12 @@ impl Fixture {
         let mut child = Command::new(env!("CARGO_BIN_EXE_tether"))
             .env("HOME", home)
             .env("PATH", std::env::join_paths(paths).unwrap())
+            .env(
+                "TETHER_REMOTE_EXPRESSION",
+                fs::read_to_string(home.join("bootstrap-expression")).unwrap_or_else(|_| {
+                    "/nix/store/00000000000000000000000000000000-tether-remote.nix".into()
+                }),
+            )
             .current_dir(home)
             .arg("--state-dir")
             .arg(state)
@@ -223,6 +229,179 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn missing_remote_tether_is_installed_and_reused_after_setup_failures() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let mut fixture = Fixture::new();
+    fixture.login(&fixture.ticket()).await;
+    let home = fixture._directory.path().to_path_buf();
+    let remote = home.join("remote home");
+    let bin = home.join("bin");
+    let remote_bin = remote.join("system-bin");
+    fs::create_dir_all(&remote).unwrap();
+    fs::create_dir_all(&bin).unwrap();
+    fs::create_dir_all(&remote_bin).unwrap();
+    for tool in ["sh", "id", "uname", "mkdir", "ln", "sleep"] {
+        let executable = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+            .map(|directory| directory.join(tool))
+            .find(|path| path.is_file())
+            .unwrap();
+        symlink(executable, remote_bin.join(tool)).unwrap();
+    }
+    let nix = bin.join("nix");
+    fs::write(
+        &nix,
+        format!(
+            r#"#!/bin/sh
+set -eu
+case " $* " in
+    *" copy "*) exit 0 ;;
+esac
+if [ -e "$HOME/build-fails" ]; then
+    count=0
+    while [ "$count" -lt 1000 ]; do
+        printf 'remote build diagnostics\n' >&2
+        count=$((count + 1))
+    done
+    echo 'Test disk full' >&2
+    exit 1
+fi
+case " $* " in
+    *" --log-format raw-with-logs "*) echo 'Compiling remote Tether' >&2 ;;
+esac
+while [ -e "$HOME/hold-build" ]; do sleep 0.05; done
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = --out-link ]; then
+        shift
+        installation=$1
+    fi
+    shift
+done
+mkdir -p "$installation/bin"
+ln -s '{}' "$installation/bin/tether"
+"#,
+            env!("CARGO_BIN_EXE_tether")
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&nix, fs::Permissions::from_mode(0o700)).unwrap();
+    let ssh = bin.join("ssh");
+    fs::write(
+        &ssh,
+        format!(
+            r#"#!/bin/sh
+set -eu
+for argument do remote_command=$argument; done
+export HOME='{}'
+export PATH='{}'
+unset XDG_STATE_HOME
+case "$remote_command" in
+    *'command -v nix'*)
+        if [ -e "$HOME/nix-missing" ]; then
+            echo 'Nix is required on this machine' >&2
+            exit 1
+        fi
+        printf '%s\n' '{}'
+        exit 0 ;;
+esac
+exec sh -c "$remote_command"
+"#,
+            remote.display(),
+            remote_bin.display(),
+            nix.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&ssh, fs::Permissions::from_mode(0o700)).unwrap();
+    fixture.restart_gateway();
+
+    fs::write(remote.join("nix-missing"), "").unwrap();
+    let response = fixture
+        .post("machines", &json!({"destination": "build-host"}))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(response.text().await.unwrap().contains("Nix is required"));
+    assert_eq!(fixture.read("machines").await.as_array().unwrap().len(), 1);
+
+    fs::remove_file(remote.join("nix-missing")).unwrap();
+    fs::write(remote.join("build-fails"), "").unwrap();
+    let response = fixture
+        .post("machines", &json!({"destination": "build-host"}))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(response.text().await.unwrap().contains("Test disk full"));
+    assert_eq!(fixture.read("machines").await.as_array().unwrap().len(), 1);
+
+    fs::remove_file(remote.join("build-fails")).unwrap();
+    fs::write(remote.join("hold-build"), "").unwrap();
+    let mut response = fixture
+        .client
+        .post(format!("{}/api/machines", fixture.origin))
+        .header("Origin", &fixture.origin)
+        .header("Accept", "application/x-ndjson")
+        .json(&json!({"destination": "build-host"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut received = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !String::from_utf8_lossy(&received).contains("Compiling remote Tether") {
+            let chunk = response
+                .chunk()
+                .await
+                .unwrap()
+                .expect("Stream ended during build");
+            received.extend_from_slice(&chunk);
+        }
+    })
+    .await
+    .expect("Build output must arrive while installation is running");
+    assert!(!String::from_utf8_lossy(&received).contains("\"type\":\"connected\""));
+    assert_eq!(fixture.read("machines").await.as_array().unwrap().len(), 1);
+    fs::remove_file(remote.join("hold-build")).unwrap();
+    received.extend_from_slice(&response.bytes().await.unwrap());
+    let text = String::from_utf8(received).unwrap();
+    let events: Vec<Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(events.iter().any(|event| event["type"] == "progress"
+        && event["message"] == "Building and installing Tether with Nix…"));
+    assert!(events.iter().any(|event| {
+        event["type"] == "output"
+            && event["text"]
+                .as_str()
+                .unwrap()
+                .contains("Compiling remote Tether")
+    }));
+    let completed = events.last().unwrap();
+    assert_eq!(completed["type"], "connected", "{text}");
+    let machine = &completed["machine"];
+    assert_eq!(machine["ssh"]["destination"], "build-host");
+    let machines = fixture.read("machines").await;
+    assert!(machines.as_array().unwrap().contains(machine));
+
+    fs::write(remote.join("build-fails"), "").unwrap();
+    fs::write(
+        home.join("bootstrap-expression"),
+        "/nix/store/11111111111111111111111111111111-tether-remote.nix",
+    )
+    .unwrap();
+    fixture.restart_gateway();
+    let response = fixture
+        .post("machines", &json!({"destination": "build-host"}))
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.json::<Value>().await.unwrap(), *machine);
+    let id = machine["id"].as_str().unwrap();
+    assert_eq!(
+        fixture.read(&format!("machines/{id}/worktrees")).await,
+        json!([])
+    );
+}
+
+#[tokio::test]
 async fn configured_hosts_connect_using_the_remote_home_manager_installation() {
     use std::os::unix::fs::{PermissionsExt, symlink};
 
@@ -301,6 +480,13 @@ exec sh -c "$remote_command"
         fixture.read(&format!("machines/{id}/worktrees")).await,
         json!([])
     );
+    let machines = fixture.read("machines").await;
+    assert!(machines.as_array().unwrap().contains(&machine));
+
+    fixture.restart_gateway();
+    let machines = fixture.read("machines").await;
+    assert!(machines.as_array().unwrap().contains(&machine));
+
     assert_eq!(
         fixture
             .post(

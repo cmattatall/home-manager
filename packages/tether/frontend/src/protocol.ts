@@ -1,5 +1,6 @@
 export type SshDestination = { destination: string, };
 export type Machine = { id: string, host: string, account: string, ssh: SshDestination | null, };
+export type ConnectionEvent = { "type": "progress", message: string, } | { "type": "output", text: string, } | { "type": "connected", machine: Machine, } | { "type": "error", message: string, };
 export type DirectoryPage = { path: string, parent: string | null, entries: Array<string>, nextOffset: number | null, skipped: number, };
 export type Worktree = { id: string, path: string, name: string, };
 export type Source = { id: string, path: string, text: string, highlights: Array<number>, };
