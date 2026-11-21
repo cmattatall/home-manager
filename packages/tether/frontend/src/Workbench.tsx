@@ -456,8 +456,8 @@ function Review({
       });
   }
 
-  function beginAnnotation() {
-    if (!selection) return;
+  function beginAnnotation(selection: SourceSelection | null) {
+    if (draft || !selection) return;
     updateDraft({
       owner,
       worktree: worktree.id,
@@ -575,7 +575,7 @@ function Review({
           <button
             className={styles.primary}
             disabled={!selection || !!draft}
-            onClick={beginAnnotation}
+            onClick={() => beginAnnotation(selection)}
           >
             Annotate selection
           </button>
@@ -600,6 +600,7 @@ function Review({
             }
             comparison={draft ? draft.comparison : visibleComparison}
             onSelection={setSelection}
+            onAnnotate={draft ? undefined : beginAnnotation}
             onExplorationChange={(active) =>
               setExplorationComparison(active ? visibleComparison : undefined)
             }

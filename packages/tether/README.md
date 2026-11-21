@@ -132,8 +132,13 @@ including eligible untracked files. **Staged** compares HEAD with the index.
 worktree. Changes refresh every five seconds. An open composer holds its captured
 comparison and source. Use the arrow buttons to move between changed ranges.
 
-Select text on either side to annotate it. Each saved review note retains its
-comparison and selected side. An unborn repository uses an empty baseline.
+Split diffs align corresponding lines and share scrolling, with a single vertical
+scrollbar on the right. Scroll over either side to move the comparison.
+
+Select text on either side and choose **Annotate selection**, or right-click a
+source line and choose **Annotate line** to open its composer. Individual lines,
+including unchanged lines, can receive annotations. Each saved review note retains
+its comparison and selected side. An unborn repository uses an empty baseline.
 Additions and deletions show an absent-side label. Renames appear as deletion and
 addition entries. Binary, symlink, submodule and conflict entries report their
 text-review limitation when opened.

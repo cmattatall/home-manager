@@ -344,20 +344,14 @@
 .diff {
   display: flex;
   flex: 1;
-  min-height: 0;
-  min-width: 0;
-}
-
-.diffSide {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
   flex-direction: column;
+  min-height: 0;
+  min-width: 0;
 }
 
-.diffSide + .diffSide {
-  border-left: 1px solid var(--line);
+.diffLabels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .sideLabel,
@@ -368,6 +362,10 @@
   color: #a7b4c6;
   background: #19202a;
   overflow-wrap: anywhere;
+}
+
+.sideLabel + .sideLabel {
+  border-left: 1px solid var(--line);
 }
 
 .explorationBar {
@@ -392,22 +390,6 @@
   padding: 12px;
   font-size: 12px;
   line-height: 1.6;
-}
-
-.removed {
-  background: #682c354d;
-}
-
-.added {
-  background: #21523c66;
-}
-
-.removedGutter {
-  border-left: 3px solid #d7828e;
-}
-
-.addedGutter {
-  border-left: 3px solid #73ba92;
 }
 
 .fileStatus {
@@ -822,15 +804,6 @@
 
   .sourcePath {
     flex-basis: 100%;
-  }
-
-  .diff {
-    flex-direction: column;
-  }
-
-  .diffSide + .diffSide {
-    border-top: 1px solid var(--line);
-    border-left: none;
   }
 
   .terminal {
