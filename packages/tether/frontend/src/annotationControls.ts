@@ -31,6 +31,7 @@ export function addAnnotationControls(
   button.type = "button";
   button.textContent = "+";
   button.className = styles.add;
+  button.setAttribute("aria-keyshortcuts", "Control+Enter Meta+Enter");
   editor.updateOptions({ glyphMargin: true });
 
   function selectedLines(at: number) {
@@ -68,7 +69,7 @@ export function addAnnotationControls(
         ? `Annotate line ${range.startLineNumber}`
         : `Annotate lines ${range.startLineNumber}–${last}`;
     button.setAttribute("aria-label", label);
-    button.title = `${label}. Drag over line numbers to select a range.`;
+    button.title = `${label} (Ctrl/Cmd+Enter). Drag over line numbers to select a range.`;
     editor.layoutOverlayWidget(widget);
   }
 
@@ -113,6 +114,7 @@ export function addAnnotationControls(
       id: "tether.annotateLine",
       label: "Annotate line or selection",
       precondition: "tetherCanAnnotate",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
       contextMenuGroupId: "tether",
       run: () => {
         submit(contextLine ?? editor.getPosition()!.lineNumber);

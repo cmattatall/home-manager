@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import * as monaco from "monaco-editor/editor/editor.api";
 import "monaco-editor/editor/contrib/contextmenu/browser/contextmenu";
 import "monaco-editor/editor/contrib/hover/browser/hoverContribution";
@@ -7,9 +7,16 @@ import "monaco-editor/editor/contrib/gotoSymbol/browser/link/goToDefinitionAtPos
 import "monaco-editor/editor/standalone/browser/referenceSearch/standaloneReferenceSearch";
 import "monaco-editor/editor/standalone/browser/quickAccess/standaloneGotoSymbolQuickAccess";
 import "../node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.css";
-import type { AnalysisSource, Inspection, Source, Symbol } from "./protocol";
+import type {
+  AnalysisSource,
+  Annotation,
+  Inspection,
+  Source,
+  Symbol,
+} from "./protocol";
 import { api } from "./api";
 import { addAnnotationControls } from "./annotationControls";
+import { InlineAnnotations, type InlineDraft } from "./InlineAnnotations";
 import {
   editorOptions,
   highlightSource,
@@ -26,22 +33,31 @@ const language = "tether-go";
 monaco.languages.register({ id: language });
 
 export function GoExplorer({
+  focusEditor,
   worktree,
   endpoint,
   path,
+  savedAnnotations,
+  draft,
   onSelection,
   onAnnotate,
 }: {
+  focusEditor: RefObject<() => void>;
   worktree: string;
   endpoint: string;
   path: string;
+  savedAnnotations: Annotation[];
+  draft?: InlineDraft;
   onSelection: (selection: SourceSelection | null) => void;
   onAnnotate?: (selection: SourceSelection) => void;
 }) {
   const [source, setSource] = useState<AnalysisSource>();
   const [status, setStatus] = useState("Loading current Go analysis…");
   const [retry, setRetry] = useState(0);
-  const [activePath, setActivePath] = useState(path);
+  const [activeSource, setActiveSource] = useState<Source>();
+  const activePath = activeSource?.path ?? path;
+  const [activeEditor, setActiveEditor] =
+    useState<monaco.editor.IStandaloneCodeEditor>();
   const [history, setHistory] = useState({ back: false, forward: false });
   const container = useRef<HTMLDivElement>(null);
   const navigate = useRef<(direction: number) => void>(() => {});
@@ -105,6 +121,8 @@ export function GoExplorer({
       ...editorOptions,
       model: initial,
     });
+    focusEditor.current = () => editor.focus();
+    setActiveEditor(editor);
     const controls = addAnnotationControls(editor, (selection) => {
       annotate.current?.({
         source: models.get(editor.getModel()!)!,
@@ -116,7 +134,7 @@ export function GoExplorer({
     editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.F12, () => {
       editor.trigger("tether", "editor.action.referenceSearch.trigger", {});
     });
-    setActivePath(source.source.path);
+    setActiveSource(source.source);
     setHistory({ back: false, forward: false });
     const updateHistory = () =>
       setHistory({ back: back.length > 0, forward: forward.length > 0 });
@@ -269,7 +287,7 @@ export function GoExplorer({
             editor.setPosition(selection);
             editor.revealPositionInCenter(selection);
           }
-          setActivePath(models.get(model)!.path);
+          setActiveSource(models.get(model)!);
           updateHistory();
           editor.focus();
           return true;
@@ -307,11 +325,13 @@ export function GoExplorer({
       });
       editor.setModel(visit.model);
       editor.restoreViewState(visit.view);
-      setActivePath(models.get(visit.model)!.path);
+      setActiveSource(models.get(visit.model)!);
       updateHistory();
       editor.focus();
     };
     return () => {
+      setActiveEditor(undefined);
+      focusEditor.current = () => {};
       disposed = true;
       controllers.forEach((controller) => controller.abort());
       subscriptions.forEach((subscription) => subscription.dispose());
@@ -321,7 +341,7 @@ export function GoExplorer({
       models.forEach((_, model) => model.dispose());
       callback.current(null);
     };
-  }, [source, worktree, endpoint]);
+  }, [source, worktree, endpoint, focusEditor]);
 
   return (
     <div className={styles.viewer}>
@@ -377,6 +397,14 @@ export function GoExplorer({
         ref={container}
         aria-label={`Current Go source: ${activePath}`}
       />
+      {activeEditor && activeSource && (
+        <InlineAnnotations
+          editor={activeEditor}
+          sourceId={activeSource.id}
+          annotations={savedAnnotations}
+          draft={draft}
+        />
+      )}
     </div>
   );
 }

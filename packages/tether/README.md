@@ -194,18 +194,32 @@ Changed files appear in collapsible folders with change markers. Filter by path
 in Changes to reveal matching files and their parent folders. **Files** toggles
 the sidebar. Use the header
 selectors to switch machines and worktrees. **Annotations** opens saved notes and
-recovery drafts. Starting an annotation opens the panel automatically. Save or keep
-the draft for later to return to browsing.
+recovery drafts. Save or keep the draft for later to return to browsing.
 
 Split diffs align corresponding lines and share scrolling, with a single vertical
 scrollbar on the right. Scroll over either side to move the comparison.
 
-Hover over a source line and click the gutter **+** to open its annotation
-composer. Drag over the line numbers to select several lines, then click **+**
+Hover over a source line and click the gutter **+** to open an inline comment
+directly beneath it. Drag over the line numbers to select several lines, then click **+**
 beside the selection to annotate the whole range. Text selections also support
 **Annotate selection** in the toolbar. The context menu offers **Annotate line or
 selection**. These controls work in source review, both diff sides and Go exploration.
-Blank and unchanged lines can receive annotations.
+Blank and unchanged lines can receive annotations. Saved comments appear beneath
+their captured ranges when viewing the matching source and comparison side.
+
+Click **+**, **Annotate selection**, or **Annotate hunk** again to restart a draft
+at the chosen range. An empty draft is replaced immediately. A draft containing
+text opens **Discard draft?** inside the inline comment. **Keep editing** or
+Escape preserves its text and captured range. **Discard draft** removes its
+browser recovery copy and opens the new composer. A submitted draft stays bound
+to its original source while its save is pending or awaiting retry.
+
+Use Shift+Arrow keys to select source with the keyboard. Ctrl+Enter (Cmd+Enter on
+macOS) starts an annotation for the selected lines or current line. In the
+composer, the same shortcut saves the annotation. Escape or the comment's **×**
+closes it and keeps its recovery draft in **Annotations**. F6 switches focus
+between source and comment. The discard dialog starts
+on **Keep editing**. Tab moves between its buttons and Enter activates one.
 
 Use the hunk arrows to choose a change, then **Annotate hunk** above either diff
 side to annotate that side's changed lines. A hunk annotation retains its line

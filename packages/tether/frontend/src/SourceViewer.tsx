@@ -1,13 +1,27 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Ref,
+  type RefObject,
+} from "react";
 import * as monaco from "monaco-editor/editor/editor.api";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import "monaco-editor/editor/browser/coreCommands";
 import "monaco-editor/editor/contrib/contextmenu/browser/contextmenu";
 import "monaco-editor/editor/contrib/semanticTokens/browser/documentSemanticTokens";
-import type { Comparison, ReviewAnchor, Selection, Source } from "./protocol";
+import type {
+  Annotation,
+  Comparison,
+  ReviewAnchor,
+  Selection,
+  Source,
+} from "./protocol";
 import { tokenTypes } from "./protocol";
 import { GoExplorer } from "./GoExplorer";
 import { addAnnotationControls, lineRange } from "./annotationControls";
+import { InlineAnnotations, type InlineDraft } from "./InlineAnnotations";
 import styles from "./Workbench.module.css";
 
 export interface SourceSelection {
@@ -16,10 +30,17 @@ export interface SourceSelection {
   review?: ReviewAnchor;
 }
 
+export interface SourceViewerHandle {
+  focus: () => void;
+  showReview: () => void;
+}
+
 interface SourceViewerProps {
   worktree: string;
   source?: Source;
   comparison?: Comparison;
+  annotations: Annotation[];
+  draft?: InlineDraft;
   onSelection: (selection: SourceSelection | null) => void;
   onAnnotate?: (selection: SourceSelection) => void;
   onExplorationChange?: (active: boolean) => void;
@@ -110,15 +131,31 @@ export const editorOptions: monaco.editor.IStandaloneEditorConstructionOptions =
   };
 
 export function SourceViewer({
+  ref,
   worktree,
   endpoint,
   source,
   comparison,
+  annotations,
+  draft,
   onSelection,
   onAnnotate,
   onExplorationChange,
-}: SourceViewerProps & { endpoint: string }) {
+}: SourceViewerProps & { endpoint: string; ref?: Ref<SourceViewerHandle> }) {
   const [exploring, setExploring] = useState(false);
+  const focusReview = useRef<() => void>(() => {});
+  const focusExploration = useRef<() => void>(() => {});
+  useImperativeHandle(
+    ref,
+    () => ({
+      focus: () => (exploring ? focusExploration : focusReview).current(),
+      showReview: () => {
+        setExploring(false);
+        onExplorationChange?.(false);
+      },
+    }),
+    [exploring, onExplorationChange],
+  );
   const [hunk, setHunk] = useState(0);
   const path =
     source?.path ?? comparison?.after?.path ?? comparison?.before?.path ?? "";
@@ -194,9 +231,13 @@ export function SourceViewer({
       >
         {(comparison || source) && (
           <SourceEditor
+            key={comparison?.id ?? source?.id}
+            focusEditor={focusReview}
             worktree={worktree}
             source={source}
             comparison={comparison}
+            annotations={annotations}
+            draft={exploring ? undefined : draft}
             hunk={hunk}
             onSelection={selectReview}
             onAnnotate={onAnnotate}
@@ -205,9 +246,12 @@ export function SourceViewer({
       </div>
       {exploring && (
         <GoExplorer
+          focusEditor={focusExploration}
           worktree={worktree}
           endpoint={endpoint}
           path={path}
+          savedAnnotations={annotations}
+          draft={draft}
           onSelection={onSelection}
           onAnnotate={onAnnotate}
         />
@@ -217,17 +261,21 @@ export function SourceViewer({
 }
 
 function SourceEditor({
+  focusEditor,
   worktree,
   source,
   comparison,
   hunk,
+  annotations: savedAnnotations,
+  draft,
   onSelection,
   onAnnotate,
 }: SourceViewerProps & {
   hunk: number;
+  focusEditor: RefObject<() => void>;
 }) {
   const container = useRef<HTMLDivElement>(null);
-  const editors = useRef<ReviewEditor[]>([]);
+  const [editors, setEditors] = useState<ReviewEditor[]>([]);
   const callbacks = useRef({ onSelection, onAnnotate });
   callbacks.current = { onSelection, onAnnotate };
   const annotationEnabled = !!onAnnotate;
@@ -287,7 +335,13 @@ function SourceEditor({
       codeEditors = [editor];
     }
     const subscriptions: monaco.IDisposable[] = [];
-    editors.current = codeEditors.map((editor, index) => {
+    focusEditor.current = () => codeEditors[codeEditors.length - 1].focus();
+    const reviewEditors = codeEditors.map((editor, index) => {
+      subscriptions.push(
+        editor.onDidFocusEditorText(() => {
+          focusEditor.current = () => editor.focus();
+        }),
+      );
       let annotations: ReviewEditor["annotations"];
       const captured = sources[index];
       if (captured) {
@@ -311,6 +365,7 @@ function SourceEditor({
           };
         };
         annotations = addAnnotationControls(editor, (range) => {
+          focusEditor.current = () => editor.focus();
           callbacks.current.onAnnotate?.(captureSelection(range));
         });
         annotations.setEnabled(!!callbacks.current.onAnnotate);
@@ -325,33 +380,35 @@ function SourceEditor({
       }
       return { editor, annotations };
     });
+    setEditors(reviewEditors);
     return () => {
-      editors.current = [];
+      focusEditor.current = () => {};
       for (const subscription of subscriptions) subscription.dispose();
       widget.dispose();
       for (const model of models) model.dispose();
     };
-  }, [worktree, source, comparison]);
+  }, [worktree, source, comparison, focusEditor]);
 
   useEffect(() => {
-    for (const { annotations } of editors.current)
+    for (const { annotations } of editors)
       annotations?.setEnabled(annotationEnabled);
-  }, [annotationEnabled]);
+  }, [annotationEnabled, editors]);
 
   useEffect(() => {
     const change = comparison?.hunks[hunk];
-    if (!change) return;
+    if (!change || !editors.length) return;
     const useAfter = !!comparison?.after && change.afterStart < change.afterEnd;
     const line = useAfter ? change.afterStart : change.beforeStart;
-    const editor = editors.current[useAfter ? 1 : 0].editor;
+    const editor = editors[useAfter ? 1 : 0].editor;
     editor.revealLineInCenter(line);
     editor.setPosition({ lineNumber: line, column: 1 });
-  }, [comparison, hunk]);
+  }, [comparison, hunk, editors]);
 
   function annotateHunk(side: "before" | "after") {
     const change = comparison!.hunks[hunk];
     const captured = comparison![side]!;
-    const editor = editors.current[side === "before" ? 0 : 1].editor;
+    const editor = editors[side === "before" ? 0 : 1].editor;
+    focusEditor.current = () => editor.focus();
     const start = side === "before" ? change.beforeStart : change.afterStart;
     const end = side === "before" ? change.beforeEnd : change.afterEnd;
     const range = lineRange(editor.getModel()!, start, end - 1);
@@ -394,6 +451,24 @@ function SourceEditor({
         </div>
       )}
       <div ref={container} className={styles.editor} />
+      {editors.map(({ editor }, index) => {
+        const side = index === 0 ? "before" : "after";
+        const captured = comparison ? comparison[side] : source;
+        return (
+          captured && (
+            <InlineAnnotations
+              key={index}
+              editor={editor}
+              sourceId={captured.id}
+              review={
+                comparison ? { comparisonId: comparison.id, side } : undefined
+              }
+              annotations={savedAnnotations}
+              draft={draft}
+            />
+          )
+        );
+      })}
     </>
   );
 }

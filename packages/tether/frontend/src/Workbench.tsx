@@ -19,8 +19,12 @@ import {
   saveRecovery,
   type RecoveryDraft,
 } from "./recovery";
-import { SourceViewer, type SourceSelection } from "./SourceViewer";
-import { lastSelectedLine } from "./annotationControls";
+import {
+  SourceViewer,
+  type SourceSelection,
+  type SourceViewerHandle,
+} from "./SourceViewer";
+import { AnnotationComposer } from "./AnnotationComposer";
 import { FileTree } from "./FileTree";
 import { Explorer } from "./Explorer";
 import { SignOut } from "./SignOut";
@@ -338,6 +342,10 @@ function Review({
   }, [sourcePreference, path]);
   const [selection, setSelection] = useState<SourceSelection | null>(null);
   const [draft, setDraft] = useState<RecoveryDraft | null>(null);
+  const [requestedAnnotation, setRequestedAnnotation] =
+    useState<SourceSelection | null>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
+  const viewer = useRef<SourceViewerHandle>(null);
   const [explorationComparison, setExplorationComparison] =
     useState<Comparison>();
   const [recovery, setRecovery] = useState<RecoveryDraft[]>([]);
@@ -408,6 +416,7 @@ function Review({
       if (mounted.current) {
         setDraft(null);
         setMessage("Annotation saved to the worktree service");
+        viewer.current?.focus();
       }
     },
   });
@@ -427,25 +436,51 @@ function Review({
       });
   }
 
+  const replaceDraft = useMutation({
+    mutationFn: async (selection: SourceSelection) => {
+      if (draft) await deleteRecovery(draft.input.id);
+      return selection;
+    },
+    onSuccess: (selection) => {
+      save.reset();
+      setRequestedAnnotation(null);
+      updateDraft({
+        owner,
+        worktree: worktree.id,
+        machine: machineId,
+        source: selection.source,
+        comparison: selection.review ? visibleComparison : undefined,
+        submission: "editing",
+        expiresAt: expiresAfterThreeMonths(),
+        input: {
+          id: crypto.randomUUID(),
+          sourceId: selection.source.id,
+          path: selection.source.path,
+          selection: selection.selection,
+          review: selection.review,
+          text: "",
+        },
+      });
+    },
+  });
+  const annotationLocked =
+    draft?.submission === "pending" || replaceDraft.isPending;
+
   function beginAnnotation(selection: SourceSelection | null) {
-    if (draft || !selection) return;
-    updateDraft({
-      owner,
-      worktree: worktree.id,
-      machine: machineId,
-      source: selection.source,
-      comparison: selection.review ? activeComparison : undefined,
-      submission: "editing",
-      expiresAt: expiresAfterThreeMonths(),
-      input: {
-        id: crypto.randomUUID(),
-        sourceId: selection.source.id,
-        path: selection.source.path,
-        selection: selection.selection,
-        review: selection.review,
-        text: "",
-      },
-    });
+    if (annotationLocked || !selection) return;
+    if (
+      draft &&
+      (draft.input.sourceId !== selection.source.id ||
+        draft.input.review?.comparisonId !== selection.review?.comparisonId ||
+        draft.input.review?.side !== selection.review?.side)
+    )
+      viewer.current?.showReview();
+    replaceDraft.reset();
+    if (draft?.input.text.length) {
+      setRequestedAnnotation(selection);
+    } else {
+      replaceDraft.mutate(selection);
+    }
   }
 
   const displayed =
@@ -453,12 +488,25 @@ function Review({
     (scope === "source"
       ? source.data
       : (visibleComparison?.after ?? visibleComparison?.before));
-  const draftEndLine = draft ? lastSelectedLine(draft.input.selection) : 0;
   const error =
     (scope === "source" ? source.error : (changes.error ?? comparison.error)) ??
     annotations.error ??
-    save.error;
-  const feedbackVisible = feedbackOpen || !!draft;
+    save.error ??
+    replaceDraft.error;
+  const feedbackVisible = feedbackOpen;
+
+  function closeDraft() {
+    if (save.isPending || replaceDraft.isPending) return;
+    if (draft) {
+      setRecovery((current) => [
+        ...current.filter((item) => item.input.id !== draft.input.id),
+        draft,
+      ]);
+      setDraft(null);
+    }
+    setFeedbackOpen(false);
+    viewer.current?.focus();
+  }
 
   function selectPath(path: string) {
     setPath(path);
@@ -472,7 +520,30 @@ function Review({
   }
 
   return (
-    <main className={styles.review}>
+    <main
+      className={styles.review}
+      onKeyDown={(event) => {
+        if (
+          event.defaultPrevented ||
+          event.nativeEvent.isComposing ||
+          requestedAnnotation
+        )
+          return;
+        if (event.key === "Escape" && (draft || feedbackVisible)) {
+          event.preventDefault();
+          closeDraft();
+        } else if (event.key === "F6" && draft) {
+          event.preventDefault();
+          if (composer.current?.form?.contains(event.target as Node)) {
+            viewer.current?.focus();
+          } else if (composer.current) {
+            composer.current.focus();
+          } else {
+            viewer.current?.showReview();
+          }
+        }
+      }}
+    >
       <aside id="review-files" className={styles.files} hidden={!filesOpen}>
         <div className={styles.fileViews} aria-label="File views">
           <button
@@ -573,7 +644,7 @@ function Review({
           </button>
           <button
             className={styles.primary}
-            disabled={!selection || !!draft}
+            disabled={!selection || annotationLocked}
             onClick={() => beginAnnotation(selection)}
           >
             Annotate selection
@@ -581,7 +652,7 @@ function Review({
           <button
             aria-expanded={feedbackVisible}
             aria-controls="review-annotations"
-            disabled={!!draft}
+            disabled={save.isPending || replaceDraft.isPending}
             onClick={() => setFeedbackOpen(!feedbackOpen)}
           >
             Annotations ({annotations.data?.length ?? 0})
@@ -595,6 +666,7 @@ function Review({
         )}
         {displayed ? (
           <SourceViewer
+            ref={viewer}
             worktree={worktreeKey}
             endpoint={endpoint}
             source={
@@ -607,8 +679,40 @@ function Review({
                   : undefined
             }
             comparison={draft ? draft.comparison : visibleComparison}
+            annotations={annotations.data ?? []}
+            draft={
+              draft
+                ? {
+                    input: draft.input,
+                    content: (
+                      <AnnotationComposer
+                        draft={draft}
+                        textarea={composer}
+                        locked={annotationLocked}
+                        busy={save.isPending || replaceDraft.isPending}
+                        message={message}
+                        confirmingDiscard={!!requestedAnnotation}
+                        discardError={replaceDraft.error?.message}
+                        onText={(text) =>
+                          updateDraft({
+                            ...draft,
+                            expiresAt: expiresAfterThreeMonths(),
+                            input: { ...draft.input, text },
+                          })
+                        }
+                        onSave={() => save.mutate(draft)}
+                        onClose={closeDraft}
+                        onDiscard={() =>
+                          replaceDraft.mutate(requestedAnnotation!)
+                        }
+                        onKeepEditing={() => setRequestedAnnotation(null)}
+                      />
+                    ),
+                  }
+                : undefined
+            }
             onSelection={setSelection}
-            onAnnotate={draft ? undefined : beginAnnotation}
+            onAnnotate={annotationLocked ? undefined : beginAnnotation}
             onExplorationChange={(active) =>
               setExplorationComparison(active ? visibleComparison : undefined)
             }
@@ -650,68 +754,15 @@ function Review({
           ANNOTATIONS <span>{annotations.data?.length ?? 0}</span>
           <button
             aria-label="Close annotations"
-            disabled={!!draft}
+            aria-keyshortcuts="Escape"
+            title="Close annotations (Escape)"
+            disabled={save.isPending || replaceDraft.isPending}
             onClick={() => setFeedbackOpen(false)}
           >
             ×
           </button>
         </div>
-        {draft ? (
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              save.mutate(draft);
-            }}
-            className={styles.composer}
-          >
-            <span className={styles.eyebrow}>
-              CAPTURED {draft.input.review?.side.toUpperCase() ?? "SOURCE"} · L
-              {draft.input.selection.startLineNumber}
-              {draftEndLine > draft.input.selection.startLineNumber &&
-                `–L${draftEndLine}`}
-            </span>
-            <label htmlFor="annotation">What should change?</label>
-            <textarea
-              id="annotation"
-              autoFocus
-              value={draft.input.text}
-              disabled={draft.submission === "pending"}
-              onChange={(event) =>
-                updateDraft({
-                  ...draft,
-                  expiresAt: expiresAfterThreeMonths(),
-                  input: { ...draft.input, text: event.target.value },
-                })
-              }
-              placeholder="Explain the desired behavior…"
-              maxLength={4000}
-            />
-            <p className={styles.hint} role="status">
-              {message}
-            </p>
-            <button
-              className={styles.primary}
-              disabled={!draft.input.text.trim() || save.isPending}
-            >
-              {draft.submission === "pending"
-                ? "Retry save annotation"
-                : "Save annotation"}
-            </button>
-            <button
-              type="button"
-              disabled={save.isPending}
-              onClick={() => {
-                setDraft(null);
-                setRecovery((current) => [
-                  ...current.filter((item) => item.input.id !== draft.input.id),
-                  draft,
-                ]);
-              }}
-            >
-              Keep draft for later
-            </button>
-          </form>
-        ) : (
+        {!draft && (
           <>
             {recovery.map((item) => (
               <button
@@ -719,6 +770,7 @@ function Review({
                 key={item.input.id}
                 onClick={() => {
                   setDraft(item);
+                  setFeedbackOpen(false);
                   setRecovery((current) =>
                     current.filter((entry) => entry.input.id !== item.input.id),
                   );
