@@ -182,7 +182,7 @@ export function Workbench({
           <span className={styles.eyebrow}>
             {machineId ? "2 · WORKTREE" : "1 · MACHINE"}
           </span>
-          <h1>{machineId ? "Choose a worktree" : "Choose a machine"}</h1>
+          <h1>{machineId ? "Choose a worktree" : "Choose a Host To Tether"}</h1>
           <div hidden={!machineId}>
             <p>
               {machine?.ssh?.destination ?? machine?.host} · Worktrees on this
@@ -219,9 +219,6 @@ export function Workbench({
             </button>
           </div>
           <div hidden={!!machineId}>
-            <p>
-              Select the machine running your agents to browse its worktrees.
-            </p>
             {machines.isPending && <p role="status">Loading machines…</p>}
             {machines.error && <p role="alert">{machines.error.message}</p>}
             {machines.error && (

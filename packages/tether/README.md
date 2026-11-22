@@ -265,8 +265,9 @@ follow-up work.
 The default origin is `http://127.0.0.1:47831`. Use `--port PORT` when starting a
 gateway on another port. A running gateway retains its existing port.
 `--no-browser` prints a single-use login link valid for 60 seconds. Treat the
-link as a credential. Browser authorization lasts 30 days and survives gateway
-restarts.
+link as a credential. Browser authorization renews for 30 days with each
+authenticated request, including background refreshes while Tether is open.
+Sessions survive gateway restarts and expire after 30 days without requests.
 
 **Sign out** offers save, export, discard and cancel for browser recovery drafts.
 Export produces a JSON file containing draft text and source evidence. The

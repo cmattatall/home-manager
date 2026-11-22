@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, ensure};
 use fs2::FileExt;
 use rand::RngCore;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
@@ -11,6 +11,8 @@ use std::{
 };
 
 use crate::model::Worktree;
+
+pub const SESSION_LIFETIME_SECONDS: i64 = 30 * 24 * 3600;
 
 pub fn private_directory(path: &Path) -> Result<()> {
     fs::DirBuilder::new()
@@ -166,22 +168,24 @@ pub fn exchange_ticket(state: &Path, ticket: &str) -> Result<Option<String>> {
     let token = secret();
     transaction.execute(
         "INSERT INTO sessions VALUES (?1, ?2)",
-        params![digest(token.as_bytes()), now() + 30 * 24 * 3600],
+        params![digest(token.as_bytes()), now() + SESSION_LIFETIME_SECONDS],
     )?;
     transaction.commit()?;
     Ok(Some(token))
 }
 
-pub fn authenticated(state: &Path, token: &str) -> Result<bool> {
+pub fn authenticate_and_renew(state: &Path, token: &str) -> Result<bool> {
     let connection = gateway_database(state)?;
-    Ok(connection
-        .query_row(
-            "SELECT 1 FROM sessions WHERE hash=?1 AND expires>?2",
-            params![digest(token.as_bytes()), now()],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some())
+    let current_time = now();
+    let renewed = connection.execute(
+        "UPDATE sessions SET expires=?3 WHERE hash=?1 AND expires>?2",
+        params![
+            digest(token.as_bytes()),
+            current_time,
+            current_time + SESSION_LIFETIME_SECONDS
+        ],
+    )?;
+    Ok(renewed == 1)
 }
 
 pub fn worktree_state(state: &Path, id: &str) -> PathBuf {

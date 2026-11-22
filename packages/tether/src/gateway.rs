@@ -91,6 +91,14 @@ fn cookie(headers: &HeaderMap) -> Option<&str> {
         .find_map(|part| part.strip_prefix("tether_session="))
 }
 
+fn session_cookie(token: &str) -> HeaderValue {
+    HeaderValue::from_str(&format!(
+        "tether_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}",
+        state::SESSION_LIFETIME_SECONDS
+    ))
+    .unwrap()
+}
+
 async fn boundary(State(gateway): State<Arc<Gateway>>, request: Request, next: Next) -> Response {
     let headers = request.headers();
     let host = headers
@@ -106,10 +114,12 @@ async fn boundary(State(gateway): State<Arc<Gateway>>, request: Request, next: N
     {
         return ApiError(StatusCode::FORBIDDEN, "Browser origin rejected".into()).into_response();
     }
+    let mut renewed_cookie = None;
     if request.uri().path().starts_with("/api/") && request.uri().path() != "/api/login" {
-        let valid = cookie(headers).map(|token| state::authenticated(&gateway.directory, token));
+        let token = cookie(headers);
+        let valid = token.map(|token| state::authenticate_and_renew(&gateway.directory, token));
         match valid {
-            Some(Ok(true)) => {}
+            Some(Ok(true)) => renewed_cookie = token.map(session_cookie),
             Some(Err(error)) => {
                 return ApiError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
                     .into_response();
@@ -125,6 +135,9 @@ async fn boundary(State(gateway): State<Arc<Gateway>>, request: Request, next: N
     }
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
+    if let Some(cookie) = renewed_cookie {
+        headers.entry(header::SET_COOKIE).or_insert(cookie);
+    }
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.insert(
         header::REFERRER_POLICY,
@@ -154,13 +167,9 @@ async fn login(
         )
     })?;
     let mut response = Json(json!({"ok": true})).into_response();
-    response.headers_mut().insert(
-        header::SET_COOKIE,
-        HeaderValue::from_str(&format!(
-            "tether_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000"
-        ))
-        .unwrap(),
-    );
+    response
+        .headers_mut()
+        .insert(header::SET_COOKIE, session_cookie(&token));
     Ok(response)
 }
 

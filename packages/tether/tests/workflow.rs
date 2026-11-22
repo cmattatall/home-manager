@@ -5,7 +5,7 @@ use std::{
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 struct Process(Child);
@@ -1158,6 +1158,39 @@ async fn login_is_single_use_origin_bound_persistent_and_revocable() {
     assert_eq!(response.status(), StatusCode::OK);
     let cookie = response.headers()["set-cookie"].to_str().unwrap();
     assert!(cookie.contains("HttpOnly; SameSite=Strict; Max-Age=2592000"));
+    let database = rusqlite::Connection::open(fixture.state.join("gateway.sqlite")).unwrap();
+    let before_request = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    database
+        .execute("UPDATE sessions SET expires=?1", [before_request + 60])
+        .unwrap();
+    let renewed = fixture.get("session").await;
+    assert_eq!(renewed.status(), StatusCode::OK);
+    assert_eq!(renewed.headers()["set-cookie"].to_str().unwrap(), cookie);
+    let expires: i64 = database
+        .query_row("SELECT expires FROM sessions", [], |row| row.get(0))
+        .unwrap();
+    let after_request = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let thirty_days = 30 * 24 * 3600;
+    assert!((before_request + thirty_days..=after_request + thirty_days).contains(&expires));
+
+    database
+        .execute("UPDATE sessions SET expires=0", [])
+        .unwrap();
+    let expired = fixture.get("session").await;
+    assert_eq!(expired.status(), StatusCode::UNAUTHORIZED);
+    assert!(!expired.headers().contains_key("set-cookie"));
+    assert_eq!(
+        fixture.login(&fixture.ticket()).await.status(),
+        StatusCode::OK
+    );
+    drop(database);
+
     for origin in [None, Some("https://example.invalid")] {
         let mut request = fixture
             .client
@@ -1216,9 +1249,13 @@ async fn login_is_single_use_origin_bound_persistent_and_revocable() {
             .status(),
         StatusCode::OK
     );
-    assert_eq!(
-        fixture.post("logout", &json!({"all": true})).await.status(),
-        StatusCode::OK
+    let logout = fixture.post("logout", &json!({"all": true})).await;
+    assert_eq!(logout.status(), StatusCode::OK);
+    assert!(
+        logout.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0")
     );
     assert_eq!(
         fixture.get("session").await.status(),
