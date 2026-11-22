@@ -10286,8 +10286,13 @@ func greeting() string {
         )
 
     def test_merge_conflict_refresh_retries_without_input(self):
-        for interval in (1, 0):
-            with self.subTest(interval=interval):
+        cases = [
+            (interval, action)
+            for interval in (1, 0)
+            for action in ("stay", "reopen", "restart")
+        ]
+        for interval, action in cases:
+            with self.subTest(interval=interval, action=action):
                 root = self.fixture.exec_lua(
                     "local root = dofile(...).create(); return root", FIXTURE
                 )
@@ -10318,6 +10323,12 @@ func greeting() string {
                     f"f.write(p..'/settings.json',{{review_refresh_interval={interval}}}); "
                     "require('rediff.live').start(s); vim.notify = original_notify",
                 )
+                self.lua(
+                    editor,
+                    "r.add_comment({file=s.current.path, side='new', snapshot_id=s.current.id, "
+                    "selection=require('rediff.selection').line(s.new_buf,5)}, 'Keep this evidence')",
+                )
+                self.keys(editor, ":ReviewSave<CR>")
                 snapshot = self.lua(editor, "return s.current.id")
                 window = editor.current.window.handle
                 merge = subprocess.run(
@@ -10336,11 +10347,37 @@ func greeting() string {
                 self.assertEqual(snapshot, self.lua(editor, "return s.current.id"))
                 self.assertFalse(editor.api.get_mode()["blocking"])
 
+                if action == "reopen":
+                    self.keys(editor, " r")
+                    self.assertIsNone(self.lua(editor, "return s"))
+                    self.keys(editor, " r")
+                elif action == "restart":
+                    self.close_editor(editor)
+                    editor = self.launch(root)
+
+                if action != "stay":
+                    self.wait_for(editor, "s and s.live_error ~= nil")
+                    self.assertEqual(0, self.lua(editor, "return #s.entries"))
+                    window = editor.current.window.handle
+                self.assertEqual(
+                    [snapshot, "Keep this evidence"],
+                    self.lua(
+                        editor, "return {s.comments[1].snapshot_id, s.comments[1].text}"
+                    ),
+                )
+
                 path.write_text(path.read_text().replace("return 123", "return 456"))
                 conflict.write_text("resolved\n")
                 git("add", "conflict.txt")
                 self.wait_for(editor, "s.live_error == nil")
-                self.wait_for(editor, 's.current.new:find("return 456", 1, true) ~= nil')
+                if action == "stay":
+                    self.wait_for(
+                        editor, 's.current.new:find("return 456", 1, true) ~= nil'
+                    )
+                else:
+                    self.wait_for(
+                        editor, "s.current and s.current.new == 'resolved\\n'"
+                    )
                 self.assertEqual(window, editor.current.window.handle)
                 self.assertFalse(editor.api.get_mode()["blocking"])
                 self.assertNotIn(

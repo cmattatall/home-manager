@@ -134,10 +134,14 @@ local function endpoint_content(root, ref, path)
 	return blob(root, ref == "index" and "" or ref, path)
 end
 
+function M.has_conflicts(root)
+	return #paths(root, { "diff", "--name-only", "--diff-filter=U", "-z" }) > 0
+end
+
 function M.entries(root, comparison)
 	local local_group = M.local_group(comparison)
 	if M.is_live(comparison) then
-		assert(#paths(root, { "diff", "--name-only", "--diff-filter=U", "-z" }) == 0, "Unresolved merge conflicts")
+		assert(not M.has_conflicts(root), "Unresolved merge conflicts")
 	end
 	if comparison and not local_group then
 		if comparison.base == comparison.head then

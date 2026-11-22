@@ -287,6 +287,9 @@ Merge conflicts keep the last successful snapshot visible with an
 **Auto-refresh retrying: Unresolved merge conflicts** warning in the bottom bar.
 Background retries continue and update the snapshot automatically after the
 conflicts are resolved and staged. The warning clears on recovery.
+Opening Review during a conflict shows a waiting view and retains saved notes.
+It retries until the conflict clears, including when fallback polling is disabled.
+You can leave and reopen with **Space r** while waiting.
 The bottom Review bar shows the branch or `@short-SHA` for detached HEAD.
 Use **Space R** / **:ReviewRefresh** for these snapshot buffers, not `:bufdo e`.
 Outside Review, native `:checktime` checks ordinary buffers for external changes.

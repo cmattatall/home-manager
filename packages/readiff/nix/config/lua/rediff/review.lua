@@ -2252,7 +2252,10 @@ function M.open(root, comparison)
 			return
 		end
 	end
-	git.entries(root, comparison) -- Validate before changing windows.
+	local waiting_for_conflicts = not M.state and git.is_live(comparison) and git.has_conflicts(root)
+	if not waiting_for_conflicts then
+		git.entries(root, comparison) -- Validate before changing windows.
+	end
 	if M.state then
 		local s = M.state
 		assert(not s.composer, "Save or close the current annotation before switching diff modes")
@@ -2414,10 +2417,24 @@ function M.open(root, comparison)
 			end
 		end, "Previous file")
 	end
-	M.refresh()
+	local changes
+	if waiting_for_conflicts then
+		changes = {
+			entries = {},
+			all_entries = {},
+			line_totals = { added = 0, deleted = 0 },
+			reference = comparison and git.comparison_label(comparison) or git.reference(root),
+		}
+	end
+	M.refresh(nil, changes)
 	api.nvim_set_current_win(s.tree_win)
 	harness.move_pane(s.previous_tab)
 	require("rediff.live").start(s)
+	if waiting_for_conflicts then
+		s.live_error = "Unresolved merge conflicts"
+		vim.wo[s.new_win].winbar = " Waiting for merge conflict resolution"
+		require("rediff.live").changed(s.root)
+	end
 	require("rediff.discards").load(s.root)
 	awareness.start(s.root)
 	api.nvim_exec_autocmds("User", { pattern = "ReviewEnter" })
@@ -2430,6 +2447,9 @@ function M.statusline()
 	local directory = vim.fn.strtrans(vim.fn.fnamemodify(root, ":~")):gsub("%%", "%%%%")
 	if s then
 		local selection_status = s.current and "" or (#s.entries > 0 and "No file selected" or "No changes")
+		if s.live_error and #s.entries == 0 then
+			selection_status = "Waiting for refresh"
+		end
 		local refs = require("rediff.ref_picker").comparison_label()
 		local mode = refs and "GIT REFS" or "REVIEW"
 		local reference = refs or s.reference or ""
