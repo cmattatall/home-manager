@@ -151,6 +151,14 @@ started from the workbench header use a dialog. Failed updates offer the same ac
 for retry. Closing the browser leaves an accepted update running, and reopening
 the machine shows its status. Each machine accepts one update at a time.
 
+Expand **Update log** on a machine card to see the latest phase and installation
+output after navigation or a browser reload. The gateway retains the latest
+update's final result and up to 32 KiB of output per machine until its next update
+or a gateway restart. Use the square **Cancel update** button beside refresh to
+stop an active update. Its log remains available afterward. Cancellation stops
+the installer and its remote build request. Completed Nix build work can be
+reused on retry. If activation already completed, the installed build remains.
+
 Updates preserve registered worktrees, source captures, saved annotations and
 browser drafts. New requests use the updated worktree services immediately.
 Previous services finish their requests and exit after their idle timeout.

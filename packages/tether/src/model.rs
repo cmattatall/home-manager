@@ -50,6 +50,24 @@ pub struct MachineStatus {
     pub updating: bool,
 }
 
+#[derive(Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum MachineUpdateState {
+    Running,
+    Cancelling,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct MachineUpdate {
+    pub state: MachineUpdateState,
+    pub message: String,
+    pub output: String,
+}
+
 #[derive(Serialize, TS)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ConnectionEvent {
@@ -262,6 +280,8 @@ pub fn typescript() -> String {
         Machine::decl(),
         BuildInfo::decl(),
         MachineStatus::decl(),
+        MachineUpdateState::decl(),
+        MachineUpdate::decl(),
         ConnectionEvent::decl(),
         DirectoryPage::decl(),
         Worktree::decl(),

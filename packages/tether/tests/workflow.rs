@@ -539,13 +539,14 @@ case " $* " in
 esac
 if [ -e "$HOME/build-fails" ]; then
     count=0
-    while [ "$count" -lt 1000 ]; do
-        printf 'remote build diagnostics\n' >&2
+    while [ "$count" -lt 2000 ]; do
+        printf 'remote build diagnostics ✓\n' >&2
         count=$((count + 1))
     done
     echo 'Test disk full' >&2
     exit 1
 fi
+printf '%s' "$$" > "$HOME/build-pid"
 case " $* " in
     *" --log-format raw-with-logs "*) echo 'Compiling remote Tether' >&2 ;;
 esac
@@ -735,6 +736,18 @@ exec sh -c "$remote_command"
     assert!(failed.text().await.unwrap().contains("Test disk full"));
     assert_eq!(fs::read_link(&current_link).unwrap(), previous_installation);
     assert_eq!(fixture.read(&status_path).await["updating"], false);
+    let failure_log = fixture.read(&update_path).await;
+    assert_eq!(failure_log["state"], "failed");
+    assert!(
+        failure_log["message"]
+            .as_str()
+            .unwrap()
+            .contains("Test disk full")
+    );
+    let log_tail = failure_log["output"].as_str().unwrap();
+    assert!(log_tail.len() <= 32_768);
+    assert!(log_tail.contains('✓'));
+    assert!(log_tail.ends_with("Test disk full\n"));
 
     write_older_identity(id, Some("earlier-source-build"));
     assert_eq!(
@@ -763,16 +776,80 @@ exec sh -c "$remote_command"
     let duplicate = fixture.post(&update_path, &json!({})).await;
     assert_eq!(duplicate.status(), StatusCode::BAD_REQUEST);
     assert!(duplicate.text().await.unwrap().contains("already running"));
+    drop(updating);
+    let retained = fixture.read(&update_path).await;
+    assert_eq!(retained["state"], "running");
+    assert!(
+        retained["output"]
+            .as_str()
+            .unwrap()
+            .contains("Compiling remote Tether")
+    );
+    let build_pid = fs::read_to_string(remote.join("build-pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let build_pid = rustix::process::Pid::from_raw(build_pid).unwrap();
+    assert!(rustix::process::test_kill_process(build_pid).is_ok());
+    let cancel_path = format!("{update_path}/cancel");
+    assert_eq!(
+        fixture.post(&cancel_path, &json!({})).await.status(),
+        StatusCode::OK
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let progress = fixture.read(&update_path).await;
+            let process_stopped = rustix::process::test_kill_process(build_pid).is_err();
+            if progress["state"] == "cancelled" && process_stopped {
+                assert_eq!(progress["message"], "Update cancelled");
+                assert_eq!(progress["output"], retained["output"]);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("Cancellation must stop the build and retain its log");
+    assert_eq!(fixture.read(&status_path).await["updating"], false);
+    assert_eq!(fs::read_link(&current_link).unwrap(), previous_installation);
+    assert_eq!(
+        fixture.post(&cancel_path, &json!({})).await.status(),
+        StatusCode::OK
+    );
+
     fs::remove_file(remote.join("hold-build")).unwrap();
-    output.extend_from_slice(&updating.bytes().await.unwrap());
-    let finished: Value =
-        serde_json::from_str(String::from_utf8(output).unwrap().lines().last().unwrap()).unwrap();
+    let retried = fixture
+        .client
+        .post(format!("{}/api/{update_path}", fixture.origin))
+        .header("Origin", &fixture.origin)
+        .header("Accept", "application/x-ndjson")
+        .send()
+        .await
+        .unwrap();
+    let output = retried.bytes().await.unwrap();
+    let finished: Value = serde_json::from_str(
+        std::str::from_utf8(&output)
+            .unwrap()
+            .lines()
+            .last()
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(finished["type"], "connected");
     assert_eq!(finished["machine"], *machine);
     let status = fixture.read(&status_path).await;
     assert_eq!(status["installed"], status["expected"]);
     assert_eq!(status["updating"], false);
     assert_ne!(fs::read_link(&current_link).unwrap(), previous_installation);
+    let completed_log = fixture.read(&update_path).await;
+    assert_eq!(completed_log["state"], "succeeded");
+    assert_eq!(completed_log["message"], "Update complete");
+    assert!(
+        completed_log["output"]
+            .as_str()
+            .unwrap()
+            .contains("Compiling remote Tether")
+    );
     fs::write(remote.join("build-fails"), "").unwrap();
     assert_eq!(
         fixture.post(&update_path, &json!({})).await.status(),

@@ -18,12 +18,15 @@ use std::{
 use tokio::{
     net::{TcpListener, UnixListener},
     process::Command,
-    sync::{Mutex, mpsc, watch},
+    sync::{Mutex, mpsc, oneshot, watch},
 };
 
 use crate::{
     machine,
-    model::{ConnectionEvent, MAX_FRAME, Session, SshDestination, VERSION},
+    model::{
+        ConnectionEvent, MAX_FRAME, MachineUpdate, MachineUpdateState, Session, SshDestination,
+        VERSION,
+    },
     state, transport,
 };
 
@@ -35,6 +38,32 @@ struct Gateway {
     host: String,
     instance: String,
     directory_picker: Mutex<()>,
+    updates: Mutex<HashMap<String, UpdateOperation>>,
+}
+
+struct UpdateOperation {
+    progress: MachineUpdate,
+    cancel: Option<oneshot::Sender<()>>,
+}
+
+impl UpdateOperation {
+    fn record(&mut self, event: &ConnectionEvent) {
+        match event {
+            ConnectionEvent::Progress { message } => {
+                self.progress.message.clone_from(message);
+                self.progress.output.push_str(message);
+                self.progress.output.push('\n');
+            }
+            ConnectionEvent::Output { text } => self.progress.output.push_str(text),
+            ConnectionEvent::Connected { .. } | ConnectionEvent::Error { .. } => {}
+        }
+        let output = &mut self.progress.output;
+        let mut start = output.len().saturating_sub(32_768);
+        while !output.is_char_boundary(start) {
+            start += 1;
+        }
+        output.drain(..start);
+    }
 }
 
 struct ApiError(StatusCode, String);
@@ -226,25 +255,138 @@ async fn update_machine(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> ApiResult<Response> {
-    if headers
+    if !machine::inventory(&gateway.directory)?
+        .iter()
+        .any(|machine| machine.id == id && machine.ssh.is_some())
+    {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Choose a registered SSH machine to update".into(),
+        ));
+    }
+    let mut updates = gateway.updates.lock().await;
+    if updates.get(&id).is_some_and(|update| {
+        matches!(
+            update.progress.state,
+            MachineUpdateState::Running | MachineUpdateState::Cancelling
+        )
+    }) {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "A machine update is already running".into(),
+        ));
+    }
+    let (cancel, mut cancelled) = oneshot::channel();
+    updates.insert(
+        id.clone(),
+        UpdateOperation {
+            progress: MachineUpdate {
+                state: MachineUpdateState::Running,
+                message: "Starting update…".into(),
+                output: String::new(),
+            },
+            cancel: Some(cancel),
+        },
+    );
+    drop(updates);
+    let streaming = headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())
-        != Some("application/x-ndjson")
-    {
-        return Ok(Json(machine::update(&gateway.directory, &id, None).await?).into_response());
-    }
-    let (sender, receiver) = mpsc::channel(64);
+        == Some("application/x-ndjson");
+    let (sender, mut receiver) = mpsc::channel(64);
     tokio::spawn(async move {
-        let result = machine::update(&gateway.directory, &id, Some(&sender)).await;
-        let event = match result {
-            Ok(machine) => ConnectionEvent::Connected { machine },
-            Err(error) => ConnectionEvent::Error {
-                message: error.to_string(),
-            },
+        let (progress, mut events) = mpsc::channel(64);
+        let result = {
+            let operation = machine::update(&gateway.directory, &id, Some(&progress));
+            tokio::pin!(operation);
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut cancelled => break None,
+                    event = events.recv() => {
+                        let event = event.unwrap();
+                        gateway.updates.lock().await.get_mut(&id).unwrap().record(&event);
+                        let _ = sender.try_send(event);
+                    }
+                    result = &mut operation => break Some(result),
+                }
+            }
         };
+        let mut updates = gateway.updates.lock().await;
+        let update = updates.get_mut(&id).unwrap();
+        while let Ok(event) = events.try_recv() {
+            update.record(&event);
+            let _ = sender.try_send(event);
+        }
+        let event = match result {
+            Some(Ok(machine)) => {
+                update.progress.state = MachineUpdateState::Succeeded;
+                update.progress.message = "Update complete".into();
+                ConnectionEvent::Connected { machine }
+            }
+            Some(Err(error)) => {
+                update.progress.state = MachineUpdateState::Failed;
+                update.progress.message = error.to_string();
+                ConnectionEvent::Error {
+                    message: error.to_string(),
+                }
+            }
+            None => {
+                update.progress.state = MachineUpdateState::Cancelled;
+                update.progress.message = "Update cancelled".into();
+                ConnectionEvent::Error {
+                    message: "Update cancelled".into(),
+                }
+            }
+        };
+        update.cancel = None;
+        drop(updates);
         let _ = sender.send(event).await;
     });
-    Ok(progress_response(receiver))
+    if streaming {
+        return Ok(progress_response(receiver));
+    }
+    while let Some(event) = receiver.recv().await {
+        match event {
+            ConnectionEvent::Connected { machine } => return Ok(Json(machine).into_response()),
+            ConnectionEvent::Error { message } => {
+                return Err(ApiError(StatusCode::BAD_REQUEST, message));
+            }
+            _ => {}
+        }
+    }
+    Err(ApiError(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Update task stopped".into(),
+    ))
+}
+
+async fn update_progress(
+    State(gateway): State<Arc<Gateway>>,
+    Path(id): Path<String>,
+) -> Json<Option<MachineUpdate>> {
+    Json(
+        gateway
+            .updates
+            .lock()
+            .await
+            .get(&id)
+            .map(|update| update.progress.clone()),
+    )
+}
+
+async fn cancel_update(
+    State(gateway): State<Arc<Gateway>>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let mut updates = gateway.updates.lock().await;
+    let update = updates.get_mut(&id).context("No update to cancel")?;
+    if let Some(cancel) = update.cancel.take() {
+        update.progress.state = MachineUpdateState::Cancelling;
+        update.progress.message = "Cancelling update…".into();
+        let _ = cancel.send(());
+    }
+    Ok(Json(json!({"ok": true})))
 }
 
 fn progress_response(receiver: mpsc::Receiver<ConnectionEvent>) -> Response {
@@ -520,6 +662,7 @@ pub async fn run(directory: PathBuf, port: u16) -> Result<()> {
         origin: format!("http://127.0.0.1:{port}"),
         instance: state::secret(),
         directory_picker: Mutex::new(()),
+        updates: Mutex::new(HashMap::new()),
     });
     let control_path = directory.join("gateway.sock");
     if control_path.exists() {
@@ -544,7 +687,11 @@ pub async fn run(directory: PathBuf, port: u16) -> Result<()> {
         .route("/api/ssh-hosts", get(ssh_hosts))
         .route("/api/machines", get(machines).post(connect_machine))
         .route("/api/machines/{id}/status", get(machine_status))
-        .route("/api/machines/{id}/update", post(update_machine))
+        .route(
+            "/api/machines/{id}/update",
+            get(update_progress).post(update_machine),
+        )
+        .route("/api/machines/{id}/update/cancel", post(cancel_update))
         .route("/api/machines/{id}/directories", get(directories))
         .route(
             "/api/machines/{id}/worktrees",

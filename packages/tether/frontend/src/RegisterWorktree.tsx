@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
 import type {
@@ -284,6 +284,7 @@ export function MachineSetup({
   onClose: () => void;
   onConnected: (machine: Machine) => void;
 }) {
+  const client = useQueryClient();
   const [hostChoice, setHostChoice] = useState(
     update?.machine.ssh?.destination ?? "",
   );
@@ -322,6 +323,17 @@ export function MachineSetup({
             );
         },
       );
+    },
+    onSettled: async () => {
+      if (!update) return;
+      await Promise.all([
+        client.invalidateQueries({
+          queryKey: ["machine-update", update.machine.id],
+        }),
+        client.invalidateQueries({
+          queryKey: ["machine-status", update.machine.id],
+        }),
+      ]);
     },
   });
   useEffect(() => {
@@ -503,7 +515,8 @@ export function MachineSetup({
                 {connection.error.message}
               </p>
             )}
-            {(connection.isPending || connection.isError) &&
+            {(!update || !inline) &&
+              (connection.isPending || connection.isError) &&
               connectionOutput && (
                 <>
                   <p className={styles.hint}>Latest installation output</p>
@@ -539,10 +552,10 @@ export function MachineSetup({
         <div className={`${styles.actions} ${styles.connectionActions}`}>
           <button
             type="button"
-            disabled={connection.isPending}
+            disabled={connection.isPending && !update}
             onClick={onClose}
           >
-            Cancel
+            {connection.isPending && update ? "Hide progress" : "Cancel"}
           </button>
           <button
             ref={connectButton}
@@ -568,7 +581,7 @@ export function MachineSetup({
     <Dialog.Root
       open
       onOpenChange={(open) => {
-        if (!open && !connection.isPending) onClose();
+        if (!open && (update || !connection.isPending)) onClose();
       }}
     >
       <Dialog.Portal>

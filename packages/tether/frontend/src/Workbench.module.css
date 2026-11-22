@@ -94,6 +94,21 @@
   accent-color: var(--accent);
 }
 
+.machineUpdateLog {
+  margin: 0 18px 14px;
+  font-size: 12px;
+}
+
+.machineUpdateLog summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.machineUpdateLog p {
+  overflow-wrap: anywhere;
+}
+
 .machineUpdate {
   padding: 0 18px 18px;
   border-top: 1px solid var(--line);
@@ -717,6 +732,18 @@
   overflow-wrap: anywhere;
   font-size: 11px;
   line-height: 1.5;
+}
+
+.machineUpdateLog .installationOutput {
+  max-height: none;
+}
+
+.machineUpdateLog pre {
+  max-height: 10lh;
+  margin: 0;
+  overflow: auto;
+  font-size: inherit;
+  white-space: pre-wrap;
 }
 
 .hostList {

@@ -2,7 +2,11 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, fs, io::ErrorKind, path::Path, process::Stdio, time::Duration};
-use tokio::{io::AsyncReadExt, process::Command, sync::mpsc};
+use tokio::{
+    io::AsyncReadExt,
+    process::{Child, Command},
+    sync::mpsc,
+};
 
 use crate::{
     model::{
@@ -120,34 +124,52 @@ async fn diagnostics(
     }
 }
 
+struct SetupProcess {
+    child: Child,
+    group: rustix::process::Pid,
+}
+
+impl Drop for SetupProcess {
+    fn drop(&mut self) {
+        let _ = rustix::process::kill_process_group(self.group, rustix::process::Signal::KILL);
+    }
+}
+
 async fn setup_command(
     mut command: Command,
     phase: &str,
     progress: Option<&mpsc::Sender<ConnectionEvent>>,
 ) -> Result<String> {
-    let mut child = command
-        .stdin(Stdio::null())
+    let child = command
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0)
         .kill_on_drop(true)
         .spawn()
         .with_context(|| format!("{phase}: could not start command"))?;
-    let mut stdout = child.stdout.take().unwrap();
-    let mut stderr = child.stderr.take().unwrap();
+    let group = rustix::process::Pid::from_raw(child.id().unwrap() as i32).unwrap();
+    let mut process = SetupProcess { child, group };
+    // The remote build watches this pipe for gateway cancellation or disconnection.
+    let _stdin = process.child.stdin.take().unwrap();
+    let mut stdout = process.child.stdout.take().unwrap();
+    let mut stderr = process.child.stderr.take().unwrap();
     tokio::time::timeout(Duration::from_secs(1800), async {
         let mut output = String::new();
         let (read, errors, status) = tokio::join!(
             stdout.read_to_string(&mut output),
             diagnostics(&mut stderr, progress),
-            child.wait()
+            process.child.wait()
         );
         read?;
         let errors = errors?;
-        ensure!(
-            status?.success(),
-            "{phase}: {}",
-            String::from_utf8_lossy(&errors).trim()
-        );
+        let diagnostics = String::from_utf8_lossy(&errors);
+        let message = diagnostics
+            .trim()
+            .lines()
+            .last()
+            .unwrap_or("Command exited without diagnostics");
+        ensure!(status?.success(), "{phase}: {message}");
         Ok(output)
     })
     .await
@@ -219,7 +241,21 @@ exit 1
 umask 077
 directory="$HOME/.local/share/tether/installations"
 mkdir -p "$directory"
-{} --extra-experimental-features nix-command --log-format raw-with-logs build --impure --file {} --out-link "$directory"/{}
+exec 3<&0
+{} --extra-experimental-features nix-command --log-format raw-with-logs build --impure --file {} --out-link "$directory"/{} < /dev/null 3<&- &
+build=$!
+(
+    read -r disconnect <&3 || :
+    kill "$build" 2>/dev/null || :
+) &
+watcher=$!
+trap 'kill "$build" "$watcher" 2>/dev/null || :' EXIT HUP INT TERM
+result=0
+wait "$build" || result=$?
+kill "$watcher" 2>/dev/null || :
+wait "$watcher" 2>/dev/null || :
+trap - EXIT HUP INT TERM
+exit "$result"
 "#,
         shlex::try_quote(nix)?,
         shlex::try_quote(&expression)?,
