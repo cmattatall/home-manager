@@ -1,13 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Command } from "cmdk";
-import type {
-  DirectoryPage,
-  Machine,
-  MachineStatus,
-  Worktree,
-} from "./protocol";
+import type { DirectoryPage, Machine, Worktree } from "./protocol";
 import { api, setupMachine } from "./api";
 import styles from "./Workbench.module.css";
 
@@ -273,21 +268,16 @@ export function RegisterWorktree({
 
 export function MachineSetup({
   machines,
-  update,
   inline = false,
   onClose,
   onConnected,
 }: {
   machines: Machine[];
-  update?: { machine: Machine; status: MachineStatus };
   inline?: boolean;
   onClose: () => void;
   onConnected: (machine: Machine) => void;
 }) {
-  const client = useQueryClient();
-  const [hostChoice, setHostChoice] = useState(
-    update?.machine.ssh?.destination ?? "",
-  );
+  const [hostChoice, setHostChoice] = useState("");
   const [hostSearch, setHostSearch] = useState("");
   const [hostInputFocused, setHostInputFocused] = useState(false);
   const [connectionProgress, setConnectionProgress] = useState("");
@@ -297,43 +287,27 @@ export function MachineSetup({
   const followOutput = useRef(true);
   const connectButton = useRef<HTMLButtonElement>(null);
   const destination = (hostChoice || hostSearch).trim();
-  const alreadyRegistered =
-    !update &&
-    machines.some((machine) => machine.ssh?.destination === destination);
+  const alreadyRegistered = machines.some(
+    (machine) => machine.ssh?.destination === destination,
+  );
   const hosts = useQuery({
     queryKey: ["ssh-hosts"],
     queryFn: ({ signal }) => api<string[]>("ssh-hosts", { signal }),
-    enabled: !update,
   });
   const connection = useMutation({
-    mutationKey: ["machine-setup", update?.machine.id ?? destination],
+    mutationKey: ["machine-setup", destination],
     mutationFn: () => {
       setConnectionProgress("Connecting over SSH…");
       setConnectionOutput("");
       setElapsedSeconds(0);
       followOutput.current = true;
-      return setupMachine(
-        update ? `machines/${update.machine.id}/update` : "machines",
-        update ? undefined : { destination },
-        (event) => {
-          if (event.type === "progress") setConnectionProgress(event.message);
-          else
-            setConnectionOutput((previous) =>
-              (previous + event.text).slice(-32_768),
-            );
-        },
-      );
-    },
-    onSettled: async () => {
-      if (!update) return;
-      await Promise.all([
-        client.invalidateQueries({
-          queryKey: ["machine-update", update.machine.id],
-        }),
-        client.invalidateQueries({
-          queryKey: ["machine-status", update.machine.id],
-        }),
-      ]);
+      return setupMachine("machines", { destination }, (event) => {
+        if (event.type === "progress") setConnectionProgress(event.message);
+        else
+          setConnectionOutput((previous) =>
+            (previous + event.text).slice(-32_768),
+          );
+      });
     },
   });
   useEffect(() => {
@@ -356,28 +330,16 @@ export function MachineSetup({
   const Description = inline ? "p" : Dialog.Description;
   const content = (
     <>
-      <Title>
-        {update ? `Update Tether on ${destination}` : "Connect an SSH machine"}
-      </Title>
+      <Title>Connect an SSH machine</Title>
       <Description>
-        {update
-          ? "Install this gateway's pinned Tether build on the selected machine. Worktrees and saved annotations are preserved."
-          : "Uses your SSH configuration and trusted host keys. Connect installs missing Tether through Nix in your remote account's Tether directory."}
+        Uses your SSH configuration and trusted host keys. Connect installs
+        missing Tether through Nix in your remote account's Tether directory.
       </Description>
-      {inline && !update && connection.isPending && (
+      {inline && connection.isPending && (
         <progress
           className={styles.machineUpdateProgress}
           aria-label={`Setting up Tether on ${destination}`}
         />
-      )}
-      {update && (
-        <p className={styles.hint}>
-          Installed: {update.status.installed?.version ?? "Missing"} ·{" "}
-          {update.status.installed?.buildId?.slice(0, 12) ?? "build unknown"}
-          <br />
-          Target: {update.status.expected.version} ·{" "}
-          {update.status.expected.buildId?.slice(0, 12)}
-        </p>
       )}
       <form
         className={styles.connectionForm}
@@ -450,19 +412,17 @@ export function MachineSetup({
           ) : (
             <div className={styles.hostSelection}>
               <strong>{hostChoice}</strong>
-              {!update && (
-                <button
-                  type="button"
-                  disabled={connection.isPending}
-                  onClick={() => {
-                    connection.reset();
-                    setHostSearch("");
-                    setHostChoice("");
-                  }}
-                >
-                  Change host
-                </button>
-              )}
+              <button
+                type="button"
+                disabled={connection.isPending}
+                onClick={() => {
+                  connection.reset();
+                  setHostSearch("");
+                  setHostChoice("");
+                }}
+              >
+                Change host
+              </button>
             </div>
           )}
           <div className={hostChoice ? undefined : styles.hostDetails}>
@@ -477,10 +437,8 @@ export function MachineSetup({
                 suggested host.
               </p>
             )}
-            {!update && hosts.isPending && (
-              <p role="status">Loading configured hosts…</p>
-            )}
-            {!update && hosts.data?.length === 0 && (
+            {hosts.isPending && <p role="status">Loading configured hosts…</p>}
+            {hosts.data?.length === 0 && (
               <p>No concrete Host aliases found in ~/.ssh/config.</p>
             )}
             {hosts.error && <p role="alert">{hosts.error.message}</p>}
@@ -515,8 +473,7 @@ export function MachineSetup({
                 {connection.error.message}
               </p>
             )}
-            {(!update || !inline) &&
-              (connection.isPending || connection.isError) &&
+            {(connection.isPending || connection.isError) &&
               connectionOutput && (
                 <>
                   <p className={styles.hint}>Latest installation output</p>
@@ -552,23 +509,17 @@ export function MachineSetup({
         <div className={`${styles.actions} ${styles.connectionActions}`}>
           <button
             type="button"
-            disabled={connection.isPending && !update}
+            disabled={connection.isPending}
             onClick={onClose}
           >
-            {connection.isPending && update ? "Hide progress" : "Cancel"}
+            Cancel
           </button>
           <button
             ref={connectButton}
             className={styles.primary}
             disabled={connection.isPending || !destination || alreadyRegistered}
           >
-            {connection.isPending
-              ? update
-                ? "Updating…"
-                : "Connecting…"
-              : update
-                ? "Update machine"
-                : "Connect machine"}
+            {connection.isPending ? "Connecting…" : "Connect machine"}
           </button>
         </div>
       </form>
@@ -581,7 +532,7 @@ export function MachineSetup({
     <Dialog.Root
       open
       onOpenChange={(open) => {
-        if (!open && (update || !connection.isPending)) onClose();
+        if (!open && !connection.isPending) onClose();
       }}
     >
       <Dialog.Portal>

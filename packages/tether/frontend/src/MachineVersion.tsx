@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   useIsMutating,
   useMutation,
@@ -6,7 +6,6 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { api } from "./api";
-import { MachineSetup } from "./RegisterWorktree";
 import type { Machine, MachineStatus, MachineUpdate } from "./protocol";
 import styles from "./Workbench.module.css";
 
@@ -18,7 +17,6 @@ export function MachineVersion({
   inline?: boolean;
 }) {
   const client = useQueryClient();
-  const [open, setOpen] = useState(false);
   const outputPanel = useRef<HTMLPreElement>(null);
   const followOutput = useRef(true);
   const pendingUpdates = useIsMutating({
@@ -49,6 +47,12 @@ export function MachineVersion({
   });
   const progress = update.data;
   const updateState = progress?.state;
+  const startUpdate = useMutation({
+    mutationKey: ["machine-setup", machine.id],
+    mutationFn: () =>
+      api<Machine>(`machines/${machine.id}/update`, { method: "POST" }),
+    onSettled: () => client.invalidateQueries(),
+  });
   const cancel = useMutation({
     mutationFn: () =>
       api(`machines/${machine.id}/update/cancel`, { method: "POST" }),
@@ -128,14 +132,17 @@ export function MachineVersion({
             <span aria-hidden="true">■</span>
           </button>
         )}
+        {startUpdate.error && (
+          <span role="alert">{startUpdate.error.message}</span>
+        )}
         {cancel.error && <span role="alert">{cancel.error.message}</span>}
         {build &&
           !current &&
           !status.error &&
           (build.canUpdate ? (
             <button
-              disabled={updating || open}
-              onClick={() => setOpen(true)}
+              disabled={updating}
+              onClick={() => startUpdate.mutate()}
               aria-label={`Update Tether on ${name}`}
             >
               Update
@@ -190,21 +197,6 @@ export function MachineVersion({
             </>
           )}
         </details>
-      )}
-      {open && build && (
-        <MachineSetup
-          machines={[machine]}
-          update={{ machine, status: build }}
-          inline={inline}
-          onClose={() => {
-            setOpen(false);
-            void status.refetch();
-          }}
-          onConnected={async () => {
-            setOpen(false);
-            await client.invalidateQueries();
-          }}
-        />
       )}
     </>
   );

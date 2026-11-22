@@ -144,12 +144,11 @@ while the view is open. Use **Check version** to check immediately. Hover over
 the status to see the installed version, source-build ID and gateway build.
 Older installations with an unknown build ID show an available update.
 
-Choose **Update**, review the installed and target builds, then confirm
-**Update machine**. The target is the local gateway's pinned build. Each machine
-card contains its update controls, progress bar and installation output. Updates
-started from the workbench header use a dialog. Failed updates offer the same action
-for retry. Closing the browser leaves an accepted update running, and reopening
-the machine shows its status. Each machine accepts one update at a time.
+Choose **Update** on a machine card or in the workbench header to start installing
+the local gateway's pinned build immediately. Each machine card contains its
+update controls, progress bar and installation output. Failed updates offer the
+same action for retry. Closing the browser leaves an accepted update running, and
+reopening the machine shows its status. Each machine accepts one update at a time.
 
 Expand **Update log** on a machine card to see the latest phase and installation
 output after navigation or a browser reload. The gateway retains the latest
