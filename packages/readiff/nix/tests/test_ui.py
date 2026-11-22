@@ -7152,7 +7152,7 @@ func greeting() string {
                 shows, self.lua(editor, "return vim.g.annotation_show_count")
             )
 
-    def test_harness_open_blocks_input_times_out_and_allows_retry(self):
+    def test_harness_open_elapsed_time_cancel_and_retry(self):
         binary = Path(self.directory.name, "bin")
         binary.mkdir()
         cli = binary / "amp"
@@ -7167,6 +7167,7 @@ func greeting() string {
         os.environ["PATH"] = str(binary) + os.pathsep + os.environ["PATH"]
         os.environ["HARNESS_TEST_LOG"] = str(log)
         editor = self.launch(self.root, file="auth.lua")
+        editor.vars["test_python"] = sys.executable
         self.lua(
             editor,
             """
@@ -7179,7 +7180,13 @@ func greeting() string {
                     return {}
                 elseif argv[1] == 'rediff-amp-live' and argv[2] == 'startup' then
                     table.insert(startup_results, callback)
-                    return {}
+                    if vim.g.slow_startup then
+                        local script = [[import time; time.sleep(11); print('{"action":"new"}')]]
+                        local process = system({vim.g.test_python, '-c', script}, opts, callback)
+                        vim.g.startup_pid = process.pid
+                        return process
+                    end
+                    return {kill = function() end}
                 end
                 return system(argv, opts, callback)
             end
@@ -7194,12 +7201,10 @@ func greeting() string {
         """,
         )
         original = editor.current.buffer[:]
-        # Neovim's clock includes system sleep on macOS, unlike Python's clock.
-        started = self.lua(editor, "return vim.uv.hrtime() / 1e9")
         self.keys(editor, ":Harness open<CR>")
         self.wait_for(editor, "loading_text() ~= nil")
         frame = self.lua(editor, "return loading_text()")
-        self.assertIn("timeout 10s", frame)
+        self.assertIn("0s elapsed · X cancel", frame)
         self.wait_for(
             editor, f"loading_text() ~= {json.dumps(frame, ensure_ascii=False)}"
         )
@@ -7210,13 +7215,17 @@ func greeting() string {
         self.assertEqual("n", editor.api.get_mode()["mode"])
         self.assertEqual(original, editor.current.buffer[:])
         self.assertFalse(self.lua(editor, "return vim.g.leaked ~= nil"))
-        self.wait_for(editor, "loading_text() == nil", timeout=12)
-        elapsed = self.lua(editor, "return vim.uv.hrtime() / 1e9") - started
-        self.assertGreaterEqual(elapsed, 9.8)
-        self.assertIn("timed out after 10 seconds", editor.vars["startup_notice"])
+        source_win = editor.current.window
+        editor.command("vsplit")
+        self.keys(editor, "X")
+        self.assertIsNotNone(self.lua(editor, "return loading_text()"))
+        editor.current.window = source_win
+        self.keys(editor, "X")
+        self.wait_for(editor, "loading_text() == nil")
         self.keys(editor, ":let g:unlocked=1<CR>")
         self.assertEqual(1, editor.vars["unlocked"])
-        # Release the old discovery before retrying: timeout alone must cancel it.
+        self.assertEqual(original, editor.current.buffer[:])
+        # A cancelled discovery can finish after input has resumed.
         self.lua(editor, "discovery_results[1]({code=0,stdout='[]'})")
         pump(editor)
         self.assertFalse(log.exists())
@@ -7232,24 +7241,35 @@ func greeting() string {
         self.wait_for(editor, "loading_text() == nil")
         self.assertIn("fixture startup failure", editor.vars["startup_notice"])
 
-        # Timeout must also reject a late successful startup decision.
+        # Cancellation also rejects a late successful startup decision.
         self.keys(editor, ":ho<CR>")
         self.lua(editor, "discovery_results[3]({code=0,stdout='[]'})")
         self.wait_for(editor, "#startup_results == 2")
-        self.wait_for(editor, "loading_text() == nil", timeout=12)
+        self.keys(editor, "X")
+        self.wait_for(editor, "loading_text() == nil")
+
+        editor.vars["slow_startup"] = True
+        self.keys(editor, ":ho<CR>")
+        self.lua(editor, "discovery_results[4]({code=0,stdout='[]'})")
+        self.wait_for(editor, "#startup_results == 3")
         self.lua(
             editor,
             "startup_results[2]({code=0,stdout=vim.json.encode({action='new'})})",
         )
         pump(editor)
         self.assertFalse(log.exists())
+        self.assertIsNotNone(self.lua(editor, "return loading_text()"))
+        self.keys(editor, "X")
+        self.wait_for(editor, "loading_text() == nil")
+        self.wait_for(editor, "vim.uv.kill(vim.g.startup_pid, 0) == nil")
 
         self.keys(editor, ":ho<CR>")
-        self.lua(editor, "discovery_results[4]({code=0,stdout='[]'})")
-        self.wait_for(editor, "#startup_results == 3")
-        self.lua(
+        self.lua(editor, "discovery_results[5]({code=0,stdout='[]'})")
+        self.wait_for(editor, "#startup_results == 4")
+        self.wait_for(
             editor,
-            "startup_results[3]({code=0,stdout=vim.json.encode({action='new'})})",
+            "(loading_text() or ''):find('10s elapsed', 1, true) ~= nil",
+            timeout=12,
         )
         self.wait_for(editor, "vim.bo.buftype == 'terminal' and loading_text() == nil")
         self.keys(editor, "hello<CR>")

@@ -52,32 +52,36 @@ local function show_opening(request)
 		zindex = 200,
 	})
 	-- Keep the source window focused for checkout/selection validity checks.
-	-- Discard input rather than queueing commands for the eventual terminal.
-	vim.on_key(function()
+	local source_win = api.nvim_get_current_win()
+	vim.on_key(function(_, typed)
 		-- Notifications after the picker can enter hit-enter/more prompts.
 		-- Their input must pass through: scheduled cleanup cannot run there.
 		if api.nvim_get_mode().mode:sub(1, 1) == "r" then
 			return
 		end
+		if typed == "X" and api.nvim_get_current_win() == source_win then
+			request.cancelled = true
+			vim.schedule(function()
+				if request.process then
+					request.process:kill(15)
+				end
+				finish_opening(request)
+			end)
+		end
 		return ""
 	end, opening_keys)
 	local frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
-	local started, frame = vim.uv.hrtime(), 0
+	local frame = 0
 	local timer = vim.uv.new_timer()
 	local function tick()
 		if opening ~= request or request.timer ~= timer then
 			return
 		end
-		if (vim.uv.hrtime() - started) / 1e6 >= 10000 then
-			request.cancelled = true
-			finish_opening(request)
-			vim.notify("Harness open timed out after 10 seconds. Try :Harness open again.", vim.log.levels.ERROR)
-			return
-		end
+		local elapsed = math.floor((vim.uv.hrtime() - request.started) / 1e9)
 		frame = frame % #frames + 1
 		api.nvim_buf_set_lines(buf, 0, -1, false, {
 			" " .. frames[frame] .. " Opening harness…",
-			" Input paused · timeout 10s",
+			string.format(" %ds elapsed · X cancel", elapsed),
 		})
 	end
 	request.timer = timer
@@ -86,7 +90,7 @@ local function show_opening(request)
 end
 
 local function choose_opening(request, items, opts, callback)
-	-- Human decisions are not loading time and must accept keyboard input.
+	-- Release input while the user chooses a harness.
 	hide_opening(request)
 	vim.ui.select(items, opts, function(choice)
 		if not choice then
@@ -888,6 +892,9 @@ function M.startup(root, explicit, request)
 	s.starting = epoch
 	local function finished(result)
 		vim.schedule(function()
+			if request then
+				request.process = nil
+			end
 			if s.starting == epoch then
 				s.starting = nil
 			end
@@ -896,11 +903,7 @@ function M.startup(root, explicit, request)
 				return
 			end
 			local ok, err = pcall(function()
-				assert(
-					result.code ~= 124,
-					request and "Harness open timed out after 10 seconds. Try :Harness open again."
-						or "Amp startup discovery timed out"
-				)
+				assert(result.code ~= 124, "Amp startup discovery timed out")
 				assert(result.code == 0, vim.trim(result.stderr or "Amp startup discovery failed"))
 				local decision = vim.json.decode(result.stdout)
 				if decision.action == "connect" then
@@ -960,14 +963,20 @@ function M.startup(root, explicit, request)
 			end
 		end)
 	end
-	local ok, err = pcall(vim.system, {
+	local opts = { text = true }
+	if not request then
+		opts.timeout = 30000
+	end
+	local ok, process = pcall(vim.system, {
 		"rediff-amp-live",
 		"startup",
 		root,
 		feedback.provider(s.target) == "amp" and s.target.session or "",
-	}, { text = true, timeout = request and 10000 or 30000 }, finished)
+	}, opts, finished)
 	if not ok then
-		finished({ code = 1, stderr = tostring(err) })
+		finished({ code = 1, stderr = tostring(process) })
+	elseif request then
+		request.process = process
 	end
 end
 
@@ -1232,7 +1241,7 @@ local function open_requested(root, key)
 	if opening then
 		return
 	end
-	local request = {}
+	local request = { started = vim.uv.hrtime() }
 	opening = request
 	local ok, err = pcall(function()
 		show_opening(request)

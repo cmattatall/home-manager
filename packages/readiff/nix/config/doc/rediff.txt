@@ -611,11 +611,12 @@ Offline or unsupported activity is shown as such, never inferred from an ACK.
 Aliases persist locally; connection subscriptions end when this editor exits.
 
 :harness open (alias :ho) opens the current worktree's harness.
-While loading, a spinner appears and keyboard input is discarded (not queued).
-Loading times out after ten seconds, restores input, and ignores late results;
-run :Harness open again to retry. Provider/session choices and resume confirmations
-remain interactive and do not count toward the loading timeout. Input resumes as
-soon as the terminal or activity panel opens; CLI login/startup happens there.
+While loading, a spinner shows the elapsed seconds. Press X with the source
+Neovim window focused to cancel and restore input. Other keys are discarded.
+Loading continues until it finishes, fails, or you cancel. Cancelled opens ignore
+late results. Run :Harness open again to retry. Provider/session choices and
+resume confirmations remain interactive. Input resumes when the terminal or
+activity panel opens. CLI login/startup happens there.
 A single connected/editor-owned harness opens directly. Multiple local candidates
 show a chooser even if one is already selected.
 Without a session or configured provider, it asks which harness to start and saves
