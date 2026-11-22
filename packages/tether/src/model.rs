@@ -265,6 +265,39 @@ pub struct ResponseSources {
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub enum Freshness {
+    Unchanged,
+    Moved,
+    Changed,
+    Removed,
+    Uncertain,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceAssessment {
+    pub annotation_id: String,
+    pub path: String,
+    pub observed_at: String,
+    pub baseline_id: Option<String>,
+    pub current_id: Option<String>,
+    pub freshness: Freshness,
+    pub file_changed: Option<bool>,
+    pub selection: Option<Selection>,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct AssessedSources {
+    pub assessment: SourceAssessment,
+    pub original: Option<Source>,
+    pub baseline: Option<Source>,
+    pub current: Option<Source>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct DiscussionEvent {
     pub id: String,
     pub annotation_id: String,
@@ -385,6 +418,9 @@ pub fn typescript() -> String {
         DiscussionActor::decl(),
         ResponseEvidence::decl(),
         ResponseSources::decl(),
+        Freshness::decl(),
+        SourceAssessment::decl(),
+        AssessedSources::decl(),
         DiscussionEvent::decl(),
         Discussion::decl(),
         AgentResponseInput::decl(),

@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
-import * as monaco from "monaco-editor/editor/editor.api";
 import { api } from "./api";
+import { SourceDiff } from "./SourceDiff";
+import { SourceInspection } from "./SourceFreshness";
 import type {
   Annotation,
   Discussion,
@@ -96,6 +97,12 @@ export function DiscussionPanel({
             </Dialog.Description>
             <p className={styles.message}>{annotation.input.text}</p>
             <pre className={styles.excerpt}>{annotation.excerpt}</pre>
+            <SourceInspection
+              endpoint={endpoint}
+              annotationId={id}
+              path={annotation.input.path}
+              oldSide={annotation.input.review?.side === "before"}
+            />
             <section
               className={styles.discussion}
               aria-label="Annotation discussion"
@@ -286,8 +293,7 @@ function ResponseInspection({
     staleTime: Infinity,
   });
   return (
-    <details onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>Inspect captured changes</summary>
+    <>
       <label>
         Source evidence
         <select value={path} onChange={(event) => setPath(event.target.value)}>
@@ -298,70 +304,50 @@ function ResponseInspection({
           ))}
         </select>
       </label>
-      <p className={styles.hint}>
-        Snapshots captured with this response. Later edits remain outside this
-        evidence.
-      </p>
-      {annotation.input.review?.side === "before" &&
-        path === annotation.input.path && (
-          <p className={styles.hint}>
-            Original annotation targets the old side of its reviewed diff.
-          </p>
+      <SourceInspection
+        key={path}
+        endpoint={endpoint}
+        annotationId={annotation.input.id}
+        eventId={event.id}
+        path={path}
+      />
+      <details onToggle={(event) => setOpen(event.currentTarget.open)}>
+        <summary>Inspect captured changes</summary>
+        <p className={styles.hint}>
+          Snapshots captured with this response. Later edits remain outside this
+          evidence.
+        </p>
+        {annotation.input.review?.side === "before" &&
+          path === annotation.input.path && (
+            <p className={styles.hint}>
+              Original annotation targets the old side of its reviewed diff.
+            </p>
+          )}
+        {sources.isPending && <p role="status">Loading captured source…</p>}
+        {sources.error && <p role="alert">{sources.error.message}</p>}
+        {open && sources.data && (
+          <>
+            <div className={styles.sourceLabels}>
+              <span>
+                {sources.data.before
+                  ? `Annotated source · ${sources.data.before.id.slice(0, 8)}`
+                  : "Original snapshot unavailable for this path"}
+              </span>
+              <span>
+                {sources.data.after
+                  ? `Response source · ${sources.data.after.id.slice(0, 8)}`
+                  : "Absent when the agent responded"}
+              </span>
+            </div>
+            <SourceDiff
+              before={sources.data.before}
+              after={sources.data.after}
+              beforeLabel="Original annotated source"
+              afterLabel="Source captured with response"
+            />
+          </>
         )}
-      {sources.isPending && <p role="status">Loading captured source…</p>}
-      {sources.error && <p role="alert">{sources.error.message}</p>}
-      {open && sources.data && (
-        <>
-          <div className={styles.sourceLabels}>
-            <span>
-              {sources.data.before
-                ? `Annotated source · ${sources.data.before.id.slice(0, 8)}`
-                : "Original snapshot unavailable for this path"}
-            </span>
-            <span>
-              {sources.data.after
-                ? `Response source · ${sources.data.after.id.slice(0, 8)}`
-                : "Absent when the agent responded"}
-            </span>
-          </div>
-          <ResponseDiff sources={sources.data} />
-        </>
-      )}
-    </details>
+      </details>
+    </>
   );
-}
-
-function ResponseDiff({ sources }: { sources: ResponseSources }) {
-  const container = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const original = monaco.editor.createModel(
-      sources.before?.text ?? "",
-      "plaintext",
-    );
-    const modified = monaco.editor.createModel(
-      sources.after?.text ?? "",
-      "plaintext",
-    );
-    const editor = monaco.editor.createDiffEditor(container.current!, {
-      theme: "tether",
-      readOnly: true,
-      domReadOnly: true,
-      originalEditable: false,
-      automaticLayout: true,
-      renderSideBySide: false,
-      minimap: { enabled: false },
-      scrollBeyondLastLine: false,
-      fontSize: 12,
-      wordWrap: "on",
-      originalAriaLabel: "Original annotated source",
-      modifiedAriaLabel: "Source captured with response",
-    });
-    editor.setModel({ original, modified });
-    return () => {
-      editor.dispose();
-      original.dispose();
-      modified.dispose();
-    };
-  }, [sources]);
-  return <div ref={container} className={styles.sourceDiff} />;
 }

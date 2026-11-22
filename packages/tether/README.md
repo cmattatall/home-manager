@@ -141,8 +141,37 @@ command require a new submission.
 
 Resolution uses the authenticated browser API. The response command exposes the
 Addressed operation. The execution account remains trusted and owns Tether's
-private state and local control sockets. Automatic source-freshness assessment
-and physical history expiry cleanup remain planned.
+private state and local control sockets. Physical history expiry cleanup remains
+planned.
+
+### Check changes since review
+
+Annotations show **Source unchanged**, **Moved**, **Source changed**,
+**Source removed**, **Location uncertain**, or **Freshness unknown**. The source
+freshness filter narrows the annotation list. An unchanged selection can show
+**File changed elsewhere**. A unique text match with preserved line context supplies
+a shifted location. The annotation follows that location when you open the matching
+source version. Repeated text and changed relocation context remain uncertain after
+edits. Rename tracking remains planned.
+
+In **Responses and review**, open **Inspect changes since annotation** or
+**Inspect changes since response** to compare saved evidence with an observed
+worktree version. Both sides show their version IDs. Each response's **Source
+evidence** selector chooses the file to inspect. **Changed since response** flags
+later edits while the captured response remains available under **Inspect captured
+changes**. Freshness checks preserve the discussion's disposition.
+
+Old-side annotations compare the whole reviewed new-side file with the current
+worktree. **Inspect original reviewed change** shows the original old and new
+sides, including a deletion already present when you annotated it. Response
+freshness also measures whole-file content.
+
+The execution machine checks saved source every five seconds while its review
+view is open. **Check source now** requests an immediate observation. Labels show
+their observation time. Connection failures show **Freshness unknown** with the
+previous observation retained. Reconnecting requests a new assessment. An edit
+between assessment and comparison retrieval requires another check. Source
+changes between polls become visible at the next observation.
 
 ## Connect an SSH machine
 

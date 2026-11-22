@@ -34,7 +34,7 @@ pub(crate) fn status(connection: &Connection, annotation_id: &str) -> Result<Dis
     })
 }
 
-fn annotation(connection: &Connection, id: &str) -> Result<Annotation> {
+pub(crate) fn annotation(connection: &Connection, id: &str) -> Result<Annotation> {
     let payload: String = connection
         .query_row(
             "SELECT payload FROM annotations WHERE id=?1 AND expires>?2",
@@ -239,7 +239,7 @@ impl Store {
         Ok(event)
     }
 
-    fn captured_source(&self, path: &str, id: &str) -> Result<Source> {
+    pub(crate) fn captured_source(&self, path: &str, id: &str) -> Result<Source> {
         let text = fs::read_to_string(self.directory.join("sources").join(id))?;
         Ok(Source {
             id: id.into(),

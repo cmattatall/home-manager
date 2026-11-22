@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { DiscussionPanel } from "./DiscussionPanel";
+import { FreshnessLabel, useAssessments } from "./SourceFreshness";
 import type {
   AmpSession,
   Annotation,
@@ -25,6 +26,8 @@ export function FeedbackPanel({
   const [selected, setSelected] = useState<string[]>([]);
   const [previewId, setPreviewId] = useState("");
   const [filter, setFilter] = useState("all");
+  const [freshnessFilter, setFreshnessFilter] = useState("all");
+  const assessments = useAssessments(endpoint);
   const [discussionId, setDiscussionId] = useState("");
   const discussions = useQuery({
     queryKey: [endpoint, "discussions"],
@@ -141,11 +144,34 @@ export function FeedbackPanel({
         <option value="resolved">Resolved</option>
         <option value="dismissed">Dismissed</option>
       </select>
+      <label htmlFor="freshness-filter">Source freshness</label>
+      <select
+        id="freshness-filter"
+        value={freshnessFilter}
+        onChange={(event) => setFreshnessFilter(event.target.value)}
+      >
+        <option value="all">All source states</option>
+        <option value="unchanged">Source unchanged</option>
+        <option value="moved">Moved</option>
+        <option value="changed">Source changed</option>
+        <option value="removed">Source removed</option>
+        <option value="uncertain">Location uncertain</option>
+        <option value="unknown">Freshness unknown</option>
+      </select>
       {annotations.map((annotation) => {
         const discussion = discussions.data?.find(
           (item) => item.annotationId === annotation.input.id,
         );
         if (filter !== "all" && discussion?.disposition !== filter) return null;
+        const assessment = assessments.data?.find(
+          (item) => item.annotationId === annotation.input.id,
+        );
+        const freshness =
+          assessments.isError || assessments.isPaused
+            ? "unknown"
+            : (assessment?.freshness ?? "unknown");
+        if (freshnessFilter !== "all" && freshness !== freshnessFilter)
+          return null;
         return (
           <article key={annotation.input.id} className={styles.note}>
             <label className={feedbackStyles.selection}>
@@ -175,6 +201,11 @@ export function FeedbackPanel({
             >
               {discussion?.disposition ?? "Checking review status…"}
             </p>
+            <FreshnessLabel
+              assessment={assessment}
+              checking={assessments.isFetching}
+              failed={assessments.isError || assessments.isPaused}
+            />
             <button
               aria-expanded={discussionId === annotation.input.id}
               onClick={() =>

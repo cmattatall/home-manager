@@ -128,8 +128,19 @@
   line-height: 1.5;
 }
 
+.freshness {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.freshness small {
+  color: var(--muted);
+}
+
 .sourceDiff {
-  height: 280px;
   min-width: 0;
   border: 1px solid var(--line);
 }

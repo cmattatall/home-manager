@@ -399,6 +399,8 @@ export function GoExplorer({
       />
       {activeEditor && activeSource && (
         <InlineAnnotations
+          endpoint={endpoint}
+          path={activeSource.path}
           editor={activeEditor}
           sourceId={activeSource.id}
           annotations={savedAnnotations}

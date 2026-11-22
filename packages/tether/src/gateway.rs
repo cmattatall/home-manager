@@ -568,6 +568,8 @@ async fn read_worktree(
         "discussions",
         "discussion",
         "responseSources",
+        "assessments",
+        "assessSource",
     ]
     .contains(&route.operation.as_str())
     {

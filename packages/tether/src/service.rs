@@ -272,6 +272,9 @@ impl Store {
                 Ok(json!({"enabled": true}))
             }
             "saveAnnotation" => Ok(json!(self.save(serde_json::from_value(request.params)?)?)),
+            "assessments" | "assessSource" => {
+                self.freshness_request(&request.method, request.params)
+            }
             "discussions" | "discussion" | "respond" | "resolveDiscussion" | "responseSources" => {
                 self.discussion_request(&request.method, request.params)
             }

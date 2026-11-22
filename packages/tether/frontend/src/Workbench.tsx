@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  onlineManager,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useNavigate, useLocation } from "react-router";
 import type {
   Annotation,
@@ -382,6 +387,30 @@ function Review({
     draft?.comparison ?? explorationComparison ?? activeComparison;
 
   useEffect(() => {
+    const queryKey = [endpoint, "freshness"];
+    void client
+      .cancelQueries({ queryKey })
+      .then(() => client.invalidateQueries({ queryKey }));
+  }, [
+    client,
+    endpoint,
+    source.data?.id,
+    comparison.data?.id,
+    annotations.data,
+  ]);
+
+  useEffect(
+    () =>
+      onlineManager.subscribe((online) => {
+        const queryKey = [endpoint, "freshness"];
+        void client.cancelQueries({ queryKey }).then(() => {
+          if (online) return client.invalidateQueries({ queryKey });
+        });
+      }),
+    [client, endpoint],
+  );
+
+  useEffect(() => {
     mounted.current = true;
     void recoveryDrafts(owner, worktree.id, machineId)
       .then((drafts) => {
@@ -625,6 +654,9 @@ function Review({
           <button
             onClick={() => {
               setSelection(null);
+              void client.invalidateQueries({
+                queryKey: [endpoint, "freshness"],
+              });
               if (scope === "source") {
                 void client.invalidateQueries({
                   queryKey: [endpoint, "sourceDirectory"],

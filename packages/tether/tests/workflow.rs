@@ -603,6 +603,13 @@ async fn review_responses_survive_retries_and_require_human_resolution(
         response["id"].as_str().unwrap()
     );
     let sources = fixture.read(&sources_path).await;
+    let assessment_path = format!(
+        "{endpoint}/assessSource?id={annotation_id}&eventId={}&path=hello.go",
+        response["id"].as_str().unwrap()
+    );
+    let response_assessment = fixture.read(&assessment_path).await;
+    assert_eq!(response_assessment["freshness"], "unchanged");
+    assert_eq!(response_assessment["baselineId"], sources["after"]["id"]);
     assert_eq!(
         sources["before"]["text"],
         "package example\nvar Timeout = 10\n"
@@ -616,6 +623,29 @@ async fn review_responses_survive_retries_and_require_human_resolution(
         "package example\nvar Timeout = 2000\n",
     )
     .unwrap();
+    let changed = fixture
+        .read(&format!("{assessment_path}&sources=true"))
+        .await;
+    assert_eq!(changed["assessment"]["freshness"], "changed");
+    assert_eq!(changed["baseline"], sources["after"]);
+    assert_eq!(
+        changed["current"]["text"],
+        "package example\nvar Timeout = 2000\n"
+    );
+    assert_eq!(
+        fixture.read(&detail_path).await["status"]["disposition"],
+        "addressed"
+    );
+    assert_eq!(
+        fixture
+            .get(&format!(
+                "{assessment_path}&sources=true&expectedCurrentId={}",
+                response_assessment["currentId"].as_str().unwrap()
+            ))
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
     let retry = submit_response(fixture, id, &response);
     assert_eq!(
         serde_json::from_slice::<Value>(&retry.stdout).unwrap(),
@@ -1858,6 +1888,188 @@ fn git(directory: &Path, arguments: &[&str]) {
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+async fn source_freshness_tracks_selections_and_preserves_review_evidence() {
+    let mut fixture = Fixture::new();
+    fixture.login(&fixture.ticket()).await;
+    let original = "package example\nvar Timeout = 10\n";
+    let (id, root) = fixture.worktree("freshness", original).await;
+    let endpoint = format!("machines/local/worktrees/{id}");
+    let source = fixture
+        .read(&format!("{endpoint}/source?path=hello.go"))
+        .await;
+    let annotation_id = uuid::Uuid::new_v4().to_string();
+    let selection =
+        json!({"startLineNumber": 2, "startColumn": 5, "endLineNumber": 2, "endColumn": 17});
+    let input = json!({
+        "id": annotation_id, "sourceId": source["id"], "path": "hello.go",
+        "selection": selection, "text": "Check this timeout",
+    });
+    let saved: Value = fixture
+        .post(&format!("{endpoint}/annotations"), &input)
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(saved["excerpt"], "Timeout = 10");
+    let assess_path = format!("{endpoint}/assessSource?id={annotation_id}");
+    let initial = fixture.read(&assess_path).await;
+    assert_eq!(initial["freshness"], "unchanged");
+    assert_eq!(initial["fileChanged"], false);
+    assert_eq!(initial["selection"], selection);
+    for (text, expected, line) in [
+        (
+            "package example\nvar Timeout = 10 // seconds\n",
+            "unchanged",
+            Some(2),
+        ),
+        (
+            "// header\npackage example\nvar Timeout = 10\n",
+            "moved",
+            Some(3),
+        ),
+        ("package example\nvar Timeout = 99\n", "changed", None),
+        (
+            "package example\nvar Timeout = 10\n// Timeout = 10\n",
+            "uncertain",
+            None,
+        ),
+        (
+            "package example\n// header\n// Timeout = 10\n",
+            "uncertain",
+            None,
+        ),
+        ("package example\n", "removed", None),
+    ] {
+        fs::write(root.join("hello.go"), text).unwrap();
+        let observed = fixture.read(&assess_path).await;
+        assert_eq!(observed["freshness"], expected, "{text}");
+        assert_eq!(observed["fileChanged"], true);
+        assert_eq!(observed["baselineId"], source["id"]);
+        match line {
+            Some(line) => assert_eq!(observed["selection"]["startLineNumber"], line),
+            None => assert!(observed["selection"].is_null()),
+        }
+        assert_eq!(
+            fixture
+                .read(&format!("{endpoint}/discussion?id={annotation_id}"))
+                .await["status"]["disposition"],
+            "open"
+        );
+    }
+    fs::remove_file(root.join("hello.go")).unwrap();
+    let removed = fixture.read(&format!("{assess_path}&sources=true")).await;
+    assert_eq!(removed["assessment"]["freshness"], "removed");
+    assert!(removed["current"].is_null());
+    assert_eq!(removed["original"]["text"], original);
+    std::os::unix::fs::symlink("/etc/hosts", root.join("hello.go")).unwrap();
+    let unknown = fixture.read(&assess_path).await;
+    assert_eq!(unknown["freshness"], "unknown");
+    assert!(unknown["fileChanged"].is_null());
+    fs::remove_file(root.join("hello.go")).unwrap();
+    fs::write(root.join("hello.go"), original).unwrap();
+    fixture.restart_gateway();
+    let reverted = fixture.read(&assess_path).await;
+    assert_eq!(reverted["freshness"], "unchanged");
+    assert_eq!(reverted["fileChanged"], false);
+    assert_eq!(
+        fixture.read(&format!("{endpoint}/annotations")).await,
+        json!([saved])
+    );
+    for (revision, disposition) in [(0, "resolved"), (1, "dismissed"), (2, "open")] {
+        let action = json!({"id": uuid::Uuid::new_v4().to_string(), "annotationId": annotation_id,
+            "expectedRevision": revision, "disposition": disposition, "text": "Reviewed"});
+        assert_eq!(
+            fixture
+                .post(&format!("{endpoint}/resolveDiscussion"), &action)
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        fs::write(root.join("hello.go"), "package example\nvar Timeout = 20\n").unwrap();
+        assert_eq!(
+            fixture.read(&format!("{endpoint}/assessments")).await[0]["freshness"],
+            "changed"
+        );
+        assert_eq!(
+            fixture
+                .read(&format!("{endpoint}/discussion?id={annotation_id}"))
+                .await["status"]["disposition"],
+            disposition
+        );
+    }
+
+    fs::write(root.join("hello.go"), original).unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-qm", "baseline"]);
+    fs::remove_file(root.join("hello.go")).unwrap();
+    let comparison = fixture
+        .read(&format!(
+            "{endpoint}/comparison?scope=uncommitted&path=hello.go"
+        ))
+        .await;
+    let deleted_id = uuid::Uuid::new_v4().to_string();
+    let mut deletion = input.clone();
+    deletion["id"] = json!(deleted_id);
+    deletion["review"] = json!({"comparisonId": comparison["id"], "side": "before"});
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/annotations"), &deletion)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let deleted_path = format!("{endpoint}/assessSource?id={deleted_id}&sources=true");
+    let unchanged_deletion = fixture.read(&deleted_path).await;
+    assert_eq!(unchanged_deletion["assessment"]["freshness"], "unchanged");
+    assert!(unchanged_deletion["baseline"].is_null());
+    assert_eq!(unchanged_deletion["original"]["text"], original);
+    fs::write(root.join("hello.go"), original).unwrap();
+    assert_eq!(
+        fixture.read(&deleted_path).await["assessment"]["freshness"],
+        "changed"
+    );
+
+    let unicode = "\u{feff}heading\r\nα😀 target\r\nend\r\n";
+    fs::write(root.join("unicode.txt"), unicode).unwrap();
+    let unicode_source = fixture
+        .read(&format!("{endpoint}/source?path=unicode.txt"))
+        .await;
+    let unicode_id = uuid::Uuid::new_v4().to_string();
+    let unicode_input = json!({
+        "id": unicode_id, "sourceId": unicode_source["id"], "path": "unicode.txt",
+        "selection": {"startLineNumber": 2, "startColumn": 2, "endLineNumber": 2, "endColumn": 11},
+        "text": "Preserve Unicode coordinates",
+    });
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/annotations"), &unicode_input)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    fs::write(
+        root.join("unicode.txt"),
+        "header\nheading\nα😀 target\nend\n",
+    )
+    .unwrap();
+    let moved = fixture
+        .read(&format!("{endpoint}/assessSource?id={unicode_id}"))
+        .await;
+    assert_eq!(moved["freshness"], "moved");
+    assert_eq!(
+        moved["selection"],
+        json!({"startLineNumber": 3, "startColumn": 2, "endLineNumber": 3, "endColumn": 11})
+    );
+    assert_eq!(
+        fixture
+            .get(&format!("{assess_path}&path=unicode.txt"))
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
     );
 }
 

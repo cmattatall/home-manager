@@ -8,6 +8,7 @@ import type {
   Selection,
 } from "./protocol";
 import { lastSelectedLine } from "./annotationControls";
+import { FreshnessLabel, useAssessments } from "./SourceFreshness";
 import styles from "./Workbench.module.css";
 
 export interface InlineDraft {
@@ -16,20 +17,26 @@ export interface InlineDraft {
 }
 
 export function InlineAnnotations({
+  endpoint,
+  path,
   editor,
   sourceId,
   review,
   annotations,
   draft,
 }: {
+  endpoint: string;
+  path: string;
   editor: monaco.editor.IStandaloneCodeEditor;
   sourceId: string;
   review?: ReviewAnchor;
   annotations: Annotation[];
   draft?: InlineDraft;
 }) {
+  const assessments = useAssessments(endpoint);
   function matches(input: AnnotationInput) {
     return (
+      input.path === path &&
       input.sourceId === sourceId &&
       input.review?.comparisonId === review?.comparisonId &&
       input.review?.side === review?.side
@@ -38,31 +45,39 @@ export function InlineAnnotations({
 
   return (
     <>
-      {annotations
-        .filter((note) => matches(note.input))
-        .map((note) => {
-          const endLine = lastSelectedLine(note.input.selection);
-          return (
-            <InlineZone
-              key={note.input.id}
-              editor={editor}
-              selection={note.input.selection}
+      {annotations.map((note) => {
+        if (note.input.path !== path) return null;
+        const assessment = assessments.data?.find(
+          (item) => item.annotationId === note.input.id,
+        );
+        const mapped =
+          assessment?.currentId === sourceId && review?.side !== "before"
+            ? assessment.selection
+            : null;
+        const selection = matches(note.input) ? note.input.selection : mapped;
+        if (!selection) return null;
+        const endLine = lastSelectedLine(selection);
+        return (
+          <InlineZone key={note.input.id} editor={editor} selection={selection}>
+            <article
+              className={styles.inlineNote}
+              tabIndex={0}
+              aria-label={`Annotation on line ${selection.startLineNumber}`}
             >
-              <article
-                className={styles.inlineNote}
-                tabIndex={0}
-                aria-label={`Annotation on line ${note.input.selection.startLineNumber}`}
-              >
-                <strong>
-                  Annotation · L{note.input.selection.startLineNumber}
-                  {endLine > note.input.selection.startLineNumber &&
-                    `–L${endLine}`}
-                </strong>
-                <p>{note.input.text}</p>
-              </article>
-            </InlineZone>
-          );
-        })}
+              <strong>
+                Annotation · L{selection.startLineNumber}
+                {endLine > selection.startLineNumber && `–L${endLine}`}
+              </strong>
+              <p>{note.input.text}</p>
+              <FreshnessLabel
+                assessment={assessment}
+                checking={assessments.isFetching}
+                failed={assessments.isError || assessments.isPaused}
+              />
+            </article>
+          </InlineZone>
+        );
+      })}
       {draft && matches(draft.input) && (
         <InlineZone
           key={draft.input.id}

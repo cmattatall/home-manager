@@ -232,6 +232,7 @@ export function SourceViewer({
         {(comparison || source) && (
           <SourceEditor
             key={comparison?.id ?? source?.id}
+            endpoint={endpoint}
             focusEditor={focusReview}
             worktree={worktree}
             source={source}
@@ -261,6 +262,7 @@ export function SourceViewer({
 }
 
 function SourceEditor({
+  endpoint,
   focusEditor,
   worktree,
   source,
@@ -271,6 +273,7 @@ function SourceEditor({
   onSelection,
   onAnnotate,
 }: SourceViewerProps & {
+  endpoint: string;
   hunk: number;
   focusEditor: RefObject<() => void>;
 }) {
@@ -458,6 +461,8 @@ function SourceEditor({
           captured && (
             <InlineAnnotations
               key={index}
+              endpoint={endpoint}
+              path={captured.path}
               editor={editor}
               sourceId={captured.id}
               review={
