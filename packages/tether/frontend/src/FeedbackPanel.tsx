@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
+import { DiscussionPanel } from "./DiscussionPanel";
 import type {
   AmpSession,
   Annotation,
+  DiscussionStatus,
   Feedback,
   FeedbackInput,
   FeedbackPreview,
@@ -22,6 +24,13 @@ export function FeedbackPanel({
   const [sessionId, setSessionId] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [previewId, setPreviewId] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [discussionId, setDiscussionId] = useState("");
+  const discussions = useQuery({
+    queryKey: [endpoint, "discussions"],
+    queryFn: () => api<DiscussionStatus[]>(`${endpoint}/discussions`),
+    refetchInterval: 5000,
+  });
   const sessions = useQuery({
     queryKey: [endpoint, "ampSessions"],
     queryFn: () => api<AmpSession[]>(`${endpoint}/ampSessions`),
@@ -72,11 +81,15 @@ export function FeedbackPanel({
     send.error ??
     preview.error ??
     history.error ??
+    discussions.error ??
     sessions.error;
   const active =
     history.data?.find((item) => item.input.id === previewId) ??
     preview.data?.feedback;
   const busy = prepare.isPending || send.isPending;
+  const activeAnnotation = annotations.find(
+    (annotation) => annotation.input.id === discussionId,
+  );
 
   return (
     <section className={feedbackStyles.panel} aria-label="Amp feedback">
@@ -111,30 +124,82 @@ export function FeedbackPanel({
         Select up to 20 annotations. Sending queues a steering message and can
         start agent work.
       </p>
-      {annotations.map((annotation) => (
-        <article key={annotation.input.id} className={styles.note}>
-          <label className={feedbackStyles.selection}>
-            <input
-              type="checkbox"
-              checked={selected.includes(annotation.input.id)}
-              disabled={busy || !!previewId}
-              onChange={(event) =>
-                setSelected((current) =>
-                  event.target.checked
-                    ? [...current, annotation.input.id]
-                    : current.filter((id) => id !== annotation.input.id),
+      <label htmlFor="discussion-filter">Review status</label>
+      <select
+        id="discussion-filter"
+        value={filter}
+        onChange={(event) => setFilter(event.target.value)}
+      >
+        <option value="all">All annotations</option>
+        <option value="open">Open</option>
+        <option value="addressed">
+          Ready for your review (
+          {discussions.data?.filter((item) => item.disposition === "addressed")
+            .length ?? 0}
+          )
+        </option>
+        <option value="resolved">Resolved</option>
+        <option value="dismissed">Dismissed</option>
+      </select>
+      {annotations.map((annotation) => {
+        const discussion = discussions.data?.find(
+          (item) => item.annotationId === annotation.input.id,
+        );
+        if (filter !== "all" && discussion?.disposition !== filter) return null;
+        return (
+          <article key={annotation.input.id} className={styles.note}>
+            <label className={feedbackStyles.selection}>
+              <input
+                type="checkbox"
+                checked={selected.includes(annotation.input.id)}
+                disabled={busy || !!previewId}
+                onChange={(event) =>
+                  setSelected((current) =>
+                    event.target.checked
+                      ? [...current, annotation.input.id]
+                      : current.filter((id) => id !== annotation.input.id),
+                  )
+                }
+              />
+              {annotation.input.path}:
+              {annotation.input.selection.startLineNumber}
+            </label>
+            <p>{annotation.input.text}</p>
+            <pre>{annotation.excerpt}</pre>
+            <small>
+              Original source retained · {annotation.input.sourceId.slice(0, 8)}
+            </small>
+            <p
+              className={feedbackStyles.disposition}
+              data-state={discussion?.disposition}
+            >
+              {discussion?.disposition ?? "Checking review status…"}
+            </p>
+            <button
+              aria-expanded={discussionId === annotation.input.id}
+              onClick={() =>
+                setDiscussionId((current) =>
+                  current === annotation.input.id ? "" : annotation.input.id,
                 )
               }
-            />
-            {annotation.input.path}:{annotation.input.selection.startLineNumber}
-          </label>
-          <p>{annotation.input.text}</p>
-          <pre>{annotation.excerpt}</pre>
-          <small>
-            Original source retained · {annotation.input.sourceId.slice(0, 8)}
-          </small>
-        </article>
-      ))}
+            >
+              Responses and review
+            </button>
+          </article>
+        );
+      })}
+      {activeAnnotation && (
+        <DiscussionPanel
+          key={discussionId}
+          endpoint={endpoint}
+          annotation={activeAnnotation}
+          latestRevision={
+            discussions.data?.find((item) => item.annotationId === discussionId)
+              ?.revision
+          }
+          onClose={() => setDiscussionId("")}
+        />
+      )}
       {!previewId && (
         <button
           className={styles.primary}
@@ -213,8 +278,8 @@ export function FeedbackPanel({
         <div className={feedbackStyles.history}>
           <h4>Delivery history</h4>
           <p className={styles.hint}>
-            Confirmation records transcript visibility. Agent responses remain
-            in Amp.
+            Confirmation records transcript visibility. Addressed responses
+            appear with their annotations under Responses and review.
           </p>
           {history.data.map((item) => (
             <article key={item.input.id}>

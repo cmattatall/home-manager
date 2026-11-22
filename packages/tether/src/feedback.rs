@@ -6,7 +6,7 @@ use rusqlite::{OptionalExtension, params};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     fs,
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
@@ -43,6 +43,7 @@ pub(crate) struct Delivery {
     directory: PathBuf,
     worktree: Worktree,
     client: Client,
+    response_command: String,
 }
 
 fn private(path: &Path, directory: bool) -> Result<()> {
@@ -99,13 +100,34 @@ fn load(path: &Path, worktree: &Worktree) -> Result<Connection> {
 }
 
 impl Delivery {
-    pub(crate) fn new(directory: PathBuf, worktree: Worktree) -> Result<Self> {
+    pub(crate) fn new(
+        directory: PathBuf,
+        worktree: Worktree,
+        state_directory: &Path,
+    ) -> Result<Self> {
         state::database(&directory.join("review.sqlite"))?.execute_batch(
-            "CREATE TABLE IF NOT EXISTS feedback (id TEXT PRIMARY KEY, payload TEXT NOT NULL);",
+            "CREATE TABLE IF NOT EXISTS feedback (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS response_authorizations (feedback_id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, revisions TEXT NOT NULL);",
         )?;
+        // The packaged launcher supplies tools needed by a newly started service.
+        let executable = std::env::current_exe()?.with_file_name("tether");
+        let response_command = shlex::try_join([
+            executable
+                .to_str()
+                .context("Executable path must be UTF-8")?,
+            "--state-dir",
+            state_directory
+                .to_str()
+                .context("State path must be UTF-8")?,
+            "respond",
+            "--worktree",
+            &worktree.id,
+            "--input",
+        ])?;
         Ok(Self {
             directory,
             worktree,
+            response_command,
             client: Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
@@ -238,6 +260,7 @@ impl Delivery {
         let transaction =
             database.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let mut evidence = Vec::new();
+        let mut revisions = BTreeMap::new();
         for id in &input.annotation_ids {
             let payload: String = transaction
                 .query_row(
@@ -247,6 +270,15 @@ impl Delivery {
                 )
                 .context("Selected annotation is unavailable in this worktree")?;
             let annotation: Annotation = serde_json::from_str(&payload)?;
+            let discussion = crate::discussion::status(&transaction, id)?;
+            let mut history_query = transaction.prepare(
+                "SELECT payload FROM discussion_events WHERE annotation_id=?1 ORDER BY sequence DESC LIMIT 10",
+            )?;
+            let rows = history_query.query_map([id], |row| row.get::<_, String>(0))?;
+            let recent_activity = rows
+                .map(|row| Ok(serde_json::from_str::<Value>(&row?)?))
+                .collect::<Result<Vec<_>>>()?;
+            revisions.insert(id.clone(), discussion.revision);
             let source = fs::read_to_string(
                 self.directory
                     .join("sources")
@@ -263,13 +295,37 @@ impl Delivery {
                 Value::Null
             };
             evidence.push(
-                json!({"annotation": annotation, "source": source, "comparison": comparison}),
+                json!({"annotation": annotation, "discussion": discussion, "recentActivity": recent_activity, "source": source, "comparison": comparison}),
             );
         }
+        let response_token = state::secret();
+        let response_template = json!({
+            "id": "Generate a UUID for this response and keep it for retries",
+            "feedbackId": input.id,
+            "annotationId": "Copy the annotation input.id being answered",
+            "token": response_token,
+            "text": "Explain the fix or answer and the verification performed",
+            "paths": [],
+        });
         let content = format!(
-            "Tether review feedback {}\nWorktree: {}\n\nApply the selected review feedback. The JSON contains the original captured source and review context. Check the current source before editing and explain how you addressed each annotation.\n\n{}",
+            concat!(
+                "Tether review feedback {}\nWorktree: {}\n\n",
+                "Apply the selected review feedback. Check current source before editing. ",
+                "Each annotation includes its latest ten review events, newest first. Address follow-up notes in that history. ",
+                "For each annotation you address, write a private JSON response file using the template below ",
+                "and run the response command on this execution machine. ",
+                "Include up to seven additional worktree-relative source paths that explain the change. ",
+                "Tether captures the annotated file automatically and retains the source observed when you respond. ",
+                "Questions may be addressed with an explanation alone. Human review completes resolution.\n\n",
+                "Response command: {} /absolute/path/to/response.json\nResponse input:\n{}\n",
+                "Keep the exact input and operation ID when retrying an interrupted response. ",
+                "An applied:false result records a reply to an earlier review revision. ",
+                "Preserve it and wait for the current request. Remove the private response file after a confirmed result.\n\n{}"
+            ),
             input.id,
             self.worktree.path,
+            self.response_command,
+            serde_json::to_string_pretty(&response_template)?,
             serde_json::to_string_pretty(&evidence)?
         );
         ensure!(
@@ -289,6 +345,14 @@ impl Delivery {
         transaction.execute(
             "INSERT OR IGNORE INTO feedback VALUES (?1, ?2)",
             params![preview.feedback.input.id, serde_json::to_string(&preview)?],
+        )?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO response_authorizations VALUES (?1, ?2, ?3)",
+            params![
+                preview.feedback.input.id,
+                state::digest(response_token.as_bytes()),
+                serde_json::to_string(&revisions)?
+            ],
         )?;
         transaction.commit()?;
         let saved = self

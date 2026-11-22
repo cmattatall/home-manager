@@ -505,7 +505,321 @@ async fn feedback_retains_evidence_and_retries_only_the_original_amp_connection(
             .await["content"],
         preview["content"]
     );
+    descriptor["token"] = json!("fixture-token");
+    fs::write(&descriptor_path, serde_json::to_vec(&descriptor).unwrap()).unwrap();
+    response_status.store(204, Ordering::SeqCst);
+    review_responses_survive_retries_and_require_human_resolution(
+        &mut fixture,
+        &id,
+        &other_id,
+        &root,
+        &preview,
+    )
+    .await;
     server.abort();
+}
+
+fn submit_response(fixture: &Fixture, worktree: &str, input: &Value) -> std::process::Output {
+    let mut file = tempfile::NamedTempFile::new_in(fixture._directory.path()).unwrap();
+    serde_json::to_writer(&mut file, input).unwrap();
+    Command::new(env!("CARGO_BIN_EXE_tether"))
+        .arg("--state-dir")
+        .arg(&fixture.state)
+        .arg("respond")
+        .arg("--worktree")
+        .arg(worktree)
+        .arg("--input")
+        .arg(file.path())
+        .output()
+        .unwrap()
+}
+
+fn response_input(preview: &Value, annotation: &str) -> Value {
+    let template = preview["content"]
+        .as_str()
+        .unwrap()
+        .split("Response input:\n")
+        .nth(1)
+        .unwrap()
+        .split("\nKeep the exact input")
+        .next()
+        .unwrap();
+    let mut input: Value = serde_json::from_str(template).unwrap();
+    input["id"] = json!(uuid::Uuid::new_v4().to_string());
+    input["annotationId"] = json!(annotation);
+    input["text"] =
+        json!("Made the timeout configurable. Verified the supplied default and override.");
+    input
+}
+
+async fn review_responses_survive_retries_and_require_human_resolution(
+    fixture: &mut Fixture,
+    id: &str,
+    other_id: &str,
+    root: &Path,
+    preview: &Value,
+) {
+    let endpoint = format!("machines/local/worktrees/{id}");
+    let annotation_id = preview["feedback"]["input"]["annotationIds"][0]
+        .as_str()
+        .unwrap();
+    let detail_path = format!("{endpoint}/discussion?id={annotation_id}");
+    assert_eq!(
+        fixture.read(&detail_path).await["status"]["disposition"],
+        "open"
+    );
+    let response = response_input(preview, annotation_id);
+    let mut invalid = response.clone();
+    invalid["token"] = json!("incorrect-token");
+    assert!(!submit_response(fixture, id, &invalid).status.success());
+    assert!(
+        !submit_response(fixture, other_id, &response)
+            .status
+            .success()
+    );
+    invalid = response.clone();
+    invalid["disposition"] = json!("resolved");
+    assert!(!submit_response(fixture, id, &invalid).status.success());
+    invalid = response.clone();
+    invalid["annotationId"] = json!(uuid::Uuid::new_v4().to_string());
+    assert!(!submit_response(fixture, id, &invalid).status.success());
+    invalid = response.clone();
+    invalid["paths"] = json!(["../missing-source"]);
+    assert!(!submit_response(fixture, id, &invalid).status.success());
+
+    let output = submit_response(fixture, id, &response);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let addressed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(addressed["disposition"], "addressed");
+    assert_eq!(addressed["actor"]["thread"], "T-test-review");
+    assert_eq!(addressed["applied"], true);
+    assert_eq!(fixture.read(&detail_path).await["status"]["revision"], 1);
+    let sources_path = format!(
+        "{endpoint}/responseSources?id={annotation_id}&eventId={}&path=hello.go",
+        response["id"].as_str().unwrap()
+    );
+    let sources = fixture.read(&sources_path).await;
+    assert_eq!(
+        sources["before"]["text"],
+        "package example\nvar Timeout = 10\n"
+    );
+    assert_eq!(
+        sources["after"]["text"],
+        "package example\nvar Timeout = 999\n"
+    );
+    fs::write(
+        root.join("hello.go"),
+        "package example\nvar Timeout = 2000\n",
+    )
+    .unwrap();
+    let retry = submit_response(fixture, id, &response);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&retry.stdout).unwrap(),
+        addressed
+    );
+    assert_eq!(fixture.read(&sources_path).await, sources);
+    invalid = response.clone();
+    invalid["text"] = json!("Changed response under the same ID");
+    assert!(!submit_response(fixture, id, &invalid).status.success());
+
+    let resolve = json!({
+        "id": uuid::Uuid::new_v4().to_string(), "annotationId": annotation_id,
+        "expectedRevision": 1, "disposition": "resolved", "text": "Verified the captured change",
+    });
+    let anonymous = Client::new()
+        .post(format!(
+            "{}/api/{endpoint}/resolveDiscussion",
+            fixture.origin
+        ))
+        .header("Origin", &fixture.origin)
+        .json(&resolve)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/respond"), &response)
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let resolved: Value = fixture
+        .post(&format!("{endpoint}/resolveDiscussion"), &resolve)
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(resolved["disposition"], "resolved");
+    assert_eq!(resolved["actor"]["kind"], "human");
+    assert_eq!(resolved["evidence"], addressed["evidence"]);
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/resolveDiscussion"), &resolve)
+            .await
+            .json::<Value>()
+            .await
+            .unwrap(),
+        resolved
+    );
+    let mut stale_action = resolve.clone();
+    stale_action["id"] = json!(uuid::Uuid::new_v4().to_string());
+    stale_action["disposition"] = json!("open");
+    assert_ne!(
+        fixture
+            .post(&format!("{endpoint}/resolveDiscussion"), &stale_action)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let mut reopen = stale_action.clone();
+    reopen["expectedRevision"] = json!(2);
+    reopen["text"] = json!("Also validate negative timeouts");
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/resolveDiscussion"), &reopen)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+
+    let mut late = response.clone();
+    late["id"] = json!(uuid::Uuid::new_v4().to_string());
+    let late_output = submit_response(fixture, id, &late);
+    assert!(late_output.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&late_output.stdout).unwrap()["applied"],
+        false
+    );
+    let reopened = fixture.read(&detail_path).await;
+    assert_eq!(reopened["status"]["disposition"], "open");
+    assert_eq!(reopened["status"]["revision"], 3);
+    assert_eq!(reopened["events"].as_array().unwrap().len(), 4);
+
+    let next_batch = json!({"id": uuid::Uuid::new_v4().to_string(), "sessionId": preview["feedback"]["input"]["sessionId"], "annotationIds": [annotation_id]});
+    let next_preview = fixture
+        .post(&format!("{endpoint}/prepareFeedback"), &next_batch)
+        .await
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert!(
+        next_preview["content"]
+            .as_str()
+            .unwrap()
+            .contains("Also validate negative timeouts")
+    );
+    let next_response = response_input(&next_preview, annotation_id);
+    assert!(
+        !submit_response(fixture, id, &next_response)
+            .status
+            .success()
+    );
+    fixture
+        .post(
+            &format!("{endpoint}/sendFeedback"),
+            &json!({"id": next_batch["id"]}),
+        )
+        .await;
+    let next_output = submit_response(fixture, id, &next_response);
+    assert!(
+        next_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&next_output.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&next_output.stdout).unwrap()["applied"],
+        true
+    );
+    let history = fixture.read(&detail_path).await;
+    assert_eq!(history["status"]["disposition"], "addressed");
+    assert_eq!(history["status"]["revision"], 4);
+
+    let service = fixture.services.last_mut().unwrap();
+    service.0.kill().unwrap();
+    service.0.wait().unwrap();
+    fixture.start_service(id).await;
+    fixture.restart_gateway();
+    assert_eq!(fixture.read(&detail_path).await, history);
+    assert_eq!(fixture.read(&sources_path).await, sources);
+    let restarted_retry = submit_response(fixture, id, &next_response);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&restarted_retry.stdout).unwrap(),
+        history["events"][0]
+    );
+    assert_eq!(fixture.read(&detail_path).await, history);
+    let mut dismiss = resolve;
+    dismiss["id"] = json!(uuid::Uuid::new_v4().to_string());
+    dismiss["expectedRevision"] = json!(4);
+    dismiss["disposition"] = json!("dismissed");
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/resolveDiscussion"), &dismiss)
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        fixture.read(&detail_path).await["status"]["disposition"],
+        "dismissed"
+    );
+
+    fs::remove_file(root.join("hello.go")).unwrap();
+    fs::write(root.join("limits.go"), "package example\nvar Minimum = 0\n").unwrap();
+    let mut deleted_response = response.clone();
+    deleted_response["id"] = json!(uuid::Uuid::new_v4().to_string());
+    deleted_response["paths"] = json!(["limits.go"]);
+    let deleted_output = submit_response(fixture, id, &deleted_response);
+    assert!(deleted_output.status.success());
+    let deleted: Value = serde_json::from_slice(&deleted_output.stdout).unwrap();
+    assert_eq!(deleted["applied"], false);
+    let deleted_sources_path = format!(
+        "{endpoint}/responseSources?id={annotation_id}&eventId={}&path=hello.go",
+        deleted["id"].as_str().unwrap()
+    );
+    let deleted_sources = fixture.read(&deleted_sources_path).await;
+    assert_eq!(deleted_sources["before"], sources["before"]);
+    assert!(deleted_sources["after"].is_null());
+    let extra_sources_path = format!(
+        "{endpoint}/responseSources?id={annotation_id}&eventId={}&path=limits.go",
+        deleted["id"].as_str().unwrap()
+    );
+    let extra_sources = fixture.read(&extra_sources_path).await;
+    assert!(extra_sources["before"].is_null());
+    assert_eq!(
+        extra_sources["after"]["text"],
+        "package example\nvar Minimum = 0\n"
+    );
+
+    let retained = fixture.read(&detail_path).await;
+    let mut expected_ids: Vec<Value> = retained["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| event["id"].clone())
+        .collect();
+    for _ in expected_ids.len()..21 {
+        late["id"] = json!(uuid::Uuid::new_v4().to_string());
+        assert!(submit_response(fixture, id, &late).status.success());
+        expected_ids.insert(0, late["id"].clone());
+    }
+    let first_page = fixture.read(&detail_path).await;
+    assert_eq!(first_page["nextOffset"], 20);
+    let last_page = fixture.read(&format!("{detail_path}&offset=20")).await;
+    assert!(last_page["nextOffset"].is_null());
+    let actual_ids: Vec<Value> = first_page["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(last_page["events"].as_array().unwrap())
+        .map(|event| event["id"].clone())
+        .collect();
+    assert_eq!(actual_ids, expected_ids);
+    assert_eq!(last_page["status"], retained["status"]);
 }
 
 #[tokio::test]

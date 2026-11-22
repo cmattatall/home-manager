@@ -1,4 +1,5 @@
 mod analysis;
+mod discussion;
 mod feedback;
 mod gateway;
 mod machine;
@@ -36,6 +37,13 @@ enum Action {
     Quit,
     /// List registered local worktrees as JSON.
     List,
+    /// Submit an agent's addressed response using a feedback authorization.
+    Respond {
+        #[arg(long)]
+        worktree: String,
+        #[arg(long)]
+        input: PathBuf,
+    },
     /// Emit the browser's TypeScript wire types.
     Schema,
     /// Run the gateway in the foreground.
@@ -86,6 +94,24 @@ async fn main() -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&state::worktrees(&directory)?)?
             );
+            Ok(())
+        }
+        Some(Action::Respond { worktree, input }) => {
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            std::fs::File::open(input)?
+                .take(65_537)
+                .read_to_end(&mut bytes)?;
+            ensure!(bytes.len() <= 65_536, "Response input exceeds 64 KiB");
+            let response: model::AgentResponseInput = serde_json::from_slice(&bytes)?;
+            let result = process::worktree_request(
+                &directory,
+                &worktree,
+                "respond",
+                serde_json::to_value(response)?,
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
             Ok(())
         }
         Some(Action::Quit) => {

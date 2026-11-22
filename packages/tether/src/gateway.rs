@@ -565,6 +565,9 @@ async fn read_worktree(
         "ampSessions",
         "feedback",
         "feedbackPreview",
+        "discussions",
+        "discussion",
+        "responseSources",
     ]
     .contains(&route.operation.as_str())
     {
@@ -586,6 +589,18 @@ async fn write_feedback(
     Path(route): Path<WorktreeRoute>,
     Json(input): Json<Value>,
 ) -> ApiResult<Json<Value>> {
+    if route.operation == "resolveDiscussion" {
+        let owner: String = state::gateway_database(&gateway.directory)?
+            .query_row("SELECT id FROM identity", [], |row| row.get(0))
+            .map_err(anyhow::Error::from)?;
+        return worktree_request(
+            &gateway,
+            &route,
+            "resolveDiscussion",
+            json!({"owner": owner, "action": input}),
+        )
+        .await;
+    }
     if !["prepareFeedback", "sendFeedback"].contains(&route.operation.as_str()) {
         return Err(ApiError(StatusCode::NOT_FOUND, "Unknown operation".into()));
     }

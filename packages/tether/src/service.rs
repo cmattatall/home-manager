@@ -13,8 +13,8 @@ use crate::{
 };
 
 pub(crate) struct Store {
-    directory: PathBuf,
-    worktree: Worktree,
+    pub(crate) directory: PathBuf,
+    pub(crate) worktree: Worktree,
 }
 
 impl Store {
@@ -26,7 +26,10 @@ impl Store {
             "CREATE TABLE IF NOT EXISTS sources (id TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(id,path));
              CREATE TABLE IF NOT EXISTS annotations (id TEXT PRIMARY KEY, payload TEXT NOT NULL, expires TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS comparisons (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS permissions (name TEXT PRIMARY KEY);",
+             CREATE TABLE IF NOT EXISTS permissions (name TEXT PRIMARY KEY);
+             CREATE TABLE IF NOT EXISTS discussions (annotation_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, disposition TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS discussion_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, annotation_id TEXT NOT NULL, request_hash TEXT NOT NULL, payload TEXT NOT NULL);
+             CREATE INDEX IF NOT EXISTS discussion_history ON discussion_events(annotation_id, sequence);",
         )?;
         Ok(Self {
             directory,
@@ -269,6 +272,9 @@ impl Store {
                 Ok(json!({"enabled": true}))
             }
             "saveAnnotation" => Ok(json!(self.save(serde_json::from_value(request.params)?)?)),
+            "discussions" | "discussion" | "respond" | "resolveDiscussion" | "responseSources" => {
+                self.discussion_request(&request.method, request.params)
+            }
             "annotations" => {
                 let connection = state::database(&self.directory.join("review.sqlite"))?;
                 let mut statement = connection.prepare("SELECT payload FROM annotations WHERE expires>?1 ORDER BY rowid DESC LIMIT 100")?;
@@ -349,6 +355,7 @@ pub async fn run(state_directory: PathBuf, id: String) -> Result<()> {
     let delivery = std::sync::Arc::new(crate::feedback::Delivery::new(
         directory.clone(),
         worktree.clone(),
+        &state_directory,
     )?);
     let store = std::sync::Arc::new(Store::open(directory, worktree)?);
     let mut requests = tokio::task::JoinSet::new();

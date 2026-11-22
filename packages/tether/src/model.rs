@@ -228,6 +228,86 @@ pub struct Annotation {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub enum Disposition {
+    Open,
+    Addressed,
+    Resolved,
+    Dismissed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscussionStatus {
+    pub annotation_id: String,
+    pub revision: u32,
+    pub disposition: Disposition,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum DiscussionActor {
+    Human { owner: String },
+    Agent { thread: String, submission: String },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ResponseEvidence {
+    pub path: String,
+    pub source_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ResponseSources {
+    pub before: Option<Source>,
+    pub after: Option<Source>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscussionEvent {
+    pub id: String,
+    pub annotation_id: String,
+    pub actor: DiscussionActor,
+    pub created_at: String,
+    pub text: String,
+    pub disposition: Disposition,
+    pub based_on_revision: u32,
+    pub applied: bool,
+    pub evidence: Vec<ResponseEvidence>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Discussion {
+    pub status: DiscussionStatus,
+    pub events: Vec<DiscussionEvent>,
+    pub next_offset: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentResponseInput {
+    pub id: String,
+    pub feedback_id: String,
+    pub annotation_id: String,
+    pub token: String,
+    pub text: String,
+    pub paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResolutionInput {
+    pub id: String,
+    pub annotation_id: String,
+    pub expected_revision: u32,
+    pub disposition: Disposition,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct AmpSession {
     pub id: String,
     pub thread: String,
@@ -300,6 +380,15 @@ pub fn typescript() -> String {
         Selection::decl(),
         AnnotationInput::decl(),
         Annotation::decl(),
+        Disposition::decl(),
+        DiscussionStatus::decl(),
+        DiscussionActor::decl(),
+        ResponseEvidence::decl(),
+        ResponseSources::decl(),
+        DiscussionEvent::decl(),
+        Discussion::decl(),
+        AgentResponseInput::decl(),
+        ResolutionInput::decl(),
         AmpSession::decl(),
         FeedbackInput::decl(),
         DeliveryStatus::decl(),

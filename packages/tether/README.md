@@ -80,7 +80,8 @@ to 256 KiB of message text. Choose a smaller selection if it exceeds this limit.
 
 **Send to Amp** queues the preview as a steering message and can start agent work.
 The recipient and message remain fixed for that submission. Saved annotations
-remain available after sending. Agent replies are visible in Amp.
+remain available after sending. The message includes instructions for reporting
+addressed annotations back to Tether.
 
 **Delivery history** retains previews and delivery outcomes through browser,
 gateway and worktree-service restarts. **Confirmed** means the bridge found the
@@ -94,6 +95,54 @@ through the replacement connection. Inspect the target thread before preparing
 another batch. This protects against duplicate feedback when the bridge loses
 its receipt cache. Delivery history retains the exact message for that check.
 Physical cleanup of retained submissions remains planned.
+
+## Review agent responses
+
+In **Annotations**, choose **Ready for your review** to find addressed feedback.
+Open **Responses and review** to see the original comment, the agent's explanation
+and its captured source evidence. **Inspect captured changes** compares the
+annotated source with the source captured when the agent responded. Additional
+files show the captured response source. Deleted files show an absent-source
+label. Evidence remains fixed through subsequent edits and restarts.
+
+Choose **Resolve**, **Dismiss**, or **Reopen**, optionally adding a review note.
+Reopening keeps the previous responses. Select the annotation and prepare a new
+submission to request another revision. Submissions include the latest ten review
+events. Agents mark feedback **Addressed**, and your explicit action records final
+resolution. Delivery confirmation and review disposition have independent status.
+
+Discussion history opens at the version you inspect. **Refresh discussion** loads
+new activity. A concurrent review change blocks an action based on an older
+revision. **Retry same review action** preserves its identity after an interrupted
+request. A late agent response to an earlier revision remains in history and
+preserves the current disposition. History loads twenty events per page.
+
+### Agent response command
+
+Each new feedback preview supplies a response command and JSON template. Run that
+command on the worktree's execution machine after addressing an annotation. Its
+response authorization is scoped to that submission and its selected annotations.
+Keep the response file private and reuse its exact contents when retrying. Tether
+returns the saved event as JSON. `applied: true` advances the discussion to
+Addressed. `applied: false` retains a response to an earlier review revision.
+
+The command has this interface:
+
+```sh
+tether --state-dir /private/tether-state respond --worktree WORKTREE_ID --input /private/response.json
+```
+
+The supplied template contains `id` (a new UUID), `feedbackId`, `annotationId`,
+`token`, `text`, and `paths`. Explain the change and verification in `text`, up to
+16 KiB. `paths` accepts up to seven additional worktree-relative UTF-8 files, each
+within the 64 KiB source limit. Tether also captures the annotated path. Delete
+the response file after a confirmed result. Earlier previews without a response
+command require a new submission.
+
+Resolution uses the authenticated browser API. The response command exposes the
+Addressed operation. The execution account remains trusted and owns Tether's
+private state and local control sockets. Automatic source-freshness assessment
+and physical history expiry cleanup remain planned.
 
 ## Connect an SSH machine
 

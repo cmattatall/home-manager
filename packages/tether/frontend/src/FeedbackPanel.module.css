@@ -11,7 +11,8 @@
   margin: 0;
 }
 
-.panel select {
+.panel select,
+.discussionDialog select {
   width: 100%;
   min-width: 0;
   padding: 8px;
@@ -64,4 +65,146 @@
 .status[data-status="uncertain"] {
   color: #e8bc77;
   background: #3b3021;
+}
+
+.discussion,
+.event {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.discussion {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.event {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.actions,
+.sourceLabels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.sourceLabels {
+  justify-content: space-between;
+  font-size: 11px;
+  margin: 10px 0;
+}
+
+.disposition {
+  text-transform: capitalize;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.disposition[data-state="addressed"] {
+  color: #e8bc77;
+}
+
+.disposition[data-state="resolved"] {
+  color: #a9d9be;
+}
+
+.message {
+  white-space: pre-wrap;
+}
+
+.warning {
+  color: #e8bc77;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.sourceDiff {
+  height: 280px;
+  min-width: 0;
+  border: 1px solid var(--line);
+}
+
+.reviewActions textarea {
+  box-sizing: border-box;
+  width: 100%;
+  resize: vertical;
+}
+
+.event code,
+.event p {
+  overflow-wrap: anywhere;
+}
+
+.discussionDialog {
+  position: fixed;
+  z-index: 31;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  inset: 4vh auto auto 50%;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  width: min(940px, 94vw);
+  max-height: 92vh;
+  overflow: hidden;
+  padding: 24px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 20px 80px #0008;
+}
+
+.discussionOverlay {
+  z-index: 30;
+}
+
+.reviewContent {
+  overflow: auto;
+  min-height: 0;
+}
+
+.reviewActions {
+  display: grid;
+  flex-shrink: 0;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.reviewActions p,
+.event p,
+.discussion > p {
+  margin: 0;
+}
+
+.discussionDialog h2,
+.discussionDialog h4 {
+  margin: 0;
+}
+
+.discussionDialog > .actions {
+  justify-content: space-between;
+}
+
+.excerpt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  background: var(--canvas);
+}
+
+@media (width <= 600px) {
+  .discussionDialog {
+    padding: 14px;
+  }
 }
