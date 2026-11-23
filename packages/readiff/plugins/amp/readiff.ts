@@ -50,7 +50,8 @@ type Activity = {
   dispose(): void
 }
 type Connection = { server: Server; directory: string; descriptor: string; root: string; activity: Activity }
-type Outcome = { content: string; result: Promise<Set<ThreadMessageID>>; confirmed: boolean }
+type TranscriptBoundary = { full: boolean; ids: Set<ThreadMessageID> }
+type Outcome = { content: string; result: Promise<TranscriptBoundary>; confirmed: boolean }
 
 const HEARTBEAT_MS = 15_000
 const MAX_STREAM_BUFFER = 64 * 1024
@@ -97,12 +98,12 @@ Separate local preparation from publication. Local completion requires registere
 
 Report measured diff sizes for the completed branches in the table, validation results at each boundary, any blockers, and published PR links when available. Include the active branch, remaining staged, unstaged, and untracked changes and their ownership, and whether the stack is local or published.`
 
-async function containsFeedback(thread: PluginThread, content: string, before: Set<ThreadMessageID>): Promise<boolean> {
-  // Read full history so compaction and later tool results cannot hide delivery.
+async function containsFeedback(thread: PluginThread, content: string, before: TranscriptBoundary): Promise<boolean> {
+  // Changing views can expose older messages outside the saved boundary.
   for (let offset = 0; ; offset += 20) {
-    const messages = await thread.messages({ full: true, from: 'end', offset, limit: 20, roles: ['user'] })
+    const messages = await thread.messages({ full: before.full, from: 'end', offset, limit: 20, roles: ['user'] })
     // Remember a whole page so the boundary does not depend on page ordering.
-    const newer = messages.filter(message => !before.has(message.id))
+    const newer = messages.filter(message => !before.ids.has(message.id))
     if (newer.some(message => message.role === 'user' && message.content.some(block => block.type === 'text' && block.text === content))) {
       return true
     }
@@ -358,9 +359,16 @@ export default async function readiffPlugin(amp: PluginAPI): Promise<void> {
           content,
           confirmed: false,
           result: (async () => {
-            const before = await target.messages({ full: true, from: 'end', limit: 20, roles: ['user'] })
+            let full = true
+            let messages = await target.messages({ full, from: 'end', limit: 20, roles: ['user'] })
+            // Amp CLI execution can expose only the current transcript.
+            if (messages.length === 0) {
+              full = false
+              messages = await target.messages({ full, from: 'end', limit: 20, roles: ['user'] })
+            }
+            const before = { full, ids: new Set(messages.map(message => message.id)) }
             await target.appendUserMessage({ type: 'user-message', content }, { steer: true })
-            return new Set(before.map(message => message.id))
+            return before
           })(),
         }
         if (!previous) outcomes.set(id, outcome)
