@@ -781,6 +781,13 @@ diff-engine names, and feedback receipt states stay out of the bar. Use
 for agent activity. Delivery errors still appear as notifications. `local`
 means feedback stays in the local outbox.
 
+While a delivery is pending, `:w` queues new and edited notes behind it. Queued
+batches are sent in order. Each batch keeps its saved
+text and target. Unchanged notes already in flight or queued are excluded from
+later batches. An acknowledgment clears only the exact note versions it received.
+Failed deliveries keep their notes and receipts in `:ReviewOutbox`, and the next
+queued batch proceeds. Keep the editor open until its delivery queue drains.
+
 Repeated writes of an unchanged annotation batch to the same target reuse the
 existing submission. `:Harness retry` retries the worktree's last immutable
 annotation submission, not newly edited notes, and refuses a changed target.

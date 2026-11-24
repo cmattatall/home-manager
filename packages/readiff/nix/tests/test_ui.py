@@ -3595,6 +3595,7 @@ class EditorUI(unittest.TestCase):
         path = self.lua(
             editor, "return require('rediff.harness').get(s.root).last.path"
         )
+        queued_path = None
         try:
             self.wait_for(
                 editor,
@@ -3612,14 +3613,33 @@ class EditorUI(unittest.TestCase):
             self.assertTrue(
                 self.lua(editor, "return require('rediff.feedback').busy(s.root)")
             )
+            self.lua(
+                editor,
+                """
+                r.add_comment({file=s.current.path,side='new',snapshot_id=s.current.id,
+                    selection=require('rediff.selection').line(s.new_buf,5)}, 'Queued follow-up')
+                """,
+            )
+            self.keys(editor, ":w<CR>")
+            queued_path = self.lua(editor, "return s.last_submission")
+            self.assertNotEqual(path, queued_path)
+            queued = json.loads(Path(queued_path).read_text())
+            self.assertEqual(["Queued follow-up"], [note["text"] for note in queued["comments"]])
+            self.assertFalse(Path(queued_path + ".calls").exists())
+            self.keys(editor, ":w<CR>")
+            self.assertEqual(queued_path, self.lua(editor, "return s.last_submission"))
         finally:
             Path(path + ".release").touch()
+            if queued_path:
+                Path(queued_path + ".release").touch()
         self.wait_for(editor, "not require('rediff.feedback').busy(s.root)")
         self.assertEqual(
             "completed",
             self.lua(editor, "return require('rediff.harness').get(s.root).delivery"),
         )
         self.assertEqual(0, self.lua(editor, "return #s.comments"))
+        self.assertEqual("1", Path(path + ".calls").read_text().strip())
+        self.assertEqual("1", Path(queued_path + ".calls").read_text().strip())
 
     def test_failed_feedback_keeps_notes_without_blocking_or_automatic_retry(self):
         editor = self.launch(self.root, columns=80)

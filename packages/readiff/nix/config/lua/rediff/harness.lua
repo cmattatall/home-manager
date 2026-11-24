@@ -1088,26 +1088,32 @@ end
 function M.deliver(root, id, path, argv, retry, callback)
 	local s = M.get(root)
 	assert(vim.deep_equal(argv, M.command(root)), "Harness changed; submit again to the selected session")
-	assert(not feedback.busy(root), "A feedback delivery is already running for this repository")
 	s.last = { id = id, path = path, argv = vim.deepcopy(argv) }
 	save(s)
 	s.delivery = #argv == 0 and "queued" or "running"
 	local ok, err = pcall(feedback.deliver, root, id, path, argv, retry, function(status)
-		s.delivery = status.status
+		if s.last.path == path then
+			s.delivery = status.status
+		end
 		if status.status == "accepted" or status.status == "completed" then
 			require("rediff.review").clear_sent(root, path)
 		elseif status.status == "failed" or status.status == "uncertain" then
 			-- Keep long receiver diagnostics in the receipt/status view, not in
 			-- an asynchronous message that can interrupt editing with hit-enter.
-			local message = "Feedback " .. status.status .. "; notes kept. :Harness status for recovery."
+			local recovery = s.last.path == path and ":Harness status" or ":ReviewOutbox"
+			local message = "Feedback " .. status.status .. ". Unsent notes kept. " .. recovery .. " for recovery."
 			if feedback.is_live(s.target) and vim.fn.filereadable(s.target.connection) == 0 then
 				message = feedback.provider(s.target)
-					.. " disconnected; notes kept. :harness connect "
+					.. " disconnected. Unsent notes kept. :harness connect "
 					.. feedback.provider(s.target)
 			end
 			vim.notify(message, vim.log.levels.WARN)
-		else
-			notify("Feedback kept in local outbox (:ReviewOutbox)")
+		elseif status.status == "queued" then
+			if #argv == 0 then
+				notify("Feedback kept in local outbox (:ReviewOutbox)")
+			else
+				notify("Feedback queued after the current delivery. Keep the editor open.")
+			end
 		end
 		if callback then
 			callback(status)

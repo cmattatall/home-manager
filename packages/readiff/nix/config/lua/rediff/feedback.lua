@@ -128,16 +128,36 @@ function M.enqueue(root, comments, snapshots, target, message, snapshot_status, 
 	return id, path
 end
 
-local running = {}
+local queues = {}
 
 function M.busy(root)
-	return running[root] == true
+	return queues[root] ~= nil
+end
+
+function M.unsent(root, comments)
+	local pending = {}
+	for _, delivery in ipairs(queues[root] or {}) do
+		vim.list_extend(pending, M.read(delivery.path).comments or {})
+	end
+	return vim.tbl_filter(function(comment)
+		for _, sent in ipairs(pending) do
+			if vim.deep_equal(comment, sent) then
+				return false
+			end
+		end
+		return true
+	end, comments)
 end
 
 function M.deliver(root, id, path, argv, retry, callback)
 	local status_path = M.directory(root) .. "/" .. id .. ".status.json"
 	local status = M.read(status_path) or { status = "queued" }
-	assert(not running[root], "A feedback delivery is already running for this repository")
+	for _, delivery in ipairs(queues[root] or {}) do
+		if delivery.id == id then
+			callback(status)
+			return
+		end
+	end
 	if status.status == "accepted" or status.status == "completed" then
 		callback(status)
 		return
@@ -154,12 +174,12 @@ function M.deliver(root, id, path, argv, retry, callback)
 	end
 	local command = vim.deepcopy(argv)
 	table.insert(command, path)
-	M.write(status_path, { status = "running" })
-	running[root] = true
+	local queue = queues[root] or {}
+	queues[root] = queue
+	local delivery = { id = id, path = path }
 	local baseline
 	local function done(result)
 		vim.schedule(function()
-			running[root] = nil
 			local ok, ack = pcall(vim.json.decode, result.stdout or "")
 			if
 				result.code ~= 0
@@ -178,18 +198,37 @@ function M.deliver(root, id, path, argv, retry, callback)
 			if ack.status == "accepted" or ack.status == "completed" then
 				require("rediff.awareness").accept(root, baseline)
 			end
-			callback(ack)
+			local callback_ok, callback_error = pcall(callback, ack)
+			table.remove(queue, 1)
+			if #queue == 0 then
+				queues[root] = nil
+			else
+				queue[1].start()
+			end
+			if not callback_ok then
+				error(callback_error)
+			end
 		end)
 	end
-	local payload = M.read(path)
-	local cwd = payload.recipient and payload.recipient.repository or root
-	require("rediff.awareness").before_send(root, payload.recipient, function(captured)
-		baseline = captured
-		local ok, err = pcall(vim.system, command, { cwd = cwd, text = true }, done)
-		if not ok then
-			done({ code = 1, stdout = "", stderr = tostring(err) })
-		end
-	end)
+	local recipient = M.read(path).recipient
+	local cwd = recipient and recipient.repository or root
+	delivery.start = function()
+		M.write(status_path, { status = "running" })
+		require("rediff.awareness").before_send(root, recipient, function(captured)
+			baseline = captured
+			local ok, err = pcall(vim.system, command, { cwd = cwd, text = true }, done)
+			if not ok then
+				done({ code = 1, stdout = "", stderr = tostring(err) })
+			end
+		end)
+	end
+	table.insert(queue, delivery)
+	if #queue == 1 then
+		delivery.start()
+	else
+		M.write(status_path, { status = "queued" })
+		callback({ status = "queued" })
+	end
 end
 
 return M

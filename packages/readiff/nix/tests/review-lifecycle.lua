@@ -20,7 +20,7 @@ return function(root, equal, fails, keys)
 		calls = calls + 1
 		pending = { callback = callback, payload = feedback.read(argv[#argv]) }
 	end
-	local function acknowledge(status)
+	local function acknowledge(status, more)
 		assert(
 			vim.wait(5000, function()
 				return pending ~= nil
@@ -34,7 +34,7 @@ return function(root, equal, fails, keys)
 		})
 		pending = nil
 		assert(vim.wait(1000, function()
-			return not feedback.busy(root)
+			return more and pending ~= nil or not feedback.busy(root)
 		end))
 	end
 	local function add(text, id)
@@ -83,6 +83,28 @@ return function(root, equal, fails, keys)
 		equal("No agent notes to send to the harness", notice, "Empty follow-up explains why nothing was sent")
 		equal(last_submission, review.state.last_submission, "Empty follow-up leaves the previous submission intact")
 		equal(2, calls, "Empty follow-up cannot resend the old batch")
+
+		local first = add("First queued batch")
+		local first_path = review.submit()
+		local second = add("Second queued batch")
+		local second_path = review.submit()
+		equal({ second }, feedback.read(second_path).comments, "Later batches exclude unchanged in-flight notes")
+		add("Edited queued note", second.id)
+		local third_path = review.submit()
+		equal("Second queued batch", feedback.read(second_path).comments[1].text, "Queued payload stays immutable")
+		equal({ second }, feedback.read(third_path).comments, "An edit to a queued note gets its own batch")
+		equal(nil, review.submit(), "Repeated writes deduplicate every queued batch")
+		acknowledge("failed", true)
+		equal(feedback.read(second_path), pending.payload, "A failed batch releases the next queued delivery")
+		equal({ first, second }, review.state.comments, "Failure retains notes while later batches run")
+		equal(third_path, require("rediff.harness").get(root).last.path, "Earlier receipts preserve the newest retry target")
+		acknowledge("accepted", true)
+		equal(feedback.read(third_path), pending.payload, "Batches reach the receiver in submission order")
+		equal({ first, second }, review.state.comments, "An older acknowledgment preserves the queued edit")
+		acknowledge("completed")
+		equal({ first }, review.state.comments, "Only acknowledged note versions are cleared")
+		equal("failed", feedback.read(first_path:gsub("%.json$", ".status.json")).status, "Earlier failure remains in the outbox")
+		review.archive()
 
 		local failed = add("Retry this note")
 		review.submit()

@@ -348,7 +348,7 @@ return function(root, equal, fails, keys)
 		harness.select(root .. "/other-worktree", { name = "claude", session = "another-session" })
 	end, "Wait for the current")
 	equal("custom", session.target.name, "A blocked cross-worktree switch retains the sender")
-	fails(review.submit, "Wait for the current")
+	equal(nil, review.submit(), "Repeated writes leave the in-flight batch unchanged")
 	vim.fn.writefile({}, session.last.path .. ".release") -- Release the deliberately pending receiver.
 	assert(vim.wait(10000, function()
 		return not feedback.busy(root)

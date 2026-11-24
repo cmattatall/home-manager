@@ -1915,11 +1915,15 @@ function M.submit(retry)
 		)
 		return
 	end
-	assert(not feedback.busy(s.root), "Wait for the current feedback delivery before submitting again")
+	local comments = feedback.unsent(s.root, s.comments)
+	if #comments == 0 then
+		notify("Saved notes are already queued for delivery")
+		return
+	end
 	local argv = harness.command(s.root)
 	local current = M.refresh_annotations(s.root)
 	local snapshots, snapshot_status, warnings = {}, {}, {}
-	for _, comment in ipairs(s.comments) do
+	for _, comment in ipairs(comments) do
 		local snapshot = assert(s.snapshots[comment.snapshot_id], "Missing comment snapshot")
 		if not snapshots[snapshot.id] then
 			local latest = current[snapshot.id]
@@ -1932,7 +1936,7 @@ function M.submit(retry)
 		end
 	end
 	storage.save(s)
-	local id, path = feedback.enqueue(s.root, s.comments, snapshots, argv, nil, snapshot_status)
+	local id, path = feedback.enqueue(s.root, comments, snapshots, argv, nil, snapshot_status)
 	if #warnings > 0 then
 		notify(
 			"Annotated lines changed; sending original review context: " .. table.concat(warnings, ", "),
@@ -1942,7 +1946,9 @@ function M.submit(retry)
 	s.last_submission = path
 	s.delivery = #argv == 0 and "queued" or "running"
 	local ok, err = pcall(harness.deliver, s.root, id, path, argv, retry, function(status)
-		s.delivery = status.status
+		if s.last_submission == path then
+			s.delivery = status.status
+		end
 	end)
 	if not ok then
 		s.delivery = "failed"
