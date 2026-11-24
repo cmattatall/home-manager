@@ -7,6 +7,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -40,6 +41,7 @@ struct Lsp {
     next_id: u64,
     context: String,
     capabilities: Value,
+    last_used: Instant,
 }
 
 impl Project {
@@ -72,6 +74,16 @@ impl Project {
 }
 
 impl Analysis {
+    pub fn expire(&self) {
+        if let Ok(mut session) = self.session.try_lock()
+            && session
+                .as_ref()
+                .is_some_and(|lsp| lsp.last_used.elapsed() >= Duration::from_secs(300))
+        {
+            *session = None;
+        }
+    }
+
     pub fn new(root: PathBuf, state_directory: PathBuf) -> Self {
         Self {
             root,
@@ -171,6 +183,7 @@ impl Analysis {
             self.project().await?.context == project.context,
             "Source changed during Go analysis. Explore current version again"
         );
+        lsp.last_used = Instant::now();
         *guard = Some(lsp);
         Ok(result)
     }
@@ -330,6 +343,7 @@ impl Lsp {
             next_id: 0,
             context: project.context.clone(),
             capabilities: Value::Null,
+            last_used: Instant::now(),
         };
         let root_uri = Url::from_directory_path(root)
             .map_err(|_| anyhow::anyhow!("Invalid Go project root"))?;

@@ -5,8 +5,8 @@ Register Git worktrees, inspect source, select text, and save an annotation with
 the exact source you reviewed. Each worktree keeps its own notes.
 
 This implementation supports local and SSH worktrees, diff review, Go symbol
-navigation, durable annotations and delivery to existing Amp sessions. Shared
-service drafts are planned.
+navigation, durable annotations, managed Amp terminals and delivery to existing
+Amp sessions. Shared service drafts are planned.
 Source editing and Git changes are performed through your existing tools.
 
 ## Install with Home Manager
@@ -66,6 +66,43 @@ After a failed save, **Retry save annotation** reuses the same operation and
 content. The text stays locked while its outcome is uncertain. Saved notes
 remain readable after source edits and process restarts. **Refresh** explicitly
 captures the selected view again.
+
+## Run managed Amp terminals
+
+Install and authenticate `amp` on the execution machine. Open a worktree's
+**Amp terminals** panel and choose **Start Amp**. Confirm the launch to start Amp
+in that worktree. If the request is interrupted, **Check pending launch** checks
+the saved launch identity. Keep that operation until its outcome is known.
+
+Choose a session to view its terminal. Agents keep running when you close the
+panel, browser or gateway, or lose your SSH connection. Reopen the panel and
+select the session to attach again. Each worktree supports four retained terminal
+runtimes and four viewers per runtime. The session list keeps running sessions
+visible alongside recent launch outcomes.
+
+The first attached viewer receives input control. Other viewers can choose
+**Take control** and confirm the transfer. Input becomes available after the
+new controller displays and acknowledges current terminal state. **Terminate Amp**
+explicitly stops the controlled process after confirmation.
+
+Selecting terminal text or scrolling into history pauses that viewer's display.
+The selected text stays available for copying while the agent continues running.
+**Resume live output** returns to current output and enables input after recovery.
+If Amp enables mouse reporting, use Option-drag on macOS or Shift-drag on Linux
+for selection. **Reconnect terminal** keeps the visible screen and selected text
+while reattaching. An uncertain input delivery requires inspecting the recovered
+terminal before typing again.
+
+Detached output has bounded retained history. Older output can be evicted.
+Interrupted frame transfers release their attachment after 30 seconds. Paused
+viewers maintain their lease with heartbeats. See the [terminal contract](terminal/README.md)
+for sizes and supported rendering behavior.
+
+Managed processes depend on their execution-machine worktree service. Service
+failure or machine restart marks their saved sessions **lost**. Inspect surviving
+processes before launching a replacement. Surviving service failure and restoring
+terminal history after process exit remain future work. To send saved annotations,
+enable the readiff Amp plugin in the managed session and run **readiff connect**.
 
 ## Send annotations to Amp
 
@@ -237,8 +274,8 @@ the installer and its remote build request. Completed Nix build work can be
 reused on retry. If activation already completed, the installed build remains.
 
 Updates preserve registered worktrees, source captures, saved annotations and
-browser drafts. New requests use the updated worktree services immediately.
-Previous services finish their requests and exit after their idle timeout.
+browser drafts. Each worktree keeps its current service while agents run.
+Services use the updated executable after their next idle shutdown and restart.
 Automatic remote updates require the Nix-packaged gateway. Update the local
 gateway through its installer and restart it to use the new build.
 
@@ -368,9 +405,11 @@ Stop the gateway explicitly:
 nix run .#tether -- quit
 ```
 
-Closing a browser leaves the gateway running. Worktree services exit after
-five idle minutes and start again when needed. Gateway shutdown preserves
-saved annotations and their captured source.
+Closing a browser leaves the gateway running. Managed agents keep their worktree
+service alive. Services with no running agents exit after five idle minutes and
+start again when needed. Idle Go analysis sessions release their resources after
+five minutes, including in worktrees with running agents. Gateway shutdown
+preserves managed processes, saved annotations and their captured source.
 
 ## Build and check
 
@@ -391,9 +430,13 @@ npm --prefix frontend run build
 cargo build --locked
 cargo test --locked
 cargo clippy --all-targets -- -D warnings
-cargo fmt --check
+cargo fmt --all --check
 ./target/debug/tether
 ```
+
+The workspace includes the [terminal recovery library](terminal/README.md).
+Its tests and managed-session HTTP/PTY recovery tests run with `cargo test`.
+The library README includes the separate real-browser display checks.
 
 After changing wire types, regenerate their browser declarations:
 
@@ -431,7 +474,7 @@ the generated protocol schema. Initial runs need network access to fetch tools.
 | Nix                         | nixfmt, Statix, deadnix                                 |
 | Bash                        | ShellCheck, shfmt                                       |
 
-To apply formatting, run `cargo fmt --manifest-path packages/tether/Cargo.toml`
+To apply formatting, run `cargo fmt --manifest-path packages/tether/Cargo.toml --all`
 and `npm --prefix packages/tether/frontend run format` from the repository root.
 Use `nixfmt`, `taplo fmt` and `shfmt -w` for the corresponding configuration files
 inside the development shell. Generated `protocol.ts` is checked against the Rust

@@ -8,6 +8,7 @@ mod model;
 mod process;
 mod repository;
 mod service;
+mod sessions;
 mod state;
 mod syntax;
 mod transport;

@@ -387,8 +387,29 @@ pub struct Session {
     pub version: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedLaunch {
+    pub id: String,
+    pub dimensions: tether_terminal::Dimensions,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedSession {
+    pub launch: ManagedLaunch,
+    pub runtime: Option<String>,
+    pub status: String,
+    pub detail: String,
+}
+
 pub fn typescript() -> String {
     let declarations: String = [
+        tether_terminal::Dimensions::decl(),
+        tether_terminal::FrameStamp::decl(),
+        tether_terminal::Frame::decl(),
+        ManagedLaunch::decl(),
+        ManagedSession::decl(),
         SshDestination::decl(),
         Machine::decl(),
         BuildInfo::decl(),

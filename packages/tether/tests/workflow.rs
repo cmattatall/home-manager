@@ -201,8 +201,11 @@ impl Fixture {
     }
 
     async fn start_service(&mut self, id: &str) {
+        let mut paths = vec![self._directory.path().join("bin")];
+        paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
         let child = Command::new(env!("CARGO_BIN_EXE_tether"))
             .env("HOME", self._directory.path())
+            .env("PATH", std::env::join_paths(paths).unwrap())
             .arg("--state-dir")
             .arg(&self.state)
             .args(["service", "--id", id])
@@ -211,8 +214,7 @@ impl Fixture {
         self.services.push(Process(child));
         let deadline = Instant::now() + Duration::from_secs(5);
         use sha2::{Digest, Sha256};
-        let identity = format!("{id}:{}", env!("TETHER_BUILD_ID"));
-        let socket_name = format!("{:x}", Sha256::digest(identity.as_bytes()));
+        let socket_name = format!("{:x}", Sha256::digest(id.as_bytes()));
         let socket = self.state.join("s").join(&socket_name[..32]);
         while tokio::net::UnixStream::connect(&socket).await.is_err() {
             assert!(Instant::now() < deadline, "service startup timed out");
@@ -2357,4 +2359,266 @@ async fn go_navigation_uses_current_project_context_and_isolates_linked_worktree
             .to_string()
             .contains("string")
     );
+}
+
+async fn terminal_call(fixture: &Fixture, endpoint: &str, method: &str, input: Value) -> Value {
+    let response = fixture.post(&format!("{endpoint}/{method}"), &input).await;
+    let status = response.status();
+    let result = response.json().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{method}: {result}");
+    result
+}
+
+async fn receive_terminal_frame(fixture: &Fixture, endpoint: &str, identity: &Value) -> Value {
+    let header = terminal_call(fixture, endpoint, "terminalFrame", identity.clone()).await;
+    let mut bytes = Vec::new();
+    while bytes.len() < header["length"].as_u64().unwrap() as usize {
+        let mut input = identity.clone();
+        input["offset"] = json!(bytes.len());
+        let chunk = terminal_call(fixture, endpoint, "terminalChunk", input).await;
+        bytes.extend(serde_json::from_value::<Vec<u8>>(chunk["bytes"].clone()).unwrap());
+    }
+    let frame: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(frame["stamp"], header["stamp"]);
+    frame
+}
+
+async fn terminal_frame(
+    fixture: &Fixture,
+    endpoint: &str,
+    identity: &Value,
+    displayed: bool,
+) -> Value {
+    let frame = receive_terminal_frame(fixture, endpoint, identity).await;
+    let mut receipt = identity.clone();
+    receipt["stamp"] = frame["stamp"].clone();
+    receipt["displayed"] = json!(displayed);
+    terminal_call(fixture, endpoint, "terminalAck", receipt).await;
+    frame
+}
+
+#[tokio::test]
+async fn managed_terminal_recovers_partial_frames_lost_receipts_and_paused_readers() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut fixture = Fixture::new();
+    assert_eq!(
+        fixture.login(&fixture.ticket()).await.status(),
+        StatusCode::OK
+    );
+    let binary = fixture._directory.path().join("bin");
+    fs::create_dir(&binary).unwrap();
+    fs::write(
+        binary.join("amp"),
+        r#"#!/bin/sh
+row=0
+while [ "$row" -lt 1000 ]; do
+    printf 'history %s\n' "$row"
+    row=$((row + 1))
+done
+printf 'READY café\n'
+while IFS= read -r line; do
+    printf 'RECEIVED:%s\n' "$line"
+done
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(binary.join("amp"), fs::Permissions::from_mode(0o700)).unwrap();
+    let (id, _) = fixture.worktree("managed", "package demo\n").await;
+    let endpoint = format!("worktrees/{id}");
+    let launch =
+        json!({"id": uuid::Uuid::new_v4().to_string(), "dimensions": {"columns": 80, "rows": 24}});
+    let session = terminal_call(&fixture, &endpoint, "launchSession", launch.clone()).await;
+    assert_eq!(session["status"], "running");
+    assert_eq!(
+        session,
+        terminal_call(&fixture, &endpoint, "launchSession", launch.clone()).await
+    );
+    let attach = json!({"session": launch["id"]});
+    let first = terminal_call(&fixture, &endpoint, "attachTerminal", attach.clone()).await;
+    let first = json!({"session": launch["id"], "attachment": first["attachment"], "generation": first["generation"]});
+    let mut input = first.clone();
+    input["text"] = json!("too-early\n");
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/terminalInput"), &input)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let frame = terminal_frame(&fixture, &endpoint, &first, true).await;
+        if frame["painting"].as_str().unwrap().contains("READY café") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "{frame}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let header = terminal_call(&fixture, &endpoint, "terminalFrame", first.clone()).await;
+    assert!(header["length"].as_u64().unwrap() > 65_536);
+    let mut chunk = first.clone();
+    chunk["offset"] = json!(0);
+    terminal_call(&fixture, &endpoint, "terminalChunk", chunk).await;
+    terminal_call(&fixture, &endpoint, "detachTerminal", first.clone()).await;
+    fixture.restart_gateway();
+
+    let second = terminal_call(&fixture, &endpoint, "attachTerminal", attach.clone()).await;
+    assert_eq!(second["runtime"], session["runtime"]);
+    let second = json!({"session": launch["id"], "attachment": second["attachment"], "generation": second["generation"]});
+    let recovered = terminal_frame(&fixture, &endpoint, &second, true).await;
+    assert!(
+        recovered["painting"]
+            .as_str()
+            .unwrap()
+            .contains("READY café"),
+        "{recovered}"
+    );
+    let mut input = second.clone();
+    input["text"] = json!("after-reconnect\n");
+    terminal_call(&fixture, &endpoint, "terminalInput", input).await;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let frame = terminal_frame(&fixture, &endpoint, &second, true).await;
+        if frame["painting"]
+            .as_str()
+            .unwrap()
+            .contains("RECEIVED:after-reconnect")
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let lost = receive_terminal_frame(&fixture, &endpoint, &second).await;
+    let paused = terminal_call(&fixture, &endpoint, "attachTerminal", attach.clone()).await;
+    let mut paused = json!({"session": launch["id"], "attachment": paused["attachment"], "generation": paused["generation"], "paused": true});
+    terminal_frame(&fixture, &endpoint, &paused, false).await;
+    let elapsed = Instant::now();
+    while elapsed.elapsed() < Duration::from_secs(32) {
+        terminal_call(&fixture, &endpoint, "terminalHeartbeat", paused.clone()).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    let mut late = second.clone();
+    late["stamp"] = lost["stamp"].clone();
+    late["displayed"] = json!(true);
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/terminalAck"), &late)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let mut stale = first.clone();
+    stale["stamp"] = header["stamp"].clone();
+    stale["displayed"] = json!(true);
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/terminalAck"), &stale)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let control = terminal_call(&fixture, &endpoint, "claimTerminal", paused.clone()).await;
+    paused["generation"] = control["generation"].clone();
+    paused["text"] = json!("still-paused\n");
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/terminalInput"), &paused)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    paused["paused"] = json!(false);
+    terminal_frame(&fixture, &endpoint, &paused, true).await;
+    let viewer = terminal_call(&fixture, &endpoint, "attachTerminal", attach.clone()).await;
+    assert_eq!(viewer["control"], false);
+    let mut viewer = json!({"session": launch["id"], "attachment": viewer["attachment"], "generation": viewer["generation"]});
+    terminal_frame(&fixture, &endpoint, &viewer, true).await;
+    let control = terminal_call(&fixture, &endpoint, "claimTerminal", viewer.clone()).await;
+    viewer["generation"] = control["generation"].clone();
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/terminalInput"), &paused)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    viewer["text"] = json!("takeover-before-refresh\n");
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/terminalInput"), &viewer)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let frame = receive_terminal_frame(&fixture, &endpoint, &viewer).await;
+    let mut receipt = viewer.clone();
+    receipt["stamp"] = frame["stamp"].clone();
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/terminalAck"), &receipt)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    receipt["displayed"] = json!(true);
+    terminal_call(&fixture, &endpoint, "terminalAck", receipt).await;
+    viewer["dimensions"] = json!({"columns": 73, "rows": 19});
+    terminal_call(&fixture, &endpoint, "resizeTerminal", viewer.clone()).await;
+    assert_eq!(
+        fixture
+            .post(&format!("{endpoint}/terminalInput"), &viewer)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let frame = terminal_frame(&fixture, &endpoint, &viewer, true).await;
+    assert_eq!(frame["dimensions"], json!({"columns": 73, "rows": 19}));
+    terminal_call(&fixture, &endpoint, "stopSession", viewer).await;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let sessions = fixture.read(&format!("{endpoint}/managedSessions")).await;
+        if sessions[0]["status"] == "exited" {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let mut surviving_launch = launch.clone();
+    surviving_launch["id"] = json!(uuid::Uuid::new_v4().to_string());
+    let surviving = terminal_call(
+        &fixture,
+        &endpoint,
+        "launchSession",
+        surviving_launch.clone(),
+    )
+    .await;
+    let database = rusqlite::Connection::open(
+        fixture
+            .state
+            .join("worktrees")
+            .join(&id)
+            .join("sessions.sqlite"),
+    )
+    .unwrap();
+    for _ in 0..100 {
+        let mut failed_launch = launch.clone();
+        failed_launch["id"] = json!(uuid::Uuid::new_v4().to_string());
+        let failed = json!({"launch": failed_launch, "runtime": null, "status": "failed", "detail": "Amp executable unavailable"});
+        database
+            .execute(
+                "INSERT INTO sessions(id,payload) VALUES (?1,?2)",
+                rusqlite::params![failed_launch["id"].as_str().unwrap(), failed.to_string()],
+            )
+            .unwrap();
+    }
+    let sessions = fixture.read(&format!("{endpoint}/managedSessions")).await;
+    assert_eq!(sessions[0], surviving);
+    drop(fixture.services.pop().unwrap());
+    fixture.start_service(&id).await;
+    let reconciled = terminal_call(&fixture, &endpoint, "launchSession", surviving_launch).await;
+    assert_eq!(reconciled["status"], "lost");
+    assert_eq!(reconciled["runtime"], surviving["runtime"]);
 }

@@ -1,3 +1,8 @@
+export type Dimensions = { columns: number, rows: number, };
+export type FrameStamp = { runtime: string, revision: number, };
+export type Frame = { stamp: FrameStamp, dimensions: Dimensions, painting: string, history_rows: number, history_bytes: number, rejected_osc: number, rejected_marks: number, };
+export type ManagedLaunch = { id: string, dimensions: Dimensions, };
+export type ManagedSession = { launch: ManagedLaunch, runtime: string | null, status: string, detail: string, };
 export type SshDestination = { destination: string, };
 export type Machine = { id: string, host: string, account: string, ssh: SshDestination | null, };
 export type BuildInfo = { version: string, buildId: string | null, };

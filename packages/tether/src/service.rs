@@ -234,7 +234,11 @@ impl Store {
     fn execute(&self, request: transport::Request) -> Result<Value> {
         request.validate()?;
         match request.method.as_str() {
-            "info" => Ok(json!(self.worktree)),
+            "info" => {
+                let mut info = json!(self.worktree);
+                info["buildId"] = BUILD_ID.into();
+                Ok(info)
+            }
             "files" => Ok(json!(repository::files(std::path::Path::new(
                 &self.worktree.path
             ))?)),
@@ -335,7 +339,7 @@ pub(crate) fn selected_text<'a>(source: &'a str, selection: &Selection) -> Resul
 }
 
 pub fn socket(state: &std::path::Path, id: &str) -> PathBuf {
-    let identity = state::digest(format!("{id}:{BUILD_ID}").as_bytes());
+    let identity = state::digest(id.as_bytes());
     state.join("s").join(&identity[..32])
 }
 
@@ -343,7 +347,7 @@ pub async fn run(state_directory: PathBuf, id: String) -> Result<()> {
     let worktree = state::find_worktree(&state_directory, &id)?;
     let directory = state::worktree_state(&state_directory, &id);
     state::private_directory(&directory)?;
-    let _lock = state::lock(&directory.join(format!("service-{BUILD_ID}.lock")))?;
+    let _lock = state::lock(&directory.join("runtime.lock"))?;
     state::private_directory(&state_directory.join("s"))?;
     let endpoint = socket(&state_directory, &id);
     if endpoint.exists() {
@@ -360,18 +364,36 @@ pub async fn run(state_directory: PathBuf, id: String) -> Result<()> {
         worktree.clone(),
         &state_directory,
     )?);
+    let sessions = std::sync::Arc::new(crate::sessions::Sessions::new(
+        directory.clone(),
+        worktree.clone(),
+    )?);
     let store = std::sync::Arc::new(Store::open(directory, worktree)?);
     let mut requests = tokio::task::JoinSet::new();
+    let mut sweep = tokio::time::interval(Duration::from_secs(1));
+    let mut idle_deadline = tokio::time::Instant::now() + Duration::from_secs(300);
     loop {
         let accepted = tokio::select! {
             accepted = listener.accept() => accepted,
-            _ = requests.join_next(), if !requests.is_empty() => continue,
-            _ = tokio::time::sleep(Duration::from_secs(300)), if requests.is_empty() => break,
+            _ = requests.join_next(), if !requests.is_empty() => {
+                idle_deadline = tokio::time::Instant::now() + Duration::from_secs(300);
+                continue;
+            },
+            _ = sweep.tick() => {
+                sessions.expire();
+                analysis.expire();
+                if sessions.active() {
+                    idle_deadline = tokio::time::Instant::now() + Duration::from_secs(300);
+                }
+                continue;
+            },
+            _ = tokio::time::sleep_until(idle_deadline), if requests.is_empty() && !sessions.active() => break,
         };
         let (mut stream, _) = accepted?;
         let store = store.clone();
         let analysis = analysis.clone();
         let delivery = delivery.clone();
+        let sessions = sessions.clone();
         requests.spawn(async move {
             let result = async {
                 let request: transport::Request = transport::read(&mut stream).await?;
@@ -381,7 +403,13 @@ pub async fn run(state_directory: PathBuf, id: String) -> Result<()> {
                     request.method.as_str(),
                     "ampSessions" | "prepareFeedback" | "sendFeedback" | "feedback" | "feedbackPreview"
                 );
-                let outcome = if feedback_operation {
+                let managed_operation = matches!(request.method.as_str(),
+                    "managedSessions" | "launchSession" | "attachTerminal" | "detachTerminal" |
+                    "claimTerminal" | "terminalFrame" | "terminalChunk" | "terminalAck" |
+                    "terminalHeartbeat" | "terminalInput" | "resizeTerminal" | "stopSession");
+                let outcome = if managed_operation {
+                    tokio::task::spawn_blocking(move || sessions.execute(&request.method, request.params)).await?
+                } else if feedback_operation {
                     delivery.execute(&request.method, request.params).await
                 } else if matches!(request.method.as_str(), "analysisSource" | "inspect") {
                     use tokio::io::AsyncReadExt;

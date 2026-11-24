@@ -31,6 +31,8 @@ fn main() {
     let mut digest = Sha256::new();
     for path in [
         "src",
+        "terminal/src",
+        "terminal/Cargo.toml",
         "frontend",
         "Cargo.toml",
         "Cargo.lock",

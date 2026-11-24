@@ -563,6 +563,7 @@ async fn read_worktree(
         "analysisSource",
         "inspect",
         "ampSessions",
+        "managedSessions",
         "feedback",
         "feedbackPreview",
         "discussions",
@@ -603,7 +604,23 @@ async fn write_feedback(
         )
         .await;
     }
-    if !["prepareFeedback", "sendFeedback"].contains(&route.operation.as_str()) {
+    if ![
+        "prepareFeedback",
+        "sendFeedback",
+        "launchSession",
+        "attachTerminal",
+        "detachTerminal",
+        "claimTerminal",
+        "terminalFrame",
+        "terminalChunk",
+        "terminalAck",
+        "terminalHeartbeat",
+        "terminalInput",
+        "resizeTerminal",
+        "stopSession",
+    ]
+    .contains(&route.operation.as_str())
+    {
         return Err(ApiError(StatusCode::NOT_FOUND, "Unknown operation".into()));
     }
     worktree_request(&gateway, &route, &route.operation, input).await

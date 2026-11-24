@@ -1,0 +1,43 @@
+.panel {
+  flex-shrink: 0;
+  border-top: 1px solid var(--line);
+  background: var(--canvas);
+  max-height: 55vh;
+  overflow: auto;
+}
+
+.panel p {
+  margin: 6px 12px;
+  color: var(--muted);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 5px 10px;
+  background: var(--panel);
+}
+
+.bar span {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.bar button,
+.bar select {
+  padding: 4px 8px;
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.terminal {
+  padding: 8px 10px;
+  min-height: 245px;
+  overflow: auto;
+}

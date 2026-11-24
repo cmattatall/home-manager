@@ -48,7 +48,7 @@ let
           "dist"
         ]);
     };
-    npmDepsHash = "sha256-34rzStX3xf7N6mQm9NQ3rIn+uG6rT//Sc8gdyLF5oHo=";
+    npmDepsHash = "sha256-yeYdym5Ovp2LBKZLg+yzXbmMwDENk4ctRqie0yBm0K4=";
     preBuild = ''
       npm run lint
     '';

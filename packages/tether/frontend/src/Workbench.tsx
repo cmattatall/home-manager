@@ -36,6 +36,7 @@ import { SignOut } from "./SignOut";
 import { MachineSetup, RegisterWorktree } from "./RegisterWorktree";
 import { MachineVersion } from "./MachineVersion";
 import { FeedbackPanel } from "./FeedbackPanel";
+import { ManagedSessions } from "./ManagedSessions";
 import styles from "./Workbench.module.css";
 
 export function Workbench({
@@ -773,6 +774,7 @@ function Review({
               : "Click + to annotate a line · Drag over line numbers to select a range"}
           </span>
         </div>
+        <ManagedSessions endpoint={endpoint} />
       </section>
       <aside
         id="review-annotations"
