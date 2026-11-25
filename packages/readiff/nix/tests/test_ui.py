@@ -2529,10 +2529,14 @@ class EditorUI(unittest.TestCase):
         self.assertGreater(view()["topline"], 1)
 
         editor.current.window = tree
+        self.wait_for(editor, "s.order_job == nil")
         self.keys(editor, "zM")
+        self.lua(editor, "r.order_by('priority')")
+        self.wait_for(editor, "s.order_job == nil")
         scroll("down")
         self.assertEqual(1, view()["topline"])
         self.keys(editor, "zR")
+        self.lua(editor, "r.order_by('path')")
         scroll("down")
         self.assertGreater(view()["topline"], 1)
         editor.ui_try_resize(132, 160)

@@ -944,11 +944,17 @@ local function reorder_tree(s)
 	local row = api.nvim_win_get_cursor(s.tree_win)[1]
 	local cursor_entry = s.entries[s.rows[row] or 0]
 	local heading
-	for group, group_row in pairs(s.group_rows) do
-		if row == group_row then
-			heading = group
+	api.nvim_win_call(s.tree_win, function()
+		for group, group_row in pairs(s.group_rows) do
+			local collapsed = vim.fn.foldclosed(group_row) == group_row
+			if collapsed ~= (s.collapsed[group] == true) then
+				s.collapsed[group] = collapsed
+			end
+			if row == group_row then
+				heading = group
+			end
 		end
-	end
+	end)
 	sort_entries(s, s.entries)
 	for index, entry in ipairs(s.entries) do
 		if entry == selected then
