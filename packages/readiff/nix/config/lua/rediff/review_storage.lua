@@ -60,11 +60,11 @@ function M.load(notes)
 	})
 end
 
-function M.clear_sent(notes, sent)
+function M.remove_comments(notes, matches)
 	local saved = vim.deepcopy(notes.storage.saved)
 	for index = #saved.comments, 1, -1 do
 		local comment = saved.comments[index]
-		if vim.deep_equal(comment, sent[comment.id]) then
+		if matches(comment) then
 			table.remove(saved.comments, index)
 			for _, draft in ipairs(saved.drafts) do
 				if draft.comment_id == comment.id then

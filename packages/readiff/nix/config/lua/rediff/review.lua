@@ -1879,7 +1879,9 @@ function M.clear_sent(root, path)
 			sent[comment.id] = comment
 		end
 	end
-	storage.clear_sent(s, sent)
+	storage.remove_comments(s, function(comment)
+		return vim.deep_equal(comment, sent[comment.id])
+	end)
 	retain(s.comments, function(comment)
 		if not vim.deep_equal(comment, sent[comment.id]) then
 			return true
@@ -2004,6 +2006,9 @@ local function remove_comment(comment, s)
 	s = s or annotation_state()
 	for i, item in ipairs(s.comments) do
 		if item.id == comment.id then
+			storage.remove_comments(s, function(saved)
+				return saved.id == comment.id
+			end)
 			table.remove(s.comments, i)
 			if s.annotation_id == comment.id then
 				s.annotation_id = nil

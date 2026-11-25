@@ -341,7 +341,8 @@ Saved notes appear as orange text under their source range. Orange >> in the gut
 marks notes at the cursor. @ / :al opens the annotation panel in Normal mode:
 j/k selects, Enter jumps, d deletes without closing, and i or / searches filenames
 and note text. Esc leaves search mode; Esc in Normal mode closes the panel.
-Deletion keeps the search query, including when no matching notes remain.
+Deletion persists immediately, including across editor restarts, and keeps the
+search query when no matching notes remain. Other unsaved edits remain unsaved.
 Back in the source pane, i edits that note. } / { cycles in creation order across
 files/sides; counts work (3}). d deletes a note, not source or already-sent
 feedback. These bindings leave ordinary files/note text unchanged.

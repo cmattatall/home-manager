@@ -327,6 +327,16 @@ class EditorUI(unittest.TestCase):
         self.keys(editor, ":ReviewSave<CR>")
         self.assertIn("Disk full", editor.vars["startup_notice"])
         self.assertEqual(2, self.lua(editor, "return #s.comments"))
+        self.keys(editor, ":al<CR>")
+        self.wait_for(editor, 'vim.bo.filetype == "TelescopePrompt"')
+        editor.vars["startup_notice"] = ""
+        self.keys(editor, "d")
+        self.assertIn("Disk full", editor.vars["startup_notice"])
+        self.assertEqual(2, self.lua(editor, "return #s.comments"))
+        self.assertEqual("Saved note", self.lua(editor, """
+            return require('telescope.actions.state').get_selected_entry().value.text
+        """))
+        self.keys(editor, "<Esc>")
         with self.assertRaisesRegex(Exception, "No write since last change"):
             editor.command("qa")
         self.quit_editor(editor, "qa!")
@@ -6615,6 +6625,7 @@ func greeting() string {
                     return s.comments
                     """,
                 )
+                self.keys(editor, ":ReviewSave<CR>")
 
                 def remaining(editor=editor):
                     return self.lua(editor, "return r.notes(vim.fn.getcwd()).comments")
@@ -6686,6 +6697,42 @@ func greeting() string {
                 self.assertEqual(
                     "No annotations", self.lua(editor, "return vim.g.startup_notice")
                 )
+                self.quit_editor(editor, "qa")
+
+                reopened = self.launch(self.root)
+                self.assertEqual([], remaining(reopened))
+                self.quit_editor(reopened, "qa")
+
+    def test_annotation_deletion_preserves_other_unsaved_changes(self):
+        editor = self.launch(self.root)
+        self.keys(editor, "<Tab>5GiKeep saved<Esc>:w<CR>")
+        self.keys(editor, "17GiDelete saved<Esc>:w<CR>")
+        self.keys(editor, "9GiSaved draft<Esc>:q<CR>:ReviewSave<CR>")
+        saved_note = self.lua(editor, "return s.comments[1]")
+        self.lua(editor, """
+            r.add_comment(s.comments[1], 'Unsaved keep edit', s.comments[1].id)
+            r.add_comment(s.comments[2], 'Unsaved deletion edit', s.comments[2].id)
+            r.add_comment(s.comments[1], 'Unsaved new note')
+        """)
+        self.keys(editor, "9Gi<Esc>gg0cGUnsaved draft edit<Esc>:q<CR>")
+        self.keys(editor, ":al<CR>")
+        self.wait_for(editor, 'vim.bo.filetype == "TelescopePrompt"')
+        self.keys(editor, "jd<Esc>")
+        self.assertEqual(
+            ["Unsaved keep edit", "Unsaved new note"],
+            self.lua(editor, """
+                return vim.tbl_map(function(note) return note.text end, s.comments)
+            """),
+        )
+        self.assertEqual("Unsaved draft edit", self.lua(editor, "return s.drafts[1].text"))
+        with self.assertRaisesRegex(Exception, "No write since last change"):
+            editor.command("qa")
+        self.quit_editor(editor, "qa!")
+
+        reopened = self.launch(self.root)
+        self.assertEqual([saved_note], self.lua(reopened, "return s.comments"))
+        self.assertEqual("Saved draft", self.lua(reopened, "return s.drafts[1].text"))
+        self.quit_editor(reopened, "qa")
 
     def test_annotation_picker_updates_when_delivery_finishes(self):
         for file_mode in (False, True):
