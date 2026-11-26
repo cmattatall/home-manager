@@ -368,6 +368,15 @@ With no pattern, or when the first argument starts with `-`, fzf lists all binar
 targets. Use `bzlrun -- setup --help` to pick a target and pass positional
 arguments without a pattern. Cancelling the picker leaves without running a target.
 
+`bzlbuild [pattern] [flags...]` selects a binary or test target with the same
+pattern rules and runs `bazel build` on it. The remaining arguments are Bazel
+build flags. For example, `bzlbuild toolingbox --config=opt` builds the one
+target containing `toolingbox` with `--config=opt`.
+Add `--outdir DIR` to copy the target's output files into `DIR` after the build.
+It creates `DIR` when needed, replaces earlier copies, and prints each copied path.
+`--outdir` is meant for self-contained binaries, such as static `cc_binary`,
+`go_binary`, and `rust_binary` targets.
+
 In Bash, `nxd` runs plain `nix develop`, preserving the project's shell-hook
 functions, aliases, and completions. Nix loads `~/.bashrc`, and Starship renders
 the personal prompt. In Zsh, `nxd` keeps Zsh with `--command zsh -i`: exported

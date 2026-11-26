@@ -415,6 +415,84 @@ class BazelHelpersTest(StartupTestBase):
                 self.assertEqual(result.stdout, "")
                 self.assertIn('no binary targets match "missing"', result.stderr)
 
+    def test_build_selects_binary_and_test_targets_and_forwards_build_flags(self) -> None:
+        _write_stub(self.stub_dir, "bazel", textwrap.dedent("""\
+            case "$1" in
+                query)
+                    [ "$2" = "kind('.*_binary|.*_test', //...)" ] || exit 2
+                    printf '%s\\n' '//app:toolingbox' '//lib:library' '//lib:library_test' ;;
+                build) printf '<%s>\\n' "$@"; exit 7 ;;
+            esac
+        """))
+        _write_stub(self.stub_dir, "fzf", 'case "$1" in --bash|--zsh) exit 0;; esac\nsed -n "2p"')
+        for shell in filter(None, [BASH, ZSH]):
+            for arguments, target, flags in (
+                ('toolingbox --config=opt "two words"', "//app:toolingbox", ["<--config=opt>", "<two words>"]),
+                ('library -c dbg', "//lib:library_test", ["<-c>", "<dbg>"]),
+                ('--config=opt', "//lib:library", ["<--config=opt>"]),
+                ('', "//lib:library", []),
+            ):
+                with self.subTest(shell=shell, arguments=arguments):
+                    result = self.run_shell(
+                        shell, self.ordinary_dir, shell, f'bzlbuild {arguments}'
+                    )
+                    self.assertEqual(result.returncode, 7, result.stderr)
+                    self.assertEqual(result.stdout.splitlines(), [
+                        "<build>", *flags, "<-->", f"<{target}>",
+                    ])
+
+            with self.subTest(shell=shell, arguments="missing"):
+                result = self.run_shell(shell, self.ordinary_dir, shell, 'bzlbuild missing')
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
+                self.assertIn('bzlbuild: no binary or test targets match "missing"', result.stderr)
+
+    def test_build_copies_target_outputs_into_outdir(self) -> None:
+        execution_root = self.home / "exec root"
+        outputs = {
+            "bazel-out/opt/bin/app/tool": "binary\n",
+            "bazel-out/opt/bin/app/tool.runfiles manifest": "manifest\n",
+        }
+        for relative, text in outputs.items():
+            path = execution_root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+            path.chmod(0o555)
+        _write_stub(self.stub_dir, "bazel", textwrap.dedent(f"""\
+            case "$1" in
+                query) printf '%s\\n' '//app:tool' ;;
+                build) ;;
+                info) printf '%s\\n' '{execution_root}' ;;
+                cquery)
+                    [ "$*" = 'cquery --config=opt --output=files -- //app:tool' ] || exit 3
+                    printf '%s\\n' 'bazel-out/opt/bin/app/tool' \\
+                        'bazel-out/opt/bin/app/tool.runfiles manifest' ;;
+            esac
+        """))
+        for shell in filter(None, [BASH, ZSH]):
+            for outdir_arguments in ('--outdir "out dir/bin"', '--outdir="out dir/bin"'):
+                with self.subTest(shell=shell, outdir_arguments=outdir_arguments):
+                    # Running twice checks that read-only copies are replaced.
+                    for _ in range(2):
+                        result = self.run_shell(
+                            shell, self.ordinary_dir, shell,
+                            f'bzlbuild tool {outdir_arguments} --config=opt',
+                        )
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.splitlines(), [
+                        "out dir/bin/tool", "out dir/bin/tool.runfiles manifest",
+                    ])
+                    copied_directory = self.ordinary_dir / "out dir/bin"
+                    for relative, text in outputs.items():
+                        copied = copied_directory / Path(relative).name
+                        self.assertEqual(copied.read_text(), text)
+                    shutil.rmtree(self.ordinary_dir / "out dir")
+
+            with self.subTest(shell=shell, outdir_arguments="missing value"):
+                result = self.run_shell(shell, self.ordinary_dir, shell, 'bzlbuild tool --outdir')
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("--outdir needs a directory", result.stderr)
+
     def test_cancelled_selection_and_failed_query_do_not_run(self) -> None:
         for shell in filter(None, [BASH, ZSH]):
             for query_status, picker_status in ((0, 130), (7, 0)):
